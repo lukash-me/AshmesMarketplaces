@@ -37,21 +37,19 @@ class SaveWbData:
 
     def wb_save(self, products: list[Item]):
         data = [
-            ["артикул",
-             "ссылка",
-             "название",
-             "цена",
-             "цена со скидкой",
-             "цена с wb кошельком",
-             "бренд",
-             "рейтинг",
-             "количество",
-             "id продавца",
-             "название продавца",
-             "рейтинг продавца",
-             "изображения",
-             "кол-во оценок",
-             "общее название предмета"
+            ["SKU_Product",
+             "Name",
+             "Cost",
+             "CostWithDiscount",
+             "CostWithWBWallet",
+             "Id_brand",
+             "Amount",
+             "SKU_Seller",
+             "Images",
+             "root",
+             "subjectParentId",
+             "subjectId",
+             "Entity",
              ],
         ]
 
@@ -67,20 +65,18 @@ class SaveWbData:
 
             data.append(
                 [product.id,
-                 f"\u200Bhttps://www.wildberries.ru/catalog/{product.id}/detail.aspx",
                  product.name,
                  product.priceU,
                  product.salePriceU,
                  product.wb_wallet,
-                 product.brand,
-                 product.nmReviewRating,
+                 product.brandId,
                  product.totalQuantity,
                  product.supplierId,
-                 product.supplier,
-                 product.supplierRating,
                  product.image_links,
-                 product.nmFeedbacks,
-                 product.entity
+                 product.root,
+                 product.subjectParentId,
+                 product.subjectId,
+                 product.entity,
                  ]
             )
         book_data = {"Sheet_1": data,

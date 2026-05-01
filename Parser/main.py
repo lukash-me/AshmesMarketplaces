@@ -44,4 +44,4 @@ def parse(search_phrase):
     SaveWbData().wb_save(products=product_models)
 
 if __name__ == "__main__":
-    parse(search_phrase="кроссовки мужские")
+    parse(search_phrase="кеды женские натуральная кожа белые")

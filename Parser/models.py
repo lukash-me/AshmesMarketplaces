@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, model_validator, field_validator
+from pydantic import BaseModel, model_validator
 
 class Price(BaseModel):
     basic: Optional[float] = None
@@ -10,32 +10,30 @@ class Size(BaseModel):
     price: Optional[Price] = None
 
 class Item(BaseModel):
-    id: int
-    name: str
-    salePriceU: Optional[float] = None
-    priceU: Optional[float] = None
-    wb_wallet: Optional[float] = None
-    brand: str
-    sale: Optional[int] = None
-    rating: int
-    volume: int
-    supplier: str = None
-    supplierId: int
-    supplierRating: Optional[float] = None
-    totalQuantity: int
-    nmReviewRating: Optional[float]
-    nmFeedbacks: Optional[int]
-    pics: int
-    image_links: Optional[str] = None
-    root: int
-    feedback_count: Optional[int] = None
-    valuation: Optional[str] = None
-    description: Optional[str] = None
-    characteristics: Optional[str] = None
-    sizes: Optional[list[Size]] = None
-    subj_root_name: Optional[str] = None
-    subj_name: Optional[str] = None
-    entity: Optional[str] = None
+    id: int # Id_on_mp
+    name: str # Name
+    salePriceU: Optional[float] = None # Цена со скидкой
+    priceU: Optional[float] = None # Цена без скидки
+    wb_wallet: Optional[float] = None # Цена с wb кошельком
+    brand: str # Бренд
+    brandId: int # Id бренда
+    sale: Optional[int] = None # Скидка
+    rating: int # Округленный рейтинг товара
+    volume: int # Спрос
+    supplier: str = None # Имя продавца
+    supplierId: int # SKU продавца
+    supplierRating: Optional[float] = None # Рейтинг продавца
+    totalQuantity: int # Количество остатков
+    nmReviewRating: Optional[float] # Рейтинг. Не нужно. Будет рассчитываться из суммы отзывов. Нужно получать каждый отзыв.
+    nmFeedbacks: Optional[int] # Количество оценок
+    pics: int # Количество изображений
+    image_links: Optional[str] = None # Ссылки на изображения
+    root: int # Корень иерархии
+    feedbacks: Optional[int] = None # Количество оценок
+    sizes: Optional[list[Size]] = None # Размеры
+    subjectParentId: Optional[int] = None # Категория
+    subjectId: Optional[int] = None # Подкатегория
+    entity: Optional[str] = None # Общее название
 
     @model_validator(mode="after")
     def fill_price_from_sizes(self):
