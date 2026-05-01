@@ -11,11 +11,11 @@ class SearchPhraseParser:
         self.search_phrase = search_phrase
         self.cookies = cookies
 
-        self.default_step = 5000 * 100
+        self.default_step = 500 * 100
         self.max_count_of_good = 5000
 
         self.min_step = 10 * 100
-        self.max_step = 25000 * 100
+        self.max_step = 2500 * 100
 
         self.max_split_depth = 10
         self.low_goods_threshold = 500
