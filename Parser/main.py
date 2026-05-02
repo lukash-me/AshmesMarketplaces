@@ -1,6 +1,7 @@
 import asyncio
 from loguru import logger
 
+from CategoriesParser import CategoriesParser
 from WbCatalogFetcher import WbCatalogFetcher
 from SearchPhraseParser import SearchPhraseParser
 from get_token import get_token
@@ -8,9 +9,10 @@ from models import Items
 from images_parser import add_images
 from add_price_wb_wallet import add_price_with_wb_wallet
 from saver import SaveWbData
+from typing import List
 
 
-def parse(search_phrase):
+def parse(categories: List | None):
 
     wb_token = get_token()
 
@@ -18,30 +20,43 @@ def parse(search_phrase):
         'x_wbaas_token': wb_token,
     }
 
-    # Собрать промежутки
-    price_ranges = SearchPhraseParser(search_phrase=search_phrase, cookies=cookies).parse()
+    # Получить категории
+    categories = CategoriesParser().parse(categories)
 
-    # Парсинг товаров
-    fetcher = WbCatalogFetcher(search_phrase=search_phrase, pages=price_ranges, cookies=cookies)
+    for category in categories:
+        # Собрать промежутки
+        price_ranges = SearchPhraseParser(search_phrase=category['searchQuery'], cookies=cookies).parse()
 
-    results = asyncio.run(fetcher.fetch_all())
+        # Парсинг товаров
+        fetcher = WbCatalogFetcher(search_phrase=category['searchQuery'], pages=price_ranges, cookies=cookies)
 
-    logger.info("Сырые результаты получены")
+        results = asyncio.run(fetcher.fetch_all())
 
-    product_models = []
-    for raw_data in results:
-        items_info = Items.model_validate(raw_data)
-        if items_info.products:
-            product_models.extend(items_info.products)
+        logger.info(f"Сырые результаты для категории {category['name']} получены")
 
-    logger.info("Добавляем картинки")
-    product_models = add_images(product_models)
+        product_models = []
+        for raw_data in results:
 
-    logger.info("Добавляем цену с WB-кошельком")
-    product_models = add_price_with_wb_wallet(product_models)
+            if "products" not in raw_data:
+                logger.warning("Ответ без products пропущен")
+                logger.debug(raw_data)
+                continue
+            else:
+                logger.debug(f"Нормальные raw_data {raw_data}")
 
-    logger.info("Данные добавлены, перехожу к сохранению")
-    SaveWbData().wb_save(products=product_models)
+            items_info = Items.model_validate(raw_data)
+            if items_info.products:
+                product_models.extend(items_info.products)
+
+        logger.info("Добавляем картинки")
+        product_models = add_images(product_models)
+
+        logger.info("Добавляем цену с WB-кошельком")
+        product_models = add_price_with_wb_wallet(product_models)
+
+        logger.info("Данные добавлены, перехожу к сохранению")
+        SaveWbData().wb_save(products=product_models, category_name=category['name'])
+
 
 if __name__ == "__main__":
-    parse(search_phrase="кеды женские натуральная кожа белые")
+    parse(categories=["Обувь"])

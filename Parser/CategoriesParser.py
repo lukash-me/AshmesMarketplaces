@@ -29,10 +29,6 @@ class CategoriesParser:
         return not node.get("childs")
 
 
-    def build_url(self, node: dict) -> str:
-        return "https://www.wildberries.ru" + node.get("url", "")
-
-
     def dfs(self, node: dict, target_names: set = None, in_target_category: bool = False):
 
         current_in_target = in_target_category or (
@@ -42,11 +38,11 @@ class CategoriesParser:
         childs = node.get("childs")
 
         if not childs:
-            if current_in_target:
+            if current_in_target and node.get("searchQuery"):
                 self.result.append({
-                    "id": node["id"],
-                    "name": node["name"],
-                    "url": self.build_url(node)
+                    "id": node.get("id"),
+                    "name": node.get("seo"),
+                    "searchQuery": node.get("searchQuery")
                 })
             return
 

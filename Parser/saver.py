@@ -35,7 +35,7 @@ class SaveWbData:
         new_book.save_as(file_path)
         return full_filename
 
-    def wb_save(self, products: list[Item]):
+    def wb_save(self, products: list[Item], category_name: str):
         data = [
             ["SKU_Product",
              "Name",
@@ -79,8 +79,7 @@ class SaveWbData:
                  product.entity,
                  ]
             )
-        book_data = {"Sheet_1": data,
-                     }
+        book_data = {f"{category_name}": data}
         full_filename = self.book_save_to_path(book_data=book_data)
         logger.debug(full_filename)
         return full_filename

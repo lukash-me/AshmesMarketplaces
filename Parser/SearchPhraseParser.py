@@ -65,12 +65,14 @@ class SearchPhraseParser:
 
     def get_price_range(self, data: json) -> DataPage | None:
         if not data:
-            return
+            logger.error("No data")
+            return None
 
         total = self._get_total(data=data)
         min_price, max_price = self._get_min_max_price(data=data)
 
         if not all([total, min_price, max_price]):
+            logger.error("No enough data")
             return None
 
         return DataPage(min_price=min_price, max_price=max_price, total=total)
