@@ -33,7 +33,8 @@ class WebdriverCookies:
                         return cookie.get("value")
                     time.sleep(5)
 
-                return None
+            return None
+
         finally:
             driver.quit()
 
