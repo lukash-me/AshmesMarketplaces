@@ -17,7 +17,9 @@ def parse(categories: List | None):
 
     #Получить категории
     categories = CategoriesParser().parse(categories)
-    categories = categories[0:2]
+    categories = categories[0:2] # Убрать, если нужны все подкатегории
+
+    saver = SaveWbData()
 
     for category in categories:
 
@@ -57,7 +59,7 @@ def parse(categories: List | None):
         product_models = add_price_with_wb_wallet(product_models)
 
         logger.info("Данные добавлены, перехожу к сохранению")
-        SaveWbData().wb_save(products=product_models, category_name=category.get("name"))
+        saver.add_sheet(product_models, category.get("name"))
 
         time.sleep(20)
 

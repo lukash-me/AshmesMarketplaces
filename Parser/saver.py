@@ -13,6 +13,8 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 class SaveWbData:
     def __init__(self, filename: str = "wb"):
         self.filename = filename
+        self.file_path, self.full_filename = self.generate_filepath(self.filename)
+        self.book = pe.Book()
 
     @staticmethod
     def now_for_title():
@@ -28,13 +30,67 @@ class SaveWbData:
         return full_path, filename_with_timestamp
 
     def book_save_to_path(self, book_data):
-        file_path, full_filename = self.generate_filepath(filename=self.filename)
-        logger.debug(file_path)
+        logger.debug(self.file_path)
 
         new_book = pe.Book(book_data)
-        new_book.save_as(file_path)
-        return full_filename
+        new_book.save_as(self.file_path)
+        return self.full_filename
 
+
+    def add_sheet(self, products: list[Item], category_name: str):
+        sheet_name = category_name[:31]
+
+        data = [
+            ["SKU_Product",
+             "Name",
+             "Cost",
+             "CostWithDiscount",
+             "CostWithWBWallet",
+             "Id_brand",
+             "Amount",
+             "SKU_Seller",
+             "Images",
+             "root",
+             "subjectParentId",
+             "subjectId",
+             "Entity",
+             ],
+        ]
+
+        all_saved_sku = []  # для контроля дублей
+        for product in products:
+            if not product:
+                continue
+
+            if str(product.id) in all_saved_sku:
+                continue
+
+            all_saved_sku.append(str(product.id))
+
+            data.append(
+                [product.id,
+                 product.name,
+                 product.priceU,
+                 product.salePriceU,
+                 product.wb_wallet,
+                 product.brandId,
+                 product.totalQuantity,
+                 product.supplierId,
+                 product.image_links,
+                 product.root,
+                 product.subjectParentId,
+                 product.subjectId,
+                 product.entity,
+                 ]
+            )
+
+        self.book += pe.Sheet(data, name=sheet_name)
+        self.book.save_as(self.file_path)
+
+        logger.success(f"Лист {sheet_name} сохранен")
+
+
+    # При парсинге единственной категории
     def wb_save(self, products: list[Item], category_name: str):
         data = [
             ["SKU_Product",
