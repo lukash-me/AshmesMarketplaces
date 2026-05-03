@@ -10,29 +10,33 @@ from images_parser import add_images
 from add_price_wb_wallet import add_price_with_wb_wallet
 from saver import SaveWbData
 from typing import List
+import time
 
 
 def parse(categories: List | None):
 
-    wb_token = get_token()
-
-    cookies = {
-        'x_wbaas_token': wb_token,
-    }
-
-    # Получить категории
+    #Получить категории
     categories = CategoriesParser().parse(categories)
+    categories = categories[0:2]
 
     for category in categories:
+
+        wb_token = get_token()
+        cookies = {
+            'x_wbaas_token': wb_token,
+        }
+
         # Собрать промежутки
-        price_ranges = SearchPhraseParser(search_phrase=category['searchQuery'], cookies=cookies).parse()
+        price_ranges = SearchPhraseParser(search_phrase=category.get("name"), cookies=cookies).parse()
+
+        time.sleep(10)
 
         # Парсинг товаров
-        fetcher = WbCatalogFetcher(search_phrase=category['searchQuery'], pages=price_ranges, cookies=cookies)
+        fetcher = WbCatalogFetcher(search_phrase=category.get("name"), pages=price_ranges, cookies=cookies)
 
         results = asyncio.run(fetcher.fetch_all())
 
-        logger.info(f"Сырые результаты для категории {category['name']} получены")
+        logger.info(f"Сырые результаты для категории {category.get("name")} получены")
 
         product_models = []
         for raw_data in results:
@@ -41,8 +45,6 @@ def parse(categories: List | None):
                 logger.warning("Ответ без products пропущен")
                 logger.debug(raw_data)
                 continue
-            else:
-                logger.debug(f"Нормальные raw_data {raw_data}")
 
             items_info = Items.model_validate(raw_data)
             if items_info.products:
@@ -55,8 +57,9 @@ def parse(categories: List | None):
         product_models = add_price_with_wb_wallet(product_models)
 
         logger.info("Данные добавлены, перехожу к сохранению")
-        SaveWbData().wb_save(products=product_models, category_name=category['name'])
+        SaveWbData().wb_save(products=product_models, category_name=category.get("name"))
 
+        time.sleep(20)
 
 if __name__ == "__main__":
     parse(categories=["Обувь"])

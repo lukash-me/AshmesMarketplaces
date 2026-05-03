@@ -7,6 +7,9 @@ from loguru import logger
 from common_data import HEADERS
 from dto import DataPage
 from typing import List
+from get_token import get_token
+from SearchPhraseParser import SearchPhraseParser
+import random
 
 class WbCatalogFetcher:
     def __init__(self,
@@ -14,10 +17,10 @@ class WbCatalogFetcher:
                  search_phrase: str,
                  cookies: dict,
                  batch_size: int=50,
-                 max_concurrent: int=50,
+                 max_concurrent: int=10,
                  timeout: int=10,
                  max_retries: int=4,
-                 pause_between_batches: float=1):
+                 pause_between_batches: float=random.uniform(2, 4)):
 
         self.pages = pages
         self.search_phrase = search_phrase
@@ -79,14 +82,17 @@ class WbCatalogFetcher:
                         timeout=self.timeout
                     )
                     if response.status_code == 200:
-                        logger.debug(f"page={task['page']} "
-                                     f"price={task['min_price']}-{task['max_price']}"
-                        )
-                        return response.json()
+                        data = response.json()
+                        if "products" in data:
+                            logger.debug(f"page={task['page']} "
+                                         f"price={task['min_price']}-{task['max_price']}")
+                            return data
+                        else:
+                            logger.warning(f"No products {data} | attempt={attempt}")
+                    else:
+                        logger.warning(f"status={response.status_code} "
+                                       f"page={task['page']} | attempt={attempt}")
 
-                logger.warning(f"status={response.status_code} "
-                               f"page={task['page']} attempt={attempt}"
-                )
             except httpx.RequestError as err:
                 logger.error(err)
 
@@ -125,3 +131,24 @@ class WbCatalogFetcher:
         logger.info(f"Готово. Всего ответов: {len(results)}")
 
         return results
+
+if __name__ == "__main__":
+    wb_token = get_token()
+    cookies = {
+        'x_wbaas_token': wb_token,
+    }
+
+    ranges = SearchPhraseParser(search_phrase="menu_redirect_subject_v2_631 обувь для девочек", cookies=cookies).parse()
+
+    fetcher = WbCatalogFetcher(search_phrase="menu_redirect_subject_v2_631 обувь для девочек", pages=ranges, cookies=cookies)
+
+    results = asyncio.run(fetcher.fetch_all())
+
+    logger.info(f"Сырые результаты для категории получены")
+
+    for i, raw_data in enumerate(results):
+        if "products" not in raw_data:
+            print("BAD INDEX:", i)
+            print(raw_data)
+            break
+

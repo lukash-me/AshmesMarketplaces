@@ -3,6 +3,9 @@ from loguru import logger
 import json
 from dto import DataPage
 from common_data import HEADERS
+from get_token import get_token
+import time
+import random
 
 
 # Парсинг на основе поисковых запросов
@@ -15,7 +18,7 @@ class SearchPhraseParser:
         self.max_count_of_good = 5000
 
         self.min_step = 10 * 100
-        self.max_step = 2500 * 100
+        self.max_step = 5000 * 100
 
         self.max_split_depth = 10
         self.low_goods_threshold = 500
@@ -27,7 +30,6 @@ class SearchPhraseParser:
             'autoselectFilters': 'false',
             'curr': 'rub',
             'dest': '12354108',
-            'inheritFilters': 'false',
             'lang': 'ru',
             'locale': 'ru',
             'query': self.search_phrase,
@@ -39,6 +41,7 @@ class SearchPhraseParser:
             params.update(add_params)
             logger.debug(add_params)
 
+        time.sleep(random.uniform(0.4, 1.2))
         response = requests.get("https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search",
                                 params=params,
                                 cookies=self.cookies,
@@ -71,8 +74,9 @@ class SearchPhraseParser:
         total = self._get_total(data=data)
         min_price, max_price = self._get_min_max_price(data=data)
 
-        if not all([total, min_price, max_price]):
+        if total is None or min_price is None or max_price is None:
             logger.error("No enough data")
+            logger.debug(f"{min_price}, {max_price}, {total}")
             return None
 
         return DataPage(min_price=min_price, max_price=max_price, total=total)
@@ -115,7 +119,7 @@ class SearchPhraseParser:
         base_data = self.get_price_range(data=self.fetch_data())
         if not base_data:
             logger.error("Не удалось получить данные")
-            return
+            return None
 
         result: list[DataPage] = []
         step = self.default_step
@@ -166,3 +170,15 @@ class SearchPhraseParser:
         logger.info(f"Всего {len(result)} диапазонов")
         logger.info(result[1:5])
         return result
+
+if __name__ == "__main__":
+    wb_token = get_token()
+    cookies = {
+        'x_wbaas_token': wb_token,
+    }
+
+    res = SearchPhraseParser(search_phrase="menu_redirect_subject_v2_631 обувь для девочек", cookies=cookies).parse()
+
+
+
+    result = SearchPhraseParser(search_phrase="menu_redirect_subject_v2_645 обувь для мальчиков", cookies=cookies).parse()
