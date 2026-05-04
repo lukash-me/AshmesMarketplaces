@@ -1,0 +1,55 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "API", "API", "{6C975655-8C21-456A-B85B-CD9FE0CB5E6E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Infrastructure", "Infrastructure", "{1B3C50AD-E8FE-4E0C-9A20-56F5448541F0}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Domain", "Domain", "{0F413877-4661-498F-A0A8-61A7C17CC03A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Application", "Application", "{EF90BDE1-92DD-4A80-A23B-D9CA0478912A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.API", "AshmesMarketplaces.API\AshmesMarketplaces.API.csproj", "{744A3AD4-D2DB-4030-B68B-9DAF02DBE831}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.Application", "AshmesMarketplaces.Application\AshmesMarketplaces.Application.csproj", "{66AC6913-FF97-43D2-B72D-177CD90B4C09}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.Domain", "AshmesMarketplaces.Domain\AshmesMarketplaces.Domain.csproj", "{288741B8-2E42-42F7-A0B3-073DC2262671}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.DataAccess", "AshmesMarketplaces.DataAccess\AshmesMarketplaces.DataAccess.csproj", "{348A9071-6BE0-42EF-813B-D09ABF5CB021}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.Infrastructure", "AshmesMarketplaces.Infrastructure\AshmesMarketplaces.Infrastructure.csproj", "{13EF5459-B556-4B94-A9EB-770A234F5754}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{744A3AD4-D2DB-4030-B68B-9DAF02DBE831} = {6C975655-8C21-456A-B85B-CD9FE0CB5E6E}
+		{66AC6913-FF97-43D2-B72D-177CD90B4C09} = {EF90BDE1-92DD-4A80-A23B-D9CA0478912A}
+		{288741B8-2E42-42F7-A0B3-073DC2262671} = {0F413877-4661-498F-A0A8-61A7C17CC03A}
+		{348A9071-6BE0-42EF-813B-D09ABF5CB021} = {1B3C50AD-E8FE-4E0C-9A20-56F5448541F0}
+		{13EF5459-B556-4B94-A9EB-770A234F5754} = {1B3C50AD-E8FE-4E0C-9A20-56F5448541F0}
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{744A3AD4-D2DB-4030-B68B-9DAF02DBE831}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{744A3AD4-D2DB-4030-B68B-9DAF02DBE831}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{744A3AD4-D2DB-4030-B68B-9DAF02DBE831}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{744A3AD4-D2DB-4030-B68B-9DAF02DBE831}.Release|Any CPU.Build.0 = Release|Any CPU
+		{66AC6913-FF97-43D2-B72D-177CD90B4C09}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{66AC6913-FF97-43D2-B72D-177CD90B4C09}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{66AC6913-FF97-43D2-B72D-177CD90B4C09}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{66AC6913-FF97-43D2-B72D-177CD90B4C09}.Release|Any CPU.Build.0 = Release|Any CPU
+		{288741B8-2E42-42F7-A0B3-073DC2262671}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{288741B8-2E42-42F7-A0B3-073DC2262671}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{288741B8-2E42-42F7-A0B3-073DC2262671}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{288741B8-2E42-42F7-A0B3-073DC2262671}.Release|Any CPU.Build.0 = Release|Any CPU
+		{348A9071-6BE0-42EF-813B-D09ABF5CB021}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{348A9071-6BE0-42EF-813B-D09ABF5CB021}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{348A9071-6BE0-42EF-813B-D09ABF5CB021}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{348A9071-6BE0-42EF-813B-D09ABF5CB021}.Release|Any CPU.Build.0 = Release|Any CPU
+		{13EF5459-B556-4B94-A9EB-770A234F5754}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{13EF5459-B556-4B94-A9EB-770A234F5754}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{13EF5459-B556-4B94-A9EB-770A234F5754}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{13EF5459-B556-4B94-A9EB-770A234F5754}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
