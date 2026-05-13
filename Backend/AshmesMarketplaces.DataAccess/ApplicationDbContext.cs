@@ -1,4 +1,5 @@
 using AshmesMarketplaces.Domain.Entities.Access;
+using AshmesMarketplaces.Domain.Entities.Advertising;
 using AshmesMarketplaces.Domain.Entities.Finance;
 using AshmesMarketplaces.Domain.Entities.Logistics;
 using AshmesMarketplaces.Domain.Entities.Marketplaces;
@@ -30,6 +31,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();
     public DbSet<Expense> Expenses => Set<Expense>();
     public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
+    public DbSet<Campaign> Campaigns => Set<Campaign>();
+    public DbSet<CampaignMetric> CampaignMetrics => Set<CampaignMetric>();
 
     public DbSet<Marketplace> Marketplaces => Set<Marketplace>();
     public DbSet<Brand> Brands => Set<Brand>();
