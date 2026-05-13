@@ -1,6 +1,9 @@
 using AshmesMarketplaces.Domain.Entities.Access;
+using AshmesMarketplaces.Domain.Entities.Logistics;
 using AshmesMarketplaces.Domain.Entities.Marketplaces;
+using AshmesMarketplaces.Domain.Entities.Orders;
 using AshmesMarketplaces.Domain.Entities.Product;
+using AshmesMarketplaces.Domain.Entities.Reviews;
 using AshmesMarketplaces.Domain.Entities.Rules;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,6 +17,10 @@ public class ApplicationDbContext : DbContext
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<ProductVideo> ProductVideos => Set<ProductVideo>();
     public DbSet<ProductHistory> ProductHistories => Set<ProductHistory>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<Review> Reviews => Set<Review>();
+    public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
+    public DbSet<Logistic> Logistics => Set<Logistic>();
 
     public DbSet<Marketplace> Marketplaces => Set<Marketplace>();
     public DbSet<Brand> Brands => Set<Brand>();
