@@ -5,6 +5,7 @@ using AshmesMarketplaces.Domain.Entities.Logistics;
 using AshmesMarketplaces.Domain.Entities.Marketplaces;
 using AshmesMarketplaces.Domain.Entities.Orders;
 using AshmesMarketplaces.Domain.Entities.Product;
+using AshmesMarketplaces.Domain.Entities.Recommendations;
 using AshmesMarketplaces.Domain.Entities.Reviews;
 using AshmesMarketplaces.Domain.Entities.Rules;
 using AshmesMarketplaces.Domain.Entities.Users;
@@ -33,6 +34,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
     public DbSet<Campaign> Campaigns => Set<Campaign>();
     public DbSet<CampaignMetric> CampaignMetrics => Set<CampaignMetric>();
+    public DbSet<Recommendation> Recommendations => Set<Recommendation>();
+    public DbSet<RecommendationProduct> RecommendationProducts => Set<RecommendationProduct>();
+    public DbSet<RecommendationCategory> RecommendationCategories => Set<RecommendationCategory>();
 
     public DbSet<Marketplace> Marketplaces => Set<Marketplace>();
     public DbSet<Brand> Brands => Set<Brand>();
