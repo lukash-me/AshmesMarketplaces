@@ -5,25 +5,29 @@ using CSharpFunctionalExtensions;
 
 namespace AshmesMarketplaces.Domain.Entities.Product;
 
-public class Product : BaseEntity<ProductId>
+public class Product : BaseEntity<ProductId>, IDisposable
 {
-    private bool _isDeleted = false;
-    private Product(ProductId id) : base(id) { }
+    private Product() : base(ProductId.EmptyId()) { }
+
     private Product(
+        ProductId id,
         Guid? idSetPrice,
         Guid? idWorkspace,
         Guid? idBrand,
         Guid idMp,
         Guid? idUser,
         Guid? idCategory,
-        int? skuProduct,
-        int skuSeller,
+        string? idOnMp,
+        string? skuProduct,
+        string skuSeller,
         string name,
         string? description,
-        string? characteristicsJson,
+        JsonDocument? characteristics,
         string? barcode,
+        int? commission,
+        ProductStatus status,
         DateTime dateUpdated,
-        DateTime? dateCreated) : base(ProductId.NewId())
+        DateTime? dateCreated) : base(id)
     {
         IdSetPrice = idSetPrice;
         IdWorkspace = idWorkspace;
@@ -31,12 +35,15 @@ public class Product : BaseEntity<ProductId>
         IdMp = idMp;
         IdUser = idUser;
         IdCategory = idCategory;
+        IdOnMp = idOnMp;
         SkuProduct = skuProduct;
         SkuSeller = skuSeller;
         Name = name;
         Description = description;
-        CharacteristicsJson = characteristicsJson;
+        Characteristics = characteristics;
         Barcode = barcode;
+        Commission = commission;
+        Status = status;
         DateUpdated = dateUpdated;
         DateCreated = dateCreated;
     }
@@ -47,16 +54,18 @@ public class Product : BaseEntity<ProductId>
     public Guid IdMp { get; private set; }
     public Guid? IdUser { get; private set; }
     public Guid? IdCategory { get; private set; }
-    public int? SkuProduct { get; private set; }
-    public int SkuSeller { get; private set; }
-    public string Name { get; private set; }
+    public string? IdOnMp { get; private set; }
+    public string? SkuProduct { get; private set; }
+    public string SkuSeller { get; private set; } = string.Empty;
+    public string Name { get; private set; } = string.Empty;
     public string? Description { get; private set; }
     private readonly List<ProductImage> _images = new();
     public IReadOnlyCollection<ProductImage> Images => _images;
     private readonly List<ProductVideo> _videos = new();
     public IReadOnlyCollection<ProductVideo> Videos => _videos;
-    public string? CharacteristicsJson { get; private set; }
+    public JsonDocument? Characteristics { get; private set; }
     public string? Barcode { get; private set; }
+    public int? Commission { get; private set; }
     public ProductStatus Status { get; private set; }
     public DateTime DateUpdated { get; private set; }
     public DateTime? DateCreated { get; private set; }
@@ -73,7 +82,7 @@ public class Product : BaseEntity<ProductId>
             ? 1
             : _images.Max(i => i.SortOrder) + 1;
 
-        _images.Add(new ProductImage(url, nextOrder));
+        _images.Add(new ProductImage(Id, url, nextOrder, nextOrder == 1));
     }
     
     public void AddVideo(string url)
@@ -87,7 +96,11 @@ public class Product : BaseEntity<ProductId>
         if (_videos.Count >= Constants.PRODUCT_VIDEOS_MAX_COUNT)
             throw new InvalidOperationException("Maximum number of videos reached");
 
-        _videos.Add(new ProductVideo(url));
+        var nextOrder = _videos.Count == 0
+            ? 1
+            : _videos.Max(i => i.SortOrder) + 1;
+
+        _videos.Add(new ProductVideo(Id, url, nextOrder));
     }
     
     public static Result<Product, Error> Create(
@@ -98,15 +111,21 @@ public class Product : BaseEntity<ProductId>
         Guid idMp,
         Guid? idUser,
         Guid? idCategory,
-        int? skuProduct,
-        int skuSeller,
+        string? idOnMp,
+        string? skuProduct,
+        string skuSeller,
         string name,
         string? description,
         string? characteristicsJson,
         string? barcode,
+        int? commission,
+        ProductStatus status,
         DateTime dateUpdated,
         DateTime? dateCreated)
     {
+        if (productId.Value == Guid.Empty)
+            return Errors.General.ValueIsRequired("productId");
+
         if (string.IsNullOrWhiteSpace(name))
             return Errors.General.ValueIsRequired("name");
 
@@ -115,13 +134,19 @@ public class Product : BaseEntity<ProductId>
         
         if (description?.Length > Constants.PRODUCT_DESCRIPTION_MAX_LENGTH)
             return Errors.General.InvalidLength("description");
-        
-        if (skuSeller <= 0)
+
+        if (string.IsNullOrWhiteSpace(skuSeller))
             return Errors.General.ValueIsInvalid("skuSeller");
 
-        if (skuProduct is not null && skuProduct <= 0)
-            return Errors.General.ValueIsInvalid("skuProduct");
-        
+        if (skuSeller.Length > Constants.EXTERNAL_ID_MAX_LENGTH)
+            return Errors.General.InvalidLength("skuSeller");
+
+        if (skuProduct?.Length > Constants.EXTERNAL_ID_MAX_LENGTH)
+            return Errors.General.InvalidLength("skuProduct");
+
+        if (idOnMp?.Length > Constants.EXTERNAL_ID_MAX_LENGTH)
+            return Errors.General.InvalidLength("idOnMp");
+
         if (!string.IsNullOrWhiteSpace(barcode))
         {
             if (barcode.Length > Constants.BARCODE_MAX_LENGTH)
@@ -130,22 +155,26 @@ public class Product : BaseEntity<ProductId>
             if (!barcode.All(char.IsDigit))
                 return Errors.General.ValueIsInvalid("barcode");
         }
-        
+
+        JsonDocument? characteristics = null;
         if (!string.IsNullOrWhiteSpace(characteristicsJson))
         {
             try
             {
-                JsonDocument.Parse(characteristicsJson);
+                characteristics = JsonDocument.Parse(characteristicsJson);
             }
             catch
             {
                 return Errors.General.ValueIsInvalid("characteristicsJson");
             }
         }
-        
+
+        if (commission is < 0)
+            return Errors.General.ValueIsInvalid("commission");
+
         if (idMp == Guid.Empty)
             return Errors.General.ValueIsRequired("idMp");
-        
+
         if (dateCreated.HasValue && dateCreated > DateTime.UtcNow)
             return Errors.General.ValueIsInvalid("dateCreated");
 
@@ -153,20 +182,29 @@ public class Product : BaseEntity<ProductId>
             return Errors.General.ValueIsInvalid("dateUpdated");
         
         var product = new Product(
+            productId,
             idSetPrice,
             idWorkspace,
             idBrand,
             idMp,
             idUser,
             idCategory,
+            idOnMp,
             skuProduct,
             skuSeller,
             name,
             description,
-            characteristicsJson,
+            characteristics,
             barcode,
+            commission,
+            status,
             dateUpdated,
             dateCreated);
         return product;
+    }
+
+    public void Dispose()
+    {
+        Characteristics?.Dispose();
     }
 }

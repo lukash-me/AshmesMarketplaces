@@ -19,4 +19,6 @@ public class Constants
     public const int PRODUCT_VIDEOS_MAX_COUNT = 5;
     
     public const int BARCODE_MAX_LENGTH = 50;
+    public const int EXTERNAL_ID_MAX_LENGTH = 128;
+    public const int URL_MAX_LENGTH = 2048;
 }
