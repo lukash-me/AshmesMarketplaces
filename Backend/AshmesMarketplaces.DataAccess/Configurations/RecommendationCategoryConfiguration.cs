@@ -14,9 +14,11 @@ public class RecommendationCategoryConfiguration : IEntityTypeConfiguration<Reco
         builder.HasKey(x => new { x.IdRecommendation, x.IdCategory });
 
         builder.Property(x => x.IdRecommendation)
+            .ValueGeneratedNever()
             .HasColumnName("id_recommendation");
 
         builder.Property(x => x.IdCategory)
+            .ValueGeneratedNever()
             .HasColumnName("id_category");
 
         builder.HasOne<Recommendation>()

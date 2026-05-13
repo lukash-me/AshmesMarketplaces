@@ -19,6 +19,7 @@ public class CampaignConfiguration : IEntityTypeConfiguration<Campaign>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdProduct)
@@ -75,7 +76,7 @@ public class CampaignConfiguration : IEntityTypeConfiguration<Campaign>
         builder.HasOne<Product>()
             .WithMany()
             .HasForeignKey(x => x.IdProduct)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<RuleSet>()
             .WithMany()

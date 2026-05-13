@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Marketplaces;
 
 public class Warehouse
@@ -29,6 +31,9 @@ public class Warehouse
 
         if (string.IsNullOrWhiteSpace(region))
             throw new ArgumentException("Region is required", nameof(region));
+
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         Id = Guid.NewGuid();
         IdMp = idMp;

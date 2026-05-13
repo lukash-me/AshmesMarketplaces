@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Finance;
 
 public class Expense
@@ -28,6 +30,10 @@ public class Expense
 
         if (cost is < 0)
             throw new ArgumentOutOfRangeException(nameof(cost), "Cost must be non-negative");
+
+        DateTimeUtc.EnsureUtc(datePay, nameof(datePay));
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         if (datePay.HasValue && datePay < dateCreate)
             throw new ArgumentException("DatePay cannot be earlier than DateCreate", nameof(datePay));

@@ -15,9 +15,11 @@ public class UserWorkspaceConfiguration : IEntityTypeConfiguration<UserWorkspace
         builder.HasKey(x => new { x.IdUser, x.IdWorkspace });
 
         builder.Property(x => x.IdUser)
+            .ValueGeneratedNever()
             .HasColumnName("id_user");
 
         builder.Property(x => x.IdWorkspace)
+            .ValueGeneratedNever()
             .HasColumnName("id_workspace");
 
         builder.Property(x => x.IdRole)

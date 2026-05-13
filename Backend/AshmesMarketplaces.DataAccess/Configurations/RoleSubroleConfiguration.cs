@@ -13,9 +13,11 @@ public class RoleSubroleConfiguration : IEntityTypeConfiguration<RoleSubrole>
         builder.HasKey(x => new { x.IdRole, x.IdSubrole });
 
         builder.Property(x => x.IdRole)
+            .ValueGeneratedNever()
             .HasColumnName("id_role");
 
         builder.Property(x => x.IdSubrole)
+            .ValueGeneratedNever()
             .HasColumnName("id_subrole");
 
         builder.HasOne<Role>()

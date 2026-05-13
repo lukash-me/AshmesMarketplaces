@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Advertising;
 
 public class CampaignMetric
@@ -22,6 +24,8 @@ public class CampaignMetric
 
         if (costDay is < 0)
             throw new ArgumentOutOfRangeException(nameof(costDay), "CostDay must be non-negative");
+
+        DateTimeUtc.EnsureUtc(date, nameof(date));
 
         Id = Guid.NewGuid();
         IdCampaign = idCampaign;

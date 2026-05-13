@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Users;
 
 public class User
@@ -25,6 +27,9 @@ public class User
 
         if (string.IsNullOrWhiteSpace(phone))
             throw new ArgumentException("Phone is required", nameof(phone));
+
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateLogin, nameof(dateLogin));
 
         if (dateLogin < dateCreate)
             throw new ArgumentException("DateLogin cannot be earlier than DateCreate", nameof(dateLogin));

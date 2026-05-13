@@ -13,6 +13,7 @@ public class RecommendationConfiguration : IEntityTypeConfiguration<Recommendati
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdModel)

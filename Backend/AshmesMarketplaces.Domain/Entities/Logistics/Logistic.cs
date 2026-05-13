@@ -1,4 +1,5 @@
 using AshmesMarketplaces.Domain.IDs;
+using AshmesMarketplaces.Domain.Shared;
 
 namespace AshmesMarketplaces.Domain.Entities.Logistics;
 
@@ -34,6 +35,8 @@ public class Logistic
 
         if (costLogistic is < 0)
             throw new ArgumentOutOfRangeException(nameof(costLogistic), "CostLogistic must be non-negative");
+
+        DateTimeUtc.EnsureUtc(date, nameof(date));
 
         Id = Guid.NewGuid();
         IdProduct = idProduct;

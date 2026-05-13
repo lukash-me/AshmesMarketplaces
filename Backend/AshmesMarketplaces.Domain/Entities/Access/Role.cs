@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Access;
 
 public class Role
@@ -8,6 +10,9 @@ public class Role
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Name is required", nameof(name));
+
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         Id = Guid.NewGuid();
         Name = name;

@@ -14,6 +14,7 @@ public class ReviewReplyConfiguration : IEntityTypeConfiguration<ReviewReply>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdReview)
@@ -45,6 +46,6 @@ public class ReviewReplyConfiguration : IEntityTypeConfiguration<ReviewReply>
         builder.HasOne<Review>()
             .WithMany()
             .HasForeignKey(x => x.IdReview)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

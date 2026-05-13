@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Marketplaces;
 
 public class Category
@@ -17,6 +19,8 @@ public class Category
 
         if (level < 0)
             throw new ArgumentOutOfRangeException(nameof(level), "Level must be non-negative");
+
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         Id = Guid.NewGuid();
         IdParentCategory = idParentCategory;

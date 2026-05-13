@@ -17,6 +17,7 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdProduct)
@@ -67,6 +68,6 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.HasOne<Product>()
             .WithMany()
             .HasForeignKey(x => x.IdProduct)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

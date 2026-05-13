@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Access;
 
 public class PermissionCategory
@@ -8,6 +10,9 @@ public class PermissionCategory
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Name is required", nameof(name));
+
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
 
         Id = Guid.NewGuid();
         Name = name;

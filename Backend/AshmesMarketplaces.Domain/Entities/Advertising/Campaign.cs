@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AshmesMarketplaces.Domain.IDs;
+using AshmesMarketplaces.Domain.Shared;
 
 namespace AshmesMarketplaces.Domain.Entities.Advertising;
 
@@ -30,6 +31,11 @@ public class Campaign : IDisposable
 
         if (budget is < 0)
             throw new ArgumentOutOfRangeException(nameof(budget), "Budget must be non-negative");
+
+        DateTimeUtc.EnsureUtc(dateStart, nameof(dateStart));
+        DateTimeUtc.EnsureUtc(dateEnd, nameof(dateEnd));
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         if (dateStart.HasValue && dateEnd.HasValue && dateEnd < dateStart)
             throw new ArgumentException("DateEnd cannot be earlier than DateStart", nameof(dateEnd));

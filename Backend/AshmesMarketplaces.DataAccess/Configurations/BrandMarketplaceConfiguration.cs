@@ -15,9 +15,11 @@ public class BrandMarketplaceConfiguration : IEntityTypeConfiguration<BrandMarke
         builder.HasKey(x => new { x.IdMp, x.IdBrand });
 
         builder.Property(x => x.IdMp)
+            .ValueGeneratedNever()
             .HasColumnName("id_mp");
 
         builder.Property(x => x.IdBrand)
+            .ValueGeneratedNever()
             .HasColumnName("id_brand");
 
         builder.Property(x => x.IdOnMp)

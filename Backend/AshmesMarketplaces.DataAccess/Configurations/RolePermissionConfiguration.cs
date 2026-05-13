@@ -13,9 +13,11 @@ public class RolePermissionConfiguration : IEntityTypeConfiguration<RolePermissi
         builder.HasKey(x => new { x.IdRole, x.IdPermission });
 
         builder.Property(x => x.IdRole)
+            .ValueGeneratedNever()
             .HasColumnName("id_role");
 
         builder.Property(x => x.IdPermission)
+            .ValueGeneratedNever()
             .HasColumnName("id_permission");
 
         builder.HasOne<Role>()

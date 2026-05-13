@@ -175,6 +175,12 @@ public class Product : BaseEntity<ProductId>, IDisposable
         if (idMp == Guid.Empty)
             return Errors.General.ValueIsRequired("idMp");
 
+        if (!DateTimeUtc.IsUtc(dateCreated))
+            return Errors.General.ValueIsInvalid("dateCreated");
+
+        if (!DateTimeUtc.IsUtc(dateUpdated))
+            return Errors.General.ValueIsInvalid("dateUpdated");
+
         if (dateCreated.HasValue && dateCreated > DateTime.UtcNow)
             return Errors.General.ValueIsInvalid("dateCreated");
 

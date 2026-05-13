@@ -1,4 +1,5 @@
 using AshmesMarketplaces.Domain.IDs;
+using AshmesMarketplaces.Domain.Shared;
 
 namespace AshmesMarketplaces.Domain.Entities.Orders;
 
@@ -30,6 +31,11 @@ public class Order
 
         if (amount <= 0)
             throw new ArgumentOutOfRangeException(nameof(amount), "Amount must be greater than zero");
+
+        DateTimeUtc.EnsureUtc(dateDelivered, nameof(dateDelivered));
+        DateTimeUtc.EnsureUtc(dateOpened, nameof(dateOpened));
+        DateTimeUtc.EnsureUtc(dateClosed, nameof(dateClosed));
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         if (dateDelivered.HasValue && dateDelivered < dateOpened)
             throw new ArgumentException("DateDelivered cannot be earlier than DateOpened", nameof(dateDelivered));

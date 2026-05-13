@@ -1,6 +1,8 @@
 using AshmesMarketplaces.Domain.Entities.Marketplaces;
 using AshmesMarketplaces.Domain.Entities.Product;
 using AshmesMarketplaces.Domain.Entities.Rules;
+using AshmesMarketplaces.Domain.Entities.Users;
+using AshmesMarketplaces.Domain.Entities.Workspaces;
 using AshmesMarketplaces.Domain.IDs;
 using AshmesMarketplaces.Domain.Shared;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +20,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
         builder.Property(x => x.Id)
             .HasConversion(id => id.Value, value => ProductId.Create(value))
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdMp)
@@ -102,6 +105,16 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.HasOne<RuleSet>()
             .WithMany()
             .HasForeignKey(x => x.IdSetPrice)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<Workspace>()
+            .WithMany()
+            .HasForeignKey(x => x.IdWorkspace)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<User>()
+            .WithMany()
+            .HasForeignKey(x => x.IdUser)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasMany(x => x.Images)

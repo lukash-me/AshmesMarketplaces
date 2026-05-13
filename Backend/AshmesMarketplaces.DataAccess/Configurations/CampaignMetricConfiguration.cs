@@ -13,6 +13,7 @@ public class CampaignMetricConfiguration : IEntityTypeConfiguration<CampaignMetr
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdCampaign)
@@ -36,6 +37,6 @@ public class CampaignMetricConfiguration : IEntityTypeConfiguration<CampaignMetr
         builder.HasOne<Campaign>()
             .WithMany()
             .HasForeignKey(x => x.IdCampaign)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

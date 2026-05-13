@@ -13,9 +13,11 @@ public class RuleSetRuleConfiguration : IEntityTypeConfiguration<RuleSetRule>
         builder.HasKey(x => new { x.IdSet, x.IdRule });
 
         builder.Property(x => x.IdSet)
+            .ValueGeneratedNever()
             .HasColumnName("id_set");
 
         builder.Property(x => x.IdRule)
+            .ValueGeneratedNever()
             .HasColumnName("id_rule");
 
         builder.HasOne<RuleSet>()

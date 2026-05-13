@@ -16,6 +16,7 @@ public class LogisticConfiguration : IEntityTypeConfiguration<Logistic>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdProduct)
@@ -55,7 +56,7 @@ public class LogisticConfiguration : IEntityTypeConfiguration<Logistic>
         builder.HasOne<Product>()
             .WithMany()
             .HasForeignKey(x => x.IdProduct)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Warehouse>()
             .WithMany()

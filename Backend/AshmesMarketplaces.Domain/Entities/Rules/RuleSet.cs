@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Rules;
 
 public class RuleSet
@@ -8,6 +10,9 @@ public class RuleSet
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Name is required", nameof(name));
+
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
 
         Id = Guid.NewGuid();
         Name = name;

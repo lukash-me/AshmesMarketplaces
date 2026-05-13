@@ -17,6 +17,7 @@ public class ExpenseConfiguration : IEntityTypeConfiguration<Expense>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdWorkspace)
@@ -64,7 +65,7 @@ public class ExpenseConfiguration : IEntityTypeConfiguration<Expense>
         builder.HasOne<Workspace>()
             .WithMany()
             .HasForeignKey(x => x.IdWorkspace)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<ExpenseCategory>()
             .WithMany()

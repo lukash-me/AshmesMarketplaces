@@ -1,4 +1,5 @@
 using AshmesMarketplaces.Domain.IDs;
+using AshmesMarketplaces.Domain.Shared;
 
 namespace AshmesMarketplaces.Domain.Entities.Product;
 
@@ -26,6 +27,8 @@ public class ProductHistory
 
         if (discount < 0)
             throw new ArgumentOutOfRangeException(nameof(discount), "Discount must be non-negative");
+
+        DateTimeUtc.EnsureUtc(date, nameof(date));
 
         Id = Guid.NewGuid();
         IdProduct = idProduct;

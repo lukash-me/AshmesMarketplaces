@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Marketplaces;
 
 public class Marketplace
@@ -31,6 +33,8 @@ public class Marketplace
 
         if (string.IsNullOrWhiteSpace(schemeDelivery))
             throw new ArgumentException("SchemeDelivery is required", nameof(schemeDelivery));
+
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         Id = Guid.NewGuid();
         Name = name;

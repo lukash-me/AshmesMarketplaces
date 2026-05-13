@@ -1,4 +1,5 @@
 using AshmesMarketplaces.Domain.IDs;
+using AshmesMarketplaces.Domain.Shared;
 
 namespace AshmesMarketplaces.Domain.Entities.Reviews;
 
@@ -23,6 +24,9 @@ public class Review
 
         if (rating < 0)
             throw new ArgumentOutOfRangeException(nameof(rating), "Rating must be non-negative");
+
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateReply, nameof(dateReply));
 
         if (dateReply.HasValue && dateReply < dateCreate)
             throw new ArgumentException("DateReply cannot be earlier than DateCreate", nameof(dateReply));

@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Users;
 
 public class Session
@@ -19,6 +21,10 @@ public class Session
 
         if (string.IsNullOrWhiteSpace(token))
             throw new ArgumentException("Token is required", nameof(token));
+
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateRefreshed, nameof(dateRefreshed));
+        DateTimeUtc.EnsureUtc(dateExpires, nameof(dateExpires));
 
         if (dateRefreshed.HasValue && dateRefreshed < dateCreate)
             throw new ArgumentException("DateRefreshed cannot be earlier than DateCreate", nameof(dateRefreshed));

@@ -1,3 +1,5 @@
+using AshmesMarketplaces.Domain.Shared;
+
 namespace AshmesMarketplaces.Domain.Entities.Workspaces;
 
 public class Workspace
@@ -15,6 +17,9 @@ public class Workspace
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Name is required", nameof(name));
+
+        DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
+        DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
         if (dateUpdate < dateCreate)
             throw new ArgumentException("DateUpdate cannot be earlier than DateCreate", nameof(dateUpdate));

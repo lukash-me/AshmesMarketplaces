@@ -15,6 +15,7 @@ public class RuleSetConfiguration : IEntityTypeConfiguration<RuleSet>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.Name)

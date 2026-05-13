@@ -15,6 +15,7 @@ public class PermissionConfiguration : IEntityTypeConfiguration<Permission>
         builder.HasKey(x => x.Id);
 
         builder.Property(x => x.Id)
+            .ValueGeneratedNever()
             .HasColumnName("id");
 
         builder.Property(x => x.IdCategory)

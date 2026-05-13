@@ -15,10 +15,12 @@ public class RecommendationProductConfiguration : IEntityTypeConfiguration<Recom
         builder.HasKey(x => new { x.IdRecommendation, x.IdProduct });
 
         builder.Property(x => x.IdRecommendation)
+            .ValueGeneratedNever()
             .HasColumnName("id_recommendation");
 
         builder.Property(x => x.IdProduct)
             .HasConversion(id => id.Value, value => ProductId.Create(value))
+            .ValueGeneratedNever()
             .HasColumnName("id_product");
 
         builder.HasOne<Recommendation>()
@@ -29,6 +31,6 @@ public class RecommendationProductConfiguration : IEntityTypeConfiguration<Recom
         builder.HasOne<Product>()
             .WithMany()
             .HasForeignKey(x => x.IdProduct)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
