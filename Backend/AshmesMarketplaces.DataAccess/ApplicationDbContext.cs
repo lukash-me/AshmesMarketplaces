@@ -1,10 +1,13 @@
 using AshmesMarketplaces.Domain.Entities.Access;
+using AshmesMarketplaces.Domain.Entities.Finance;
 using AshmesMarketplaces.Domain.Entities.Logistics;
 using AshmesMarketplaces.Domain.Entities.Marketplaces;
 using AshmesMarketplaces.Domain.Entities.Orders;
 using AshmesMarketplaces.Domain.Entities.Product;
 using AshmesMarketplaces.Domain.Entities.Reviews;
 using AshmesMarketplaces.Domain.Entities.Rules;
+using AshmesMarketplaces.Domain.Entities.Users;
+using AshmesMarketplaces.Domain.Entities.Workspaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace AshmesMarketplaces.DataAccess;
@@ -21,6 +24,12 @@ public class ApplicationDbContext : DbContext
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
     public DbSet<Logistic> Logistics => Set<Logistic>();
+    public DbSet<User> Users => Set<User>();
+    public DbSet<Session> Sessions => Set<Session>();
+    public DbSet<Workspace> Workspaces => Set<Workspace>();
+    public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();
+    public DbSet<Expense> Expenses => Set<Expense>();
+    public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
 
     public DbSet<Marketplace> Marketplaces => Set<Marketplace>();
     public DbSet<Brand> Brands => Set<Brand>();

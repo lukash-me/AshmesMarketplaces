@@ -21,4 +21,11 @@ public class Constants
     public const int BARCODE_MAX_LENGTH = 50;
     public const int EXTERNAL_ID_MAX_LENGTH = 128;
     public const int URL_MAX_LENGTH = 2048;
+    public const int LOGIN_MAX_LENGTH = 100;
+    public const int EMAIL_MAX_LENGTH = 320;
+    public const int PHONE_MAX_LENGTH = 32;
+    public const int PASSWORD_MAX_LENGTH = 512;
+    public const int TOKEN_MAX_LENGTH = 2048;
+    public const int IP_ADDRESS_MAX_LENGTH = 45;
+    public const int USER_AGENT_MAX_LENGTH = 512;
 }
