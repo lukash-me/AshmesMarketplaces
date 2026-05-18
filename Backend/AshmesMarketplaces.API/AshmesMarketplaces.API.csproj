@@ -12,14 +12,17 @@
     </ItemGroup>
 
     <ItemGroup>
+      <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
       <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
         <PrivateAssets>all</PrivateAssets>
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
+      <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
     </ItemGroup>
 
     <ItemGroup>
       <ProjectReference Include="..\AshmesMarketplaces.DataAccess\AshmesMarketplaces.DataAccess.csproj" />
+      <ProjectReference Include="..\AshmesMarketplaces.Application\AshmesMarketplaces.Application.csproj" />
     </ItemGroup>
 
 </Project>
