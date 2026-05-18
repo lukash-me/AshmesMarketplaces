@@ -1,9 +1,8 @@
-using AshmesMarketplaces.Application.Common.Pagination;
 using FluentValidation;
 
-namespace AshmesMarketplaces.Application.Marketplaces.Validators;
+namespace AshmesMarketplaces.Application.Common.Pagination;
 
-public sealed class MarketplaceListQueryValidator : AbstractValidator<ListQuery>
+public sealed class ListQueryValidator : AbstractValidator<ListQuery>
 {
     private static readonly HashSet<string> AllowedSortValues = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -13,7 +12,7 @@ public sealed class MarketplaceListQueryValidator : AbstractValidator<ListQuery>
         "-dateUpdate"
     };
 
-    public MarketplaceListQueryValidator()
+    public ListQueryValidator()
     {
         RuleFor(x => x.Page)
             .GreaterThanOrEqualTo(1);
