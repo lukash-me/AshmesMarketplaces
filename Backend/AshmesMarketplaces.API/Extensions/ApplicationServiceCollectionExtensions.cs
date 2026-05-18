@@ -3,6 +3,7 @@ using AshmesMarketplaces.Application.Brands.Services;
 using AshmesMarketplaces.Application.Categories.Services;
 using AshmesMarketplaces.Application.Marketplaces.Services;
 using AshmesMarketplaces.Application.Marketplaces.Validators;
+using AshmesMarketplaces.Application.Products.Services;
 using AshmesMarketplaces.Application.Warehouses.Services;
 using FluentValidation;
 
@@ -16,6 +17,8 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IBrandService, BrandService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IWarehouseService, WarehouseService>();
+        services.AddScoped<IProductService, ProductService>();
+        services.AddScoped<IProductHistoryService, ProductHistoryService>();
         services.AddValidatorsFromAssemblyContaining<CreateMarketplaceRequestValidator>();
         services.AddScoped<FluentValidationActionFilter>();
 
