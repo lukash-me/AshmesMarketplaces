@@ -14,6 +14,9 @@ using AshmesMarketplaces.Application.PermissionCategories.Services;
 using AshmesMarketplaces.Application.Permissions.Services;
 using AshmesMarketplaces.Application.ReviewReplies.Services;
 using AshmesMarketplaces.Application.Reviews.Services;
+using AshmesMarketplaces.Application.RecommendationCategories.Services;
+using AshmesMarketplaces.Application.RecommendationProducts.Services;
+using AshmesMarketplaces.Application.Recommendations.Services;
 using AshmesMarketplaces.Application.RolePermissions.Services;
 using AshmesMarketplaces.Application.Roles.Services;
 using AshmesMarketplaces.Application.RoleSubroles.Services;
@@ -57,6 +60,9 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IRuleService, RuleService>();
         services.AddScoped<IRuleSetService, RuleSetService>();
         services.AddScoped<IRuleSetRuleService, RuleSetRuleService>();
+        services.AddScoped<IRecommendationService, RecommendationService>();
+        services.AddScoped<IRecommendationProductService, RecommendationProductService>();
+        services.AddScoped<IRecommendationCategoryService, RecommendationCategoryService>();
         services.AddValidatorsFromAssemblyContaining<CreateMarketplaceRequestValidator>();
         services.AddScoped<FluentValidationActionFilter>();
 
