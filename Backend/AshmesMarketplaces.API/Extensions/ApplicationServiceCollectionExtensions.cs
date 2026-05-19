@@ -1,4 +1,7 @@
 using AshmesMarketplaces.API.Filters;
+using AshmesMarketplaces.API.Security;
+using AshmesMarketplaces.Application.Auth.Security;
+using AshmesMarketplaces.Application.Auth.Services;
 using AshmesMarketplaces.Application.Brands.Services;
 using AshmesMarketplaces.Application.CampaignMetrics.Services;
 using AshmesMarketplaces.Application.Campaigns.Services;
@@ -63,6 +66,11 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IRecommendationProductService, RecommendationProductService>();
         services.AddScoped<IRecommendationCategoryService, RecommendationCategoryService>();
+        services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IPasswordHashService, PasswordHashService>();
+        services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+        services.AddScoped<IAccessTokenService, AccessTokenService>();
+        services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddValidatorsFromAssemblyContaining<CreateMarketplaceRequestValidator>();
         services.AddScoped<FluentValidationActionFilter>();
 

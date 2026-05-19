@@ -4,7 +4,8 @@ public enum ServiceErrorType
 {
     BadRequest,
     NotFound,
-    Conflict
+    Conflict,
+    Unauthorized
 }
 
 public sealed record ServiceError(ServiceErrorType Type, string Message);

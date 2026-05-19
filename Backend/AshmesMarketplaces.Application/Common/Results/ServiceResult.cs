@@ -20,6 +20,9 @@ public class ServiceResult
 
     public static ServiceResult Conflict(string message) =>
         new(new ServiceError(ServiceErrorType.Conflict, message));
+
+    public static ServiceResult Unauthorized(string message) =>
+        new(new ServiceError(ServiceErrorType.Unauthorized, message));
 }
 
 public sealed class ServiceResult<T> : ServiceResult
@@ -41,4 +44,7 @@ public sealed class ServiceResult<T> : ServiceResult
 
     public new static ServiceResult<T> Conflict(string message) =>
         new(default, new ServiceError(ServiceErrorType.Conflict, message));
+
+    public new static ServiceResult<T> Unauthorized(string message) =>
+        new(default, new ServiceError(ServiceErrorType.Unauthorized, message));
 }

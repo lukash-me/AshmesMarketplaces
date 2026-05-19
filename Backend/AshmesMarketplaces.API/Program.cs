@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDatabase(builder.Configuration);
 builder.Services.AddApplicationServices();
 builder.Services.AddApiProblemDetails();
+builder.Services.AddAuthSecurity(builder.Configuration);
 builder.Services.AddSwaggerDocumentation();
 builder.Services.AddControllers(options =>
 {
@@ -16,6 +17,8 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseSwaggerDocumentation();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 

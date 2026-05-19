@@ -1,5 +1,6 @@
 using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
+using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Users.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Users;
@@ -10,10 +11,12 @@ namespace AshmesMarketplaces.Application.Users.Services;
 public sealed class UserService : IUserService
 {
     private readonly ApplicationDbContext _dbContext;
+    private readonly IPasswordHashService _passwordHashService;
 
-    public UserService(ApplicationDbContext dbContext)
+    public UserService(ApplicationDbContext dbContext, IPasswordHashService passwordHashService)
     {
         _dbContext = dbContext;
+        _passwordHashService = passwordHashService;
     }
 
     public async Task<ServiceResult<PagedResponse<UserListItemResponse>>> GetListAsync(UserListQuery query, CancellationToken cancellationToken)
@@ -84,10 +87,11 @@ public sealed class UserService : IUserService
 
         try
         {
+            var passwordHash = _passwordHashService.HashPassword(request.Password);
             var user = new User(
                 request.IdRole,
                 request.Login,
-                request.Password,
+                passwordHash,
                 request.Email,
                 request.Phone,
                 request.Status,
@@ -122,10 +126,11 @@ public sealed class UserService : IUserService
 
         try
         {
+            var passwordHash = _passwordHashService.HashPassword(request.Password);
             _ = new User(
                 request.IdRole,
                 request.Login,
-                request.Password,
+                passwordHash,
                 request.Email,
                 request.Phone,
                 request.Status,
@@ -135,7 +140,7 @@ public sealed class UserService : IUserService
             var entry = _dbContext.Entry(user);
             entry.Property(x => x.IdRole).CurrentValue = request.IdRole;
             entry.Property(x => x.Login).CurrentValue = request.Login;
-            entry.Property(x => x.Password).CurrentValue = request.Password;
+            entry.Property(x => x.Password).CurrentValue = passwordHash;
             entry.Property(x => x.Email).CurrentValue = request.Email;
             entry.Property(x => x.Phone).CurrentValue = request.Phone;
             entry.Property(x => x.Status).CurrentValue = request.Status;
