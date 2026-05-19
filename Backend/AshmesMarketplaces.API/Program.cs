@@ -1,5 +1,6 @@
 using AshmesMarketplaces.API.Extensions;
 using AshmesMarketplaces.API.Filters;
+using AshmesMarketplaces.API.DevelopmentSeed;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,8 +13,12 @@ builder.Services.AddControllers(options =>
 {
     options.Filters.AddService<FluentValidationActionFilter>();
 });
+builder.Services.Configure<DevelopmentSeedOptions>(
+    builder.Configuration.GetSection(DevelopmentSeedOptions.SectionName));
 
 var app = builder.Build();
+
+await app.SeedDevelopmentDataAsync();
 
 app.UseExceptionHandler();
 app.UseSwaggerDocumentation();
