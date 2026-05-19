@@ -16,10 +16,14 @@ const props = defineProps<{
   sort?: string | null;
   rowKey: (row: T) => string;
   rowClass?: (row: T) => string;
+  rowInteractive?: boolean;
+  rowAriaLabel?: (row: T) => string;
+  selectedRowKey?: string | null;
 }>();
 
 const emit = defineEmits<{
   sort: [value: string];
+  rowClick: [row: T];
 }>();
 
 function getCellValue(row: T, column: DataTableColumn<T>) {
@@ -40,6 +44,16 @@ function sortState(column: DataTableColumn<T>): 'asc' | 'desc' | 'none' {
   }
 
   return 'none';
+}
+
+function rowClasses(row: T): Array<string | undefined> {
+  const key = props.rowKey(row);
+
+  return [
+    props.rowClass?.(row),
+    props.rowInteractive ? 'table__row--interactive' : undefined,
+    props.selectedRowKey === key ? 'table__row--selected' : undefined
+  ];
 }
 </script>
 
@@ -69,7 +83,17 @@ function sortState(column: DataTableColumn<T>): 'asc' | 'desc' | 'none' {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="rowKey(row)" :class="rowClass?.(row)">
+        <tr
+          v-for="row in rows"
+          :key="rowKey(row)"
+          :class="rowClasses(row)"
+          :tabindex="rowInteractive ? 0 : undefined"
+          :role="rowInteractive ? 'button' : undefined"
+          :aria-label="rowInteractive ? rowAriaLabel?.(row) : undefined"
+          @click="rowInteractive && emit('rowClick', row)"
+          @keydown.enter.prevent="rowInteractive && emit('rowClick', row)"
+          @keydown.space.prevent="rowInteractive && emit('rowClick', row)"
+        >
           <td
             v-for="column in columns"
             :key="column.key"
@@ -124,7 +148,25 @@ tbody tr:hover {
 }
 
 tbody tr {
-  transition: background-color 120ms ease;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+tbody tr.table__row--interactive {
+  cursor: pointer;
+}
+
+tbody tr.table__row--interactive:focus-visible {
+  outline: none;
+  background: var(--surface-active-overlay);
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+
+tbody tr.table__row--selected {
+  background: var(--surface-active-overlay);
+}
+
+tbody tr.table__row--selected td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-primary);
 }
 
 tbody tr.table__row--hot td:first-child {

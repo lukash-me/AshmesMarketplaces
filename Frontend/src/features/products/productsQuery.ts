@@ -4,6 +4,7 @@ import type { ProductListParams, ProductQueryState } from './products.types';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 50;
+export type ProductQueryFilterKey = 'search' | 'idMp' | 'idBrand' | 'idCategory' | 'status' | 'sort';
 
 export function parseProductsQuery(query: LocationQuery): ProductQueryState {
   return {
@@ -43,6 +44,30 @@ export function toProductsRouteQuery(state: ProductQueryState): LocationQueryRaw
     idBrand: state.idBrand || undefined,
     idCategory: state.idCategory || undefined,
     status: state.status || undefined
+  };
+}
+
+export function resetProductQueryFilters(state: ProductQueryState): ProductQueryState {
+  return {
+    ...state,
+    page: DEFAULT_PAGE,
+    search: '',
+    sort: '',
+    idMp: '',
+    idBrand: '',
+    idCategory: '',
+    status: ''
+  };
+}
+
+export function removeProductQueryFilter(
+  state: ProductQueryState,
+  key: ProductQueryFilterKey
+): ProductQueryState {
+  return {
+    ...state,
+    page: DEFAULT_PAGE,
+    [key]: ''
   };
 }
 

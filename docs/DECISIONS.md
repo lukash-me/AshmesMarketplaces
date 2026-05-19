@@ -19,6 +19,16 @@
 - [ADR-015: Marketplaces Is the First API Vertical Slice](#adr-015-marketplaces-is-the-first-api-vertical-slice)
 - [ADR-016: API Coverage Is Added in Reviewed Vertical Stages](#adr-016-api-coverage-is-added-in-reviewed-vertical-stages)
 - [ADR-017: Complex List Filters Use Resource-Specific Query DTOs](#adr-017-complex-list-filters-use-resource-specific-query-dtos)
+- [ADR-018: Advertising, Finance, and Workspace APIs Follow Existing CRUD Pattern](#adr-018-advertising-finance-and-workspace-apis-follow-existing-crud-pattern)
+- [ADR-019: Access and Rules APIs Follow Existing CRUD Pattern](#adr-019-access-and-rules-apis-follow-existing-crud-pattern)
+- [ADR-020: Recommendations APIs Expose JSONB Through JsonElement](#adr-020-recommendations-apis-expose-jsonb-through-jsonelement)
+- [ADR-021: Auth Security Foundation Uses JWT Access Tokens and Opaque Refresh Sessions](#adr-021-auth-security-foundation-uses-jwt-access-tokens-and-opaque-refresh-sessions)
+- [ADR-022: Frontend Foundation v2 Uses Feature-Oriented Vue](#adr-022-frontend-foundation-v2-uses-feature-oriented-vue)
+- [ADR-023: Development Seed Foundation Is Development-Only and Config-Gated](#adr-023-development-seed-foundation-is-development-only-and-config-gated)
+- [ADR-024: Frontend Visual System Uses Obsidian Marketplace Intelligence Theme](#adr-024-frontend-visual-system-uses-obsidian-marketplace-intelligence-theme)
+- [ADR-025: Local Dev Startup Uses Scripts With Managed Logs And PIDs](#adr-025-local-dev-startup-uses-scripts-with-managed-logs-and-pids)
+- [ADR-026: Theme Changes Must Flow Through Semantic CSS Tokens](#adr-026-theme-changes-must-flow-through-semantic-css-tokens)
+- [ADR-027: Products Polish Stage 1 Uses Existing Product API And Field-Derived Signals](#adr-027-products-polish-stage-1-uses-existing-product-api-and-field-derived-signals)
 
 ## ADR-001: SKU and Marketplace External IDs Are Strings
 
@@ -473,3 +483,324 @@ Keep sorting/filtering allowlisted inside the resource service/validator pair.
 - Each API slice remains explicit and easy to review.
 - Catalog endpoints stay small.
 - The project avoids generic query frameworks while keeping room for future shared helpers if patterns stabilize.
+
+## ADR-018: Advertising, Finance, and Workspace APIs Follow Existing CRUD Pattern
+
+### Context
+
+After Catalog, Product, and Operations APIs were implemented, the next API coverage stages exposed existing Advertising, Finance, and Users/Workspaces database entities.
+
+### Problem
+
+The project needed CRUD coverage for campaigns, campaign metrics, expenses, expense categories, users, workspaces, and workspace membership without changing the EF model, adding migrations, or introducing auth/session behavior before those concerns were reviewed.
+
+### Decision
+
+Use the same resource-service CRUD pattern for:
+
+- `Campaigns`;
+- `CampaignMetrics`;
+- `Expenses`;
+- `ExpenseCategories`;
+- `Users`;
+- `Workspaces`;
+- `UserWorkspaces`.
+
+Keep Application services on direct `ApplicationDbContext`, manual DTO mapping, FluentValidation, allowlisted filtering/sorting, `ServiceResult`, ProblemDetails, async EF calls, and hard delete with `409 Conflict` for FK/database conflicts.
+
+At those CRUD stages, do not add `Sessions API`, auth/JWT/session login, repositories, CQRS, generic CRUD abstractions, schema changes, or migrations.
+
+`User.Password` is accepted by create/update DTOs because the existing entity requires it, but it is not returned by response DTOs. Password hashing and authentication were intentionally deferred from these CRUD stages and later implemented by ADR-021.
+
+### Consequences
+
+- API coverage now includes Advertising, Finance, and Users/Workspaces while preserving the established architecture.
+- `Expenses` can be runtime-smoke-tested through API-created `Users` and `Workspaces`.
+- Role data is still required for `Users` and `UserWorkspaces`; after the Access API stage, verification can create roles through the API instead of temporary SQL fixtures.
+- Auth was intentionally deferred from this CRUD stage and later implemented by ADR-021; workspace authorization remains a future dedicated stage.
+
+## ADR-019: Access and Rules APIs Follow Existing CRUD Pattern
+
+### Context
+
+After Advertising, Finance, and Workspace APIs, the backend needed CRUD coverage for existing Access and Rules tables without changing schema or introducing auth behavior.
+
+### Problem
+
+`Roles`, `Permissions`, `PermissionCategories`, `RolePermissions`, `RoleSubroles`, `Rules`, `RuleSets`, and `RuleSetRules` are existing EF entities used by other subsystems. Exposing them should not create a new architecture or imply completed authorization/session behavior.
+
+### Decision
+
+Expose Access and Rules as reviewed API/Application-only CRUD slices using the existing resource-service pattern:
+
+- separate controllers, DTOs, validators, and services;
+- direct `ApplicationDbContext`;
+- manual mapping;
+- resource-specific query DTOs where filters differ;
+- explicit composite-key routes for join resources;
+- no `PUT` for key-only joins;
+- no auth/JWT/session login, repositories, CQRS, generic CRUD abstractions, schema changes, or migrations in that Access/Rules CRUD stage.
+
+### Consequences
+
+- Access and Rules reference data can be managed through API endpoints.
+- `Users` and `UserWorkspaces` verification can use API-created roles.
+- Auth/session flow was later implemented by ADR-021; workspace authorization and permission policy enforcement remain future dedicated stages.
+
+## ADR-020: Recommendations APIs Expose JSONB Through JsonElement
+
+### Context
+
+`Recommendation` has dynamic JSONB fields `Explanation` and `Snapshot`, and recommendation target links are explicit join entities for products and categories.
+
+### Problem
+
+The API needs to expose recommendation results without stabilizing JSON schemas or adding ML inference, background jobs, parser integration, or recommendation engine logic.
+
+### Decision
+
+Expose Recommendations as an API/Application-only CRUD slice:
+
+- `Recommendations` CRUD uses `JsonElement?` in request/response DTOs and converts to/from `JsonDocument?` inside services;
+- `RecommendationProducts` and `RecommendationCategories` are explicit composite-key join resources;
+- `RecommendationProduct.IdProduct` is exposed as `Guid` and converted with `ProductId.Create(...)`;
+- list filters are allowlisted and do not do full-text search over JSONB;
+- no schema changes, migrations, ML inference, background jobs, parser integration, repositories, CQRS, or generic CRUD abstractions.
+
+### Consequences
+
+- Recommendation records and target links can be smoke-tested and managed through the API.
+- Dynamic JSON remains flexible until schemas are stable.
+- ML/runtime recommendation generation remains a separate future integration stage.
+
+## ADR-021: Auth Security Foundation Uses JWT Access Tokens and Opaque Refresh Sessions
+
+### Context
+
+CRUD API coverage is completed, `Users`, `Roles`, `Permissions`, `Workspaces`, `UserWorkspaces`, and `Sessions` already exist, and `InitialCreate` is the current migration baseline.
+
+### Problem
+
+The project needed a minimal safe auth foundation without schema churn, OAuth, 2FA, a complex RBAC engine, or breaking existing CRUD smoke-tests.
+
+### Decision
+
+Implement Auth/Security Foundation in commit `2201971 Add auth security foundation`:
+
+- Passwords are hashed with ASP.NET Core `PasswordHasher`.
+- `Users.password` remains the database column and now semantically stores password hashes.
+- Authentication uses JWT access tokens plus opaque refresh tokens.
+- `Sessions` is used for refresh/session storage.
+- `Sessions.token` stores only a refresh-token hash, not the raw token.
+- `Sessions.status` uses `1` for active and `2` for revoked in the auth layer.
+- Auth endpoints are:
+  - `POST /api/v1/auth/login`;
+  - `POST /api/v1/auth/refresh`;
+  - `POST /api/v1/auth/logout`;
+  - `GET /api/v1/auth/me`.
+- Existing CRUD APIs remain anonymous in this stage for backward compatibility.
+- Swagger remains Development-only and includes Bearer auth support.
+
+### Consequences
+
+- No migration or DataAccess schema change was required.
+- Existing plaintext test users cannot log in until their password is reset through the current Users API or recreated.
+- Access tokens remain valid until expiry after logout; refresh/session state is revoked through `Sessions`.
+- Workspace authorization, permission policies, rate limiting, lockout, OAuth, external providers, 2FA, and full RBAC remain future dedicated stages.
+- Frontend Foundation v2 was later implemented by ADR-022.
+
+## ADR-022: Frontend Foundation v2 Uses Feature-Oriented Vue
+
+### Context
+
+Backend CRUD coverage and Auth/Security Foundation were complete, so the project needed the first seller-facing frontend foundation without copying a specific reference product.
+
+### Problem
+
+The frontend needed real backend integration and premium B2B SaaS dashboard structure, but it should not become a backend entity mirror or attempt every page at once.
+
+### Decision
+
+Implement Frontend Foundation v2 in commit `a897c18 Add frontend foundation`:
+
+- Vue 3, TypeScript, Composition API, Vite, Vue Router, Pinia, Axios, and Tailwind CSS tokens/components.
+- Feature-oriented source structure under `Frontend/src/features`, with `entities` reserved for shared model types.
+- Persistent protected app shell with sidebar, topbar, content container, and page header.
+- Auth frontend flow with login, logout, refresh, persisted MVP token storage, and protected routes.
+- Products vertical slice with real backend integration, filters, sorting, pagination, URL query sync, KPI cards, and loading/error/empty states.
+- Overview, Orders, Reviews, Logistics, Campaigns, Expenses, Recommendations, and Access settings remain lightweight placeholders.
+
+### Consequences
+
+- Frontend foundation is implemented and should no longer be described as absent or future work.
+- Next frontend work should build on the existing shell and feature structure.
+- Recommended next frontend stages are product polish, Marketplaces page, Overview dashboard, and broader analytics UX.
+- Access token storage in localStorage is an MVP approach; future hardening may move access tokens to memory-only storage.
+
+## ADR-023: Development Seed Foundation Is Development-Only and Config-Gated
+
+### Context
+
+Local frontend and API testing needed deterministic accounts, roles, workspace data, products, and analytical demo records. Public registration is intentionally not part of the current auth foundation.
+
+### Problem
+
+Developers needed easy local login and role/scenario testing without adding migrations, exposing registration, storing plaintext passwords, or risking Production seed execution.
+
+### Decision
+
+Implement Development Seed Foundation in commit `2315ee9 Add development seed foundation`:
+
+- Seed code lives under `AshmesMarketplaces.API/DevelopmentSeed`.
+- Seed runs only when the environment is `Development` and `Seed:EnableDevelopmentSeed=true`.
+- Default Development config keeps `Seed:EnableDevelopmentSeed=false`.
+- Seed creates roles `Admin`, `Manager`, `Analyst`, `Viewer`.
+- Seed creates dev users:
+  - `admin@ashmes.local` / `Admin123!`;
+  - `manager@ashmes.local` / `Manager123!`;
+  - `analyst@ashmes.local` / `Analyst123!`;
+  - `viewer@ashmes.local` / `Viewer123!`.
+- Seed creates one workspace, marketplace/catalog records, products, and minimal orders/reviews/campaigns/expenses for UI testing.
+- Seed uses existing `IPasswordHashService`/`PasswordHasher`; plaintext passwords are never stored in the database.
+- Seed is idempotent through lookup-based business keys and does not call `Database.Migrate()`.
+
+### Consequences
+
+- No migration or schema change was required after `InitialCreate`.
+- Public registration remains deferred because it needs separate security, validation, verification, abuse-control, and permission design.
+- Seed credentials may be logged/documented only for local Development use.
+- Authorization hardening remains a later dedicated stage.
+
+## ADR-024: Frontend Visual System Uses Obsidian Marketplace Intelligence Theme
+
+### Context
+
+Frontend Foundation v2 provided a working shell and Products slice, but the first visual implementation was still closer to a generic light SaaS dashboard than the intended marketplace intelligence workstation.
+
+### Problem
+
+The product needs a premium analytical identity without copying competitor visuals and without turning fire into decoration. It also needs to avoid fake analytics while real growth, demand, and recommendation metrics are not available in the Products list API.
+
+### Decision
+
+Implement Frontend Visual Redesign Stage 1 in commit `b18cd90 Add local dev startup scripts and harden theme tokens`:
+
+- Use a dark obsidian marketplace intelligence visual direction.
+- Keep layouts compact and data-first.
+- Use layered transparent panels, restrained ember accents, readable dense tables, and clear hover/focus states.
+- Treat fire/ember as a signal system only.
+- Do not use flame images, emoji, animated fire, excessive glow, gaming/casino visuals, or toy-like animations.
+- Add Products heat indicators only as presentation scaffolding derived from current product fields such as status/update recency.
+- Do not show fake demand, growth, or recommendation numbers.
+- Do not describe presentation heat signals as real demand/growth/recommendation metrics.
+
+### Consequences
+
+- Products table readability and row scan speed take priority over decorative KPI polish.
+- Future real heat/recommendation UI must be backed by explicit backend/API data before it can claim business meaning.
+- Competitors may inform navigation/workflow ideas, not copied visual styling.
+
+## ADR-025: Local Dev Startup Uses Scripts With Managed Logs And PIDs
+
+### Context
+
+Local development requires PostgreSQL through Docker Compose, backend API, and frontend Vite. Running these manually was repetitive and error-prone on Windows.
+
+### Problem
+
+Developers needed one-command startup and shutdown without adding a heavy task runner, auto-applying migrations, enabling seed unexpectedly, deleting volumes, or killing unrelated processes on occupied ports.
+
+### Decision
+
+Add local dev scripts in commit `b18cd90 Add local dev startup scripts and harden theme tokens`:
+
+- PowerShell:
+  - `scripts/dev/start-dev.ps1`;
+  - `scripts/dev/stop-dev.ps1`.
+- Bash / Git Bash / WSL-style:
+  - `scripts/dev/start-dev.sh`;
+  - `scripts/dev/stop-dev.sh`.
+- Default startup runs PostgreSQL and pgAdmin from `docker-compose.local.yml`, then backend API on `http://localhost:5019`, then frontend Vite on `http://localhost:5173`.
+- Runtime logs and PID files are stored under `.dev/`, which is ignored by git.
+- Stop scripts stop only managed backend/frontend processes from PID files.
+- Docker services are stopped only with explicit flags:
+  - PowerShell: `-StopDocker`;
+  - Bash: `--docker`.
+- Volumes are never deleted by these scripts.
+- Startup scripts do not apply migrations automatically and do not enable development seed automatically.
+
+### Consequences
+
+- Local developer startup is standardized without introducing a root-level npm task runner.
+- Port conflicts with unmanaged processes are surfaced as errors instead of being killed.
+- Database schema and seed behavior remain explicit reviewed operations.
+
+## ADR-026: Theme Changes Must Flow Through Semantic CSS Tokens
+
+### Context
+
+Frontend Visual Redesign Stage 1 introduced a dark obsidian visual system. The first pass still had some raw component-level colors.
+
+### Problem
+
+Future theme changes would be brittle if visual colors were scattered across shared primitives and shell components.
+
+### Decision
+
+Harden frontend theme tokens in commit `b18cd90 Add local dev startup scripts and harden theme tokens`:
+
+- `Frontend/src/styles/tokens.css` is the theme source of truth.
+- Semantic variables are scoped through `:root, [data-theme="obsidian"]`.
+- Tokens cover background, surfaces, controls, tables, sidebar/topbar, borders, text, muted text, ember/fire accents, state colors, focus rings, shadows, and heat states.
+- Shared primitives should consume semantic tokens rather than hardcoded colors.
+- Backward-compatible `--color-*` aliases may remain where they reduce churn.
+- No theme switcher UI is implemented in this stage.
+- Do not add UI libraries, chart libraries, or animation libraries for theme changes.
+
+### Consequences
+
+- Future visual themes should be implemented mostly by updating CSS variables.
+- Components such as `Button`, `Input`, `Card`, `DataTable`, `Badge`, and shell widgets should not need rewrites for theme color changes.
+- New frontend components should avoid raw visual color literals outside token definitions.
+
+## ADR-027: Products Polish Stage 1 Uses Existing Product API And Field-Derived Signals
+
+### Context
+
+Frontend Foundation v2 and the obsidian visual system already provided a working Products page integrated with real backend data. The page needed to become the reference marketplace intelligence workstation screen without changing backend contracts or inventing analytics that do not exist yet.
+
+### Problem
+
+The Products page needed better density, row scan speed, filters, and detail inspection. At the same time, the frontend had to avoid fake demand/growth/recommendation metrics, avoid route/API/auth/schema changes, and correct the frontend interpretation of `ProductStatus`.
+
+### Decision
+
+Implement Products Polish Stage 1 as a frontend-only stage:
+
+- Keep `/products` and existing Products API contracts unchanged.
+- Continue listing through `GET /api/v1/products`.
+- Open a read-only side drawer from product rows and fetch existing `GET /api/v1/products/{id}` for description, characteristics JSON, images, videos, identifiers, status, and dates.
+- Use the backend `ProductStatus` enum mapping exactly:
+  - `Draft=0`;
+  - `Pending=1`;
+  - `Active=2`;
+  - `Rejected=3`;
+  - `Blocked=4`;
+  - `Archived=5`;
+  - `OutOfStock=6`;
+  - `Disappeared=7`.
+- Derive heat/signal tiers only from existing `status` and `dateUpdated`:
+  - `hot`: `Active` updated within 7 days;
+  - `rising`: `Active` updated within 30 days, or `Pending` updated within 7 days;
+  - `warm`: active, pending, out-of-stock records not qualifying above, or any product updated within 60 days;
+  - `dormant`: draft/rejected/blocked/archived/disappeared, invalid date, or older than 60 days.
+- Present heat as signal scaffolding only through badges, mini bars, row accents, and drawer summary.
+- Keep filters URL-query driven and add compact toolbar, status select, quick reset, and active chips.
+- Allow row click and simple keyboard interaction (`Enter`/`Space`) to open the drawer; close with button, backdrop, or `Escape`.
+
+### Consequences
+
+- Products is now the frontend benchmark screen for dense marketplace-intelligence UI.
+- No backend API contract, auth behavior, route path, schema, migration, parser, ML, chart library, UI library, or animation library was introduced.
+- Product detail is read-only; create/edit/delete/media mutation workflows remain future scoped tasks.
+- Heat/signal UI remains intentionally non-analytical until real demand, growth, or recommendation data is added through reviewed backend/API work.

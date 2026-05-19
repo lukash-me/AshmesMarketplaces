@@ -5,6 +5,13 @@ import Badge from '@/shared/ui/Badge.vue';
 import Button from '@/shared/ui/Button.vue';
 import DataTable from '@/shared/ui/DataTable.vue';
 
+import ProductSignalBadge from './ProductSignalBadge.vue';
+import {
+  getDaysSince,
+  getProductHeatTier,
+  getProductStatusLabel,
+  getProductStatusTone
+} from './productSignals';
 import type { ProductListItem } from './products.types';
 
 const props = defineProps<{
@@ -13,28 +20,28 @@ const props = defineProps<{
   pageSize: number;
   totalCount: number;
   sort: string;
+  selectedId?: string | null;
 }>();
 
 const emit = defineEmits<{
   sort: [value: string];
   page: [value: number];
+  open: [row: ProductListItem];
 }>();
 
 const columns = [
-  { key: 'signal', label: 'Signal' },
-  { key: 'name', label: 'Product', sortable: true },
+  { key: 'signal', label: 'Signal', className: 'table__cell--signal' },
+  { key: 'name', label: 'Product', sortable: true, className: 'table__cell--product' },
   { key: 'skuSeller', label: 'Seller SKU', sortable: true },
-  { key: 'idMp', label: 'Marketplace' },
   { key: 'status', label: 'Status' },
   { key: 'commission', label: 'Commission', align: 'right' },
-  { key: 'dateUpdated', label: 'Updated', sortable: true }
+  { key: 'dateUpdated', label: 'Updated', sortable: true },
+  { key: 'ids', label: 'IDs' }
 ];
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.totalCount / props.pageSize)));
 const pageStart = computed(() => (props.totalCount === 0 ? 0 : (props.page - 1) * props.pageSize + 1));
 const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pageSize));
-
-type HeatTier = 'hot' | 'rising' | 'warm' | 'dormant';
 
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat('en', {
@@ -44,84 +51,30 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
-function daysSince(value: string): number {
-  const updated = new Date(value).getTime();
-
-  if (!Number.isFinite(updated)) {
-    return Number.POSITIVE_INFINITY;
-  }
-
-  return Math.max(0, Math.floor((Date.now() - updated) / 86_400_000));
-}
-
-function heatTier(row: ProductListItem): HeatTier {
-  const age = daysSince(row.dateUpdated);
-
-  if (row.status === 1 && age <= 7) {
-    return 'hot';
-  }
-
-  if (row.status === 1 && age <= 21) {
-    return 'rising';
-  }
-
-  if (row.status === 1 || row.status === 2) {
-    return 'warm';
-  }
-
-  return 'dormant';
-}
-
-function heatLabel(row: ProductListItem): string {
-  const tier = heatTier(row);
-
-  if (tier === 'hot') {
-    return 'Active';
-  }
-
-  if (tier === 'rising') {
-    return 'Recent';
-  }
-
-  if (tier === 'warm') {
-    return 'Watch';
-  }
-
-  return 'Quiet';
-}
-
-function heatTone(row: ProductListItem): 'neutral' | 'warning' | 'ember' | 'hot' {
-  const tier = heatTier(row);
-
-  if (tier === 'hot') {
-    return 'hot';
-  }
-
-  if (tier === 'rising') {
-    return 'ember';
-  }
-
-  if (tier === 'warm') {
-    return 'warning';
-  }
-
-  return 'neutral';
-}
-
 function rowClass(row: ProductListItem): string {
-  return `table__row--${heatTier(row)}`;
+  return `table__row--${getProductHeatTier(row)}`;
 }
 
-function statusTone(status: number): 'success' | 'warning' | 'neutral' {
-  if (status === 1) {
-    return 'success';
+function formatAge(value: string): string {
+  const days = getDaysSince(value);
+
+  if (!Number.isFinite(days)) {
+    return 'Unknown age';
   }
 
-  if (status === 2) {
-    return 'warning';
+  if (days === 0) {
+    return 'Updated today';
   }
 
-  return 'neutral';
+  return `${days}d ago`;
+}
+
+function compactId(value: string | null): string {
+  if (!value) {
+    return '-';
+  }
+
+  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
 }
 </script>
 
@@ -133,21 +86,23 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
       :sort="sort"
       :row-key="(row) => row.id"
       :row-class="rowClass"
+      :row-interactive="true"
+      :selected-row-key="selectedId"
+      :row-aria-label="(row) => `Open product ${row.name}`"
       @sort="emit('sort', $event)"
+      @row-click="emit('open', $event)"
     >
       <template #cell-signal="{ row }">
-        <Badge
-          :tone="heatTone(row)"
-          :title="`Presentation signal derived from status and update recency: ${heatLabel(row)}`"
-        >
-          {{ heatLabel(row) }}
-        </Badge>
+        <ProductSignalBadge :product="row" />
       </template>
 
       <template #cell-name="{ row }">
         <div class="product-cell">
           <strong>{{ row.name }}</strong>
-          <span>{{ row.skuProduct || row.idOnMp || 'No marketplace SKU' }}</span>
+          <span>
+            {{ row.skuProduct || row.idOnMp || 'No marketplace SKU' }}
+            <template v-if="row.barcode"> / {{ row.barcode }}</template>
+          </span>
         </div>
       </template>
 
@@ -155,12 +110,10 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
         <code class="code-cell">{{ value }}</code>
       </template>
 
-      <template #cell-idMp="{ value }">
-        <code class="code-cell">{{ value }}</code>
-      </template>
-
       <template #cell-status="{ value }">
-        <Badge :tone="statusTone(Number(value))">Status {{ value }}</Badge>
+        <Badge :tone="getProductStatusTone(Number(value))">
+          {{ getProductStatusLabel(Number(value)) }}
+        </Badge>
       </template>
 
       <template #cell-commission="{ value }">
@@ -168,7 +121,18 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
       </template>
 
       <template #cell-dateUpdated="{ value }">
-        <span class="numeric">{{ formatDate(String(value)) }}</span>
+        <span class="date-cell">
+          <span class="numeric">{{ formatDate(String(value)) }}</span>
+          <small>{{ formatAge(String(value)) }}</small>
+        </span>
+      </template>
+
+      <template #cell-ids="{ row }">
+        <span class="ids-cell">
+          <code :title="row.idMp">MP {{ compactId(row.idMp) }}</code>
+          <code v-if="row.idBrand" :title="row.idBrand">BR {{ compactId(row.idBrand) }}</code>
+          <code v-if="row.idCategory" :title="row.idCategory">CT {{ compactId(row.idCategory) }}</code>
+        </span>
       </template>
     </DataTable>
 
@@ -195,7 +159,7 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
 .product-cell {
   display: grid;
   gap: 0.125rem;
-  min-width: 18rem;
+  min-width: 20rem;
 }
 
 .product-cell strong {
@@ -211,7 +175,25 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
 
 .code-cell {
   font-family: var(--font-mono);
-  word-break: break-all;
+  white-space: nowrap;
+}
+
+.date-cell,
+.ids-cell {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.date-cell small {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.ids-cell code {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 
 .products-table__footer {

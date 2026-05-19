@@ -25,6 +25,7 @@ Runtime setup currently includes:
 - `ApplicationDbContextFactory` for design-time EF tooling;
 - local `dotnet-ef` tool manifest;
 - local Docker Compose infrastructure for PostgreSQL, pgAdmin, Redis, and MinIO.
+- local dev startup scripts under `scripts/dev` for starting PostgreSQL + pgAdmin, backend API, and frontend Vite.
 
 Runtime verification already completed once against local PostgreSQL:
 
@@ -32,7 +33,22 @@ Runtime verification already completed once against local PostgreSQL:
 - `__EFMigrationsHistory` contained `20260518152454_InitialCreate`;
 - generated schema was checked for tables, FK delete behavior, `jsonb`, and decimal precision.
 
-Recent API coverage stages for Catalog, Product, and Operations did not change the database schema and did not require new migrations.
+Recent API coverage stages for Catalog, Product, Operations, Advertising, Finance, Users/Workspaces, Access, Rules, Recommendations, Auth/Security Foundation, Frontend Foundation v2, and Development Seed Foundation did not change the database schema and did not require new migrations.
+
+Frontend Visual Redesign Stage 1, Products Polish Stage 1, local dev startup scripts, and theme token hardening did not change the database schema and did not require migrations.
+
+The latest API-only stages exposed existing tables through Application/API CRUD slices:
+
+- Advertising: `Campaign`, `Metrics_Campaign`;
+- Finance: `Expenses`, `Categories_Expenses`;
+- Users/workspaces: `Users`, `Workspaces`, `Users_Workspaces`.
+- Access: `Roles`, `Permissions_Categories`, `Permissions`, `Roles_Permissions`, `Role_Subroles`;
+- Rules: `Rules`, `Sets`, `Sets_Rules`;
+- Recommendations: `Recommendations`, `Recommendation_Products`, `Recommendation_Categories`.
+- Auth/Security Foundation: `Users.password` stores PasswordHasher output, and `Sessions` stores refresh/session state.
+- Development Seed Foundation: existing `Roles`, `Users`, `Workspaces`, catalog, product, order, review, campaign, and expense tables are used for local demo data; no seed-specific tables were added.
+
+These stages reused the committed `InitialCreate` schema, existing EF configurations, explicit FK behavior, `jsonb` mappings, and UTC `DateTime` policy. Auth/Security Foundation uses existing `Users.password` and `Sessions` columns without schema changes. Development Seed Foundation uses existing tables only, stores PasswordHasher hashes in `Users.password`, and is gated by `ASPNETCORE_ENVIRONMENT=Development` plus `Seed:EnableDevelopmentSeed=true`.
 
 ## Naming Conventions
 
@@ -108,8 +124,8 @@ Rules, RuleSets, RuleSetRules
 
 | Table | Entity | Purpose | Key columns and types | FKs / relationships |
 |---|---|---|---|---|
-| `Users` | `User` | System user account | `id Guid PK`, `id_role Guid FK`, `login varchar(100)`, `password varchar(512)`, `email varchar(320)?`, `phone varchar(32)`, `status int enum`, `date_create DateTime`, `date_login DateTime` | FK to `Roles`, referenced by sessions, workspace joins, expenses |
-| `Sessions` | `Session` | User sessions/tokens | `id int PK`, `id_user Guid FK`, `ip_address varchar(45)?`, `agent varchar(512)?`, `token varchar(2048)`, `status int enum`, `date_create DateTime`, `date_refreshed DateTime?`, `date_expires DateTime` | FK to `Users`, cascade |
+| `Users` | `User` | System user account | `id Guid PK`, `id_role Guid FK`, `login varchar(100)`, `password varchar(512)` storing PasswordHasher output, `email varchar(320)?`, `phone varchar(32)`, `status int enum`, `date_create DateTime`, `date_login DateTime` | FK to `Roles`, referenced by sessions, workspace joins, expenses |
+| `Sessions` | `Session` | Refresh/session storage | `id int PK`, `id_user Guid FK`, `ip_address varchar(45)?`, `agent varchar(512)?`, `token varchar(2048)` storing refresh-token hash, `status int` where auth uses `1` active and `2` revoked, `date_create DateTime`, `date_refreshed DateTime?`, `date_expires DateTime` | FK to `Users`, cascade |
 | `Workspaces` | `Workspace` | Team/seller workspace | `id Guid PK`, `id_brand Guid? FK`, `name varchar(255)`, `description text?`, `url_invite varchar(2048)?`, `status int enum`, `date_create DateTime`, `date_update DateTime` | FK to `Brands`, referenced by users/products/expenses |
 | `Users_Workspaces` | `UserWorkspace` | User-workspace membership with workspace role | `id_user Guid PK/FK`, `id_workspace Guid PK/FK`, `id_role Guid FK` | FK to `Users`, `Workspaces`, `Roles` |
 | `Categories_Expenses` | `ExpenseCategory` | Expense category reference | `id Guid PK`, `name varchar(255)`, `description text?`, `date_create DateTime`, `date_update DateTime` | Referenced by `Expenses` |
@@ -243,6 +259,24 @@ Local infrastructure services:
 - Redis on port `6379` by default.
 - MinIO API on port `9000` and console on port `9001` by default.
 
+Local dev scripts:
+
+- `scripts/dev/start-dev.ps1`;
+- `scripts/dev/stop-dev.ps1`;
+- `scripts/dev/start-dev.sh`;
+- `scripts/dev/stop-dev.sh`.
+
+Default script startup runs PostgreSQL and pgAdmin from `docker-compose.local.yml`, then backend API and frontend Vite. The scripts write logs/PIDs under `.dev/`, do not call `Database.Migrate()`, do not apply EF migrations, do not enable development seed automatically, and do not delete docker volumes.
+
+Development seed:
+
+- seed code lives in `Backend/AshmesMarketplaces.API/DevelopmentSeed`;
+- default `appsettings.Development.json` has `Seed:EnableDevelopmentSeed=false`;
+- enabling seed requires `Seed__EnableDevelopmentSeed=true` or equivalent configuration;
+- seed does not call `Database.Migrate()` and does not create schema objects;
+- seeded dev accounts are `admin@ashmes.local`, `manager@ashmes.local`, `analyst@ashmes.local`, and `viewer@ashmes.local`;
+- plaintext dev passwords are logged/documented only for local Development use; the database stores only password hashes.
+
 Typical local workflow:
 
 ```powershell
@@ -264,6 +298,8 @@ Backend/AshmesMarketplaces.DataAccess/Migrations/20260518152454_InitialCreate.cs
 Backend/AshmesMarketplaces.DataAccess/Migrations/20260518152454_InitialCreate.Designer.cs
 Backend/AshmesMarketplaces.DataAccess/Migrations/ApplicationDbContextModelSnapshot.cs
 ```
+
+No migrations were added for Auth/Security Foundation, Frontend Foundation v2, Development Seed Foundation, Frontend Visual Redesign Stage 1, Products Polish Stage 1, local dev startup scripts, or theme token hardening. Development seed data is runtime data only and must stay separate from migration generation.
 
 Recommended future process:
 

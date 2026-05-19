@@ -14,6 +14,26 @@ export interface ProductListItem {
   dateUpdated: string;
 }
 
+export interface ProductImage {
+  id: string;
+  url: string;
+  sortOrder: number;
+  isMain: boolean;
+}
+
+export interface ProductVideo {
+  id: string;
+  url: string;
+  sortOrder: number;
+}
+
+export interface ProductDetail extends ProductListItem {
+  description: string | null;
+  characteristics: unknown | null;
+  images: ProductImage[];
+  videos: ProductVideo[];
+}
+
 export interface ProductListParams {
   page: number;
   pageSize: number;

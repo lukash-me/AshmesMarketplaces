@@ -180,9 +180,28 @@ Domain constructors perform obvious local validation:
 - update dates are not before create dates;
 - persisted date/time values are UTC.
 
-API/request validation is implemented for current Catalog, Product, and Operations slices and should use FluentValidation for future request DTOs.
+API/request validation is implemented for current Catalog, Product, Operations, Advertising, Finance, Users/Workspaces, Access, Rules, Recommendations, and Auth/Security slices and should use FluentValidation for future request DTOs.
 
 Current API/Application foundation uses FluentValidation for request DTOs. DTO validation does not replace Domain invariants: entity constructors/factories remain the final guard for persisted domain state.
+
+Recommendation API DTOs expose dynamic JSONB fields as `JsonElement?`; Application services convert them to `JsonDocument?` before persistence and clone `JsonElement` values for responses.
+
+Auth/Security Foundation keeps existing entity and EF conventions:
+
+- `Users.password` stores PasswordHasher output, not plaintext.
+- `Sessions.token` stores only an opaque refresh-token hash, not the raw refresh token.
+- Auth uses existing `Sessions.status` values `1` active and `2` revoked without changing the schema.
+- Existing CRUD APIs remain anonymous until a later authorization-hardening stage.
+
+Development Seed Foundation also keeps existing entity and EF conventions:
+
+- seed code uses existing Domain constructors/factories and `ApplicationDbContext`;
+- seed runs only in Development when `Seed:EnableDevelopmentSeed=true`;
+- seed uses `IPasswordHashService`/`PasswordHasher` for dev account password hashes;
+- seed uses lookup-based idempotency on stable names, logins, SKUs, and external IDs because most seed lookup fields are not backed by unique indexes;
+- seed must not add EF configurations, schema objects, migrations, startup migration calls, or public registration endpoints.
+
+Frontend Visual Redesign Stage 1, Products Polish Stage 1, local dev startup scripts, and theme token hardening did not change Domain entities, DataAccess configurations, EF conventions, migrations, JSONB mappings, key policies, or delete behavior. Products Polish Stage 1 only changed frontend display/interaction over existing Products list/detail API responses.
 
 API/Application changes must not change entity conventions. Do not add DataAnnotations to Domain entities for API validation.
 

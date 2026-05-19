@@ -8,13 +8,18 @@ import LoadingState from '@/shared/ui/LoadingState.vue';
 import KpiGrid from '@/widgets/KpiGrid.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
+import ProductDetailDrawer from './ProductDetailDrawer.vue';
+import { getProductHeatTier } from './productSignals';
 import { getProducts } from './products.api';
 import ProductsFilters from './ProductsFilters.vue';
 import ProductsTable from './ProductsTable.vue';
 import {
   parseProductsQuery,
+  removeProductQueryFilter,
+  resetProductQueryFilters,
   toProductsApiParams,
-  toProductsRouteQuery
+  toProductsRouteQuery,
+  type ProductQueryFilterKey
 } from './productsQuery';
 import type { ProductListItem, ProductQueryState } from './products.types';
 
@@ -26,16 +31,11 @@ const products = ref<ProductListItem[]>([]);
 const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
+const selectedProduct = ref<ProductListItem | null>(null);
 
 const kpis = computed(() => {
-  const activeCount = products.value.filter((product) => product.status === 1).length;
-  const commissions = products.value
-    .map((product) => product.commission)
-    .filter((value): value is number => typeof value === 'number');
-  const averageCommission =
-    commissions.length === 0
-      ? '-'
-      : Math.round(commissions.reduce((sum, value) => sum + value, 0) / commissions.length);
+  const activeCount = products.value.filter((product) => product.status === 2).length;
+  const hotCount = products.value.filter((product) => getProductHeatTier(product) === 'hot').length;
   const latestUpdate = products.value
     .map((product) => new Date(product.dateUpdated).getTime())
     .filter(Number.isFinite)
@@ -43,8 +43,8 @@ const kpis = computed(() => {
 
   return [
     { label: 'Products loaded', value: products.value.length, caption: `${totalCount.value} total` },
-    { label: 'Active on page', value: activeCount, caption: 'Status 1 records' },
-    { label: 'Avg. commission', value: averageCommission, caption: 'Loaded page only' },
+    { label: 'Active on page', value: activeCount, caption: 'Status 2 records' },
+    { label: 'Hot signals', value: hotCount, caption: 'Status/update scaffold' },
     {
       label: 'Latest update',
       value: latestUpdate ? new Intl.DateTimeFormat('en', { month: 'short', day: '2-digit' }).format(latestUpdate) : '-',
@@ -91,15 +91,23 @@ async function updateQuery(patch: Partial<ProductQueryState>) {
 }
 
 function resetFilters() {
-  void updateQuery({
-    page: 1,
-    search: '',
-    sort: '',
-    idMp: '',
-    idBrand: '',
-    idCategory: '',
-    status: ''
+  void router.replace({
+    query: toProductsRouteQuery(resetProductQueryFilters(queryState.value))
   });
+}
+
+function removeFilter(key: ProductQueryFilterKey) {
+  void router.replace({
+    query: toProductsRouteQuery(removeProductQueryFilter(queryState.value, key))
+  });
+}
+
+function openProduct(row: ProductListItem) {
+  selectedProduct.value = row;
+}
+
+function closeProduct() {
+  selectedProduct.value = null;
 }
 </script>
 
@@ -116,6 +124,7 @@ function resetFilters() {
       :state="queryState"
       @apply="updateQuery"
       @reset="resetFilters"
+      @remove="removeFilter"
     />
 
     <LoadingState v-if="loading" class="app-surface" />
@@ -141,8 +150,16 @@ function resetFilters() {
       :page-size="queryState.pageSize"
       :total-count="totalCount"
       :sort="queryState.sort"
+      :selected-id="selectedProduct?.id"
       @sort="updateQuery({ page: 1, sort: $event })"
       @page="updateQuery({ page: $event })"
+      @open="openProduct"
+    />
+
+    <ProductDetailDrawer
+      :open="Boolean(selectedProduct)"
+      :product="selectedProduct"
+      @close="closeProduct"
     />
   </div>
 </template>
