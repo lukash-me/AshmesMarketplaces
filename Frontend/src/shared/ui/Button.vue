@@ -30,14 +30,15 @@ withDefaults(
 <style scoped>
 .button {
   display: inline-flex;
-  min-height: 2.25rem;
+  min-height: 2.125rem;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  padding: 0 var(--space-4);
-  font-weight: 600;
+  padding: 0 var(--space-3);
+  font-size: 0.8125rem;
+  font-weight: 680;
   line-height: 1;
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
 }
@@ -53,23 +54,26 @@ withDefaults(
 }
 
 .button--primary {
-  background: var(--color-primary);
-  color: white;
+  border-color: var(--accent-primary-border);
+  background: var(--button-primary-bg);
+  color: var(--text-on-fire);
 }
 
 .button--primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
+  border-color: var(--accent-primary-hover-border);
+  background: var(--button-primary-bg-hover);
 }
 
 .button--secondary {
   border-color: var(--color-border);
-  background: var(--color-surface);
+  background: var(--button-secondary-bg);
   color: var(--color-text);
 }
 
 .button--secondary:hover:not(:disabled),
 .button--ghost:hover:not(:disabled) {
-  background: var(--color-surface-muted);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-hover);
 }
 
 .button--ghost {
@@ -78,8 +82,9 @@ withDefaults(
 }
 
 .button--danger {
-  background: var(--color-danger);
-  color: white;
+  border-color: var(--state-danger-border-strong);
+  background: var(--button-danger-bg);
+  color: var(--text-on-danger);
 }
 
 .button__spinner {

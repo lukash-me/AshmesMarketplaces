@@ -15,6 +15,7 @@ const props = defineProps<{
   columns: DataTableColumn<T>[];
   sort?: string | null;
   rowKey: (row: T) => string;
+  rowClass?: (row: T) => string;
 }>();
 
 const emit = defineEmits<{
@@ -68,7 +69,7 @@ function sortState(column: DataTableColumn<T>): 'asc' | 'desc' | 'none' {
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="rowKey(row)">
+        <tr v-for="row in rows" :key="rowKey(row)" :class="rowClass?.(row)">
           <td
             v-for="column in columns"
             :key="column.key"
@@ -91,10 +92,10 @@ function sortState(column: DataTableColumn<T>): 'asc' | 'desc' | 'none' {
 }
 
 .table {
-  min-width: 860px;
+  min-width: 980px;
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
 th {
@@ -102,23 +103,40 @@ th {
   top: 0;
   z-index: 1;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--surface-table-header);
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 700;
-  padding: 0.75rem 1rem;
+  padding: 0.625rem 0.75rem;
   text-align: left;
   text-transform: uppercase;
+  backdrop-filter: blur(14px);
 }
 
 td {
   border-bottom: 1px solid var(--color-border);
-  padding: 0.875rem 1rem;
+  padding: 0.625rem 0.75rem;
   vertical-align: middle;
 }
 
 tbody tr:hover {
-  background: #fafbfc;
+  background: var(--color-surface-hover);
+}
+
+tbody tr {
+  transition: background-color 120ms ease;
+}
+
+tbody tr.table__row--hot td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-heat-hot);
+}
+
+tbody tr.table__row--rising td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-heat-rising);
+}
+
+tbody tr.table__row--warm td:first-child {
+  box-shadow: inset 2px 0 0 var(--heat-warm);
 }
 
 .table__cell--right {
@@ -130,5 +148,9 @@ tbody tr:hover {
   align-items: center;
   gap: var(--space-1);
   color: inherit;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-weight: inherit;
 }
 </style>

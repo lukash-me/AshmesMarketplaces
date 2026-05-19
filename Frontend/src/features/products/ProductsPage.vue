@@ -107,7 +107,7 @@ function resetFilters() {
   <div class="products-page">
     <PageHeader
       title="Products"
-      description="Operational product catalog with marketplace identifiers, status, commission and update state."
+      description="Operational product catalog with marketplace identifiers, status, commission and update recency signals."
     />
 
     <KpiGrid :items="kpis" />
@@ -150,6 +150,6 @@ function resetFilters() {
 <style scoped>
 .products-page {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 </style>

@@ -33,29 +33,37 @@ defineEmits<{
 <style scoped>
 .field {
   display: grid;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .field__label {
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
+  font-size: 0.72rem;
+  font-weight: 680;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .field__control {
-  height: 2.5rem;
+  height: 2.25rem;
   width: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface);
+  background: var(--surface-control);
   color: var(--color-text);
   padding: 0 var(--space-3);
+  outline: none;
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.field__control::placeholder {
+  color: var(--color-text-subtle);
 }
 
 .field__control:focus {
   border-color: var(--color-primary);
+  background: var(--surface-control-focus);
   box-shadow: var(--focus-ring);
-  outline: none;
 }
 
 .field__error {

@@ -30,6 +30,7 @@ async function signOut() {
       <span>Search products, orders, campaigns</span>
     </div>
     <div class="topbar__user">
+      <span class="topbar__status">Workspace</span>
       <span>{{ userLabel }}</span>
       <button class="app-icon-button" type="button" title="Sign out" @click="signOut">
         <LogOut :size="17" />
@@ -47,9 +48,9 @@ async function signOut() {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  min-height: 4rem;
+  min-height: 3.5rem;
   border-bottom: 1px solid var(--color-border);
-  background: rgb(255 255 255 / 0.86);
+  background: var(--surface-topbar);
   padding: 0 var(--space-4);
   backdrop-filter: blur(16px);
 }
@@ -58,12 +59,14 @@ async function signOut() {
   display: none;
   align-items: center;
   gap: var(--space-2);
-  height: 2.25rem;
+  height: 2.125rem;
   max-width: 28rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  background: var(--surface-control);
   color: var(--color-text-subtle);
   padding: 0 var(--space-3);
+  font-size: 0.8125rem;
 }
 
 .topbar__user {
@@ -71,12 +74,26 @@ async function signOut() {
   align-items: center;
   gap: var(--space-2);
   color: var(--color-text-muted);
-  font-weight: 600;
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+.topbar__status {
+  display: none;
+  border: 1px solid var(--state-success-border);
+  border-radius: var(--radius-sm);
+  background: var(--state-success-soft);
+  color: var(--state-success-text);
+  padding: 0.25rem 0.45rem;
 }
 
 @media (min-width: 720px) {
   .topbar__search {
     display: flex;
+  }
+
+  .topbar__status {
+    display: inline-flex;
   }
 }
 

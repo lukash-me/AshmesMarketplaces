@@ -17,20 +17,20 @@ defineProps<{
 <style scoped>
 .empty {
   display: grid;
-  min-height: 14rem;
+  min-height: 12rem;
   place-items: center;
   align-content: center;
   gap: var(--space-3);
-  padding: var(--space-8);
+  padding: var(--space-6);
   text-align: center;
 }
 
 .empty__mark {
-  height: 2.25rem;
-  width: 2.25rem;
+  height: 2rem;
+  width: 2rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--color-surface), var(--color-surface-muted));
+  background: var(--background-empty-mark);
 }
 
 .empty__title {

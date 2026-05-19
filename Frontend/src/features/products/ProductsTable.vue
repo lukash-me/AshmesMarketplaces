@@ -21,6 +21,7 @@ const emit = defineEmits<{
 }>();
 
 const columns = [
+  { key: 'signal', label: 'Signal' },
   { key: 'name', label: 'Product', sortable: true },
   { key: 'skuSeller', label: 'Seller SKU', sortable: true },
   { key: 'idMp', label: 'Marketplace' },
@@ -33,12 +34,82 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.totalCount / props.
 const pageStart = computed(() => (props.totalCount === 0 ? 0 : (props.page - 1) * props.pageSize + 1));
 const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pageSize));
 
+type HeatTier = 'hot' | 'rising' | 'warm' | 'dormant';
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat('en', {
     month: 'short',
     day: '2-digit',
     year: 'numeric'
   }).format(new Date(value));
+}
+
+function daysSince(value: string): number {
+  const updated = new Date(value).getTime();
+
+  if (!Number.isFinite(updated)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.max(0, Math.floor((Date.now() - updated) / 86_400_000));
+}
+
+function heatTier(row: ProductListItem): HeatTier {
+  const age = daysSince(row.dateUpdated);
+
+  if (row.status === 1 && age <= 7) {
+    return 'hot';
+  }
+
+  if (row.status === 1 && age <= 21) {
+    return 'rising';
+  }
+
+  if (row.status === 1 || row.status === 2) {
+    return 'warm';
+  }
+
+  return 'dormant';
+}
+
+function heatLabel(row: ProductListItem): string {
+  const tier = heatTier(row);
+
+  if (tier === 'hot') {
+    return 'Active';
+  }
+
+  if (tier === 'rising') {
+    return 'Recent';
+  }
+
+  if (tier === 'warm') {
+    return 'Watch';
+  }
+
+  return 'Quiet';
+}
+
+function heatTone(row: ProductListItem): 'neutral' | 'warning' | 'ember' | 'hot' {
+  const tier = heatTier(row);
+
+  if (tier === 'hot') {
+    return 'hot';
+  }
+
+  if (tier === 'rising') {
+    return 'ember';
+  }
+
+  if (tier === 'warm') {
+    return 'warning';
+  }
+
+  return 'neutral';
+}
+
+function rowClass(row: ProductListItem): string {
+  return `table__row--${heatTier(row)}`;
 }
 
 function statusTone(status: number): 'success' | 'warning' | 'neutral' {
@@ -61,8 +132,18 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
       :columns="columns"
       :sort="sort"
       :row-key="(row) => row.id"
+      :row-class="rowClass"
       @sort="emit('sort', $event)"
     >
+      <template #cell-signal="{ row }">
+        <Badge
+          :tone="heatTone(row)"
+          :title="`Presentation signal derived from status and update recency: ${heatLabel(row)}`"
+        >
+          {{ heatLabel(row) }}
+        </Badge>
+      </template>
+
       <template #cell-name="{ row }">
         <div class="product-cell">
           <strong>{{ row.name }}</strong>
@@ -70,8 +151,12 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
         </div>
       </template>
 
+      <template #cell-skuSeller="{ value }">
+        <code class="code-cell">{{ value }}</code>
+      </template>
+
       <template #cell-idMp="{ value }">
-        <code>{{ value }}</code>
+        <code class="code-cell">{{ value }}</code>
       </template>
 
       <template #cell-status="{ value }">
@@ -109,21 +194,24 @@ function statusTone(status: number): 'success' | 'warning' | 'neutral' {
 
 .product-cell {
   display: grid;
-  gap: var(--space-1);
+  gap: 0.125rem;
+  min-width: 18rem;
 }
 
 .product-cell strong {
   font-weight: 700;
+  line-height: 1.25;
 }
 
 .product-cell span,
-code {
+.code-cell {
   color: var(--color-text-muted);
   font-size: 0.8125rem;
 }
 
-code {
+.code-cell {
   font-family: var(--font-mono);
+  word-break: break-all;
 }
 
 .products-table__footer {
@@ -134,7 +222,8 @@ code {
   gap: var(--space-3);
   border-top: 1px solid var(--color-border);
   color: var(--color-text-muted);
-  padding: var(--space-4);
+  padding: var(--space-3);
+  font-size: 0.8125rem;
 }
 
 .products-table__pager {

@@ -23,8 +23,8 @@ withDefaults(
 <style scoped>
 .loading {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-5);
+  gap: var(--space-2);
+  padding: var(--space-4);
 }
 
 .loading__row {
@@ -36,7 +36,7 @@ withDefaults(
 .loading__cell {
   height: 0.875rem;
   border-radius: 999px;
-  background: linear-gradient(90deg, #eef1f5, #f8fafc, #eef1f5);
+  background: var(--background-skeleton);
   background-size: 220% 100%;
   animation: shimmer 1.2s ease-in-out infinite;
 }

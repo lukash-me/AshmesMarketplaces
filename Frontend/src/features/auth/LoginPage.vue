@@ -81,7 +81,7 @@ async function submit() {
 <style scoped>
 .login-card {
   width: min(100%, 26rem);
-  padding: var(--space-6);
+  padding: var(--space-5);
 }
 
 .login-card__header {
@@ -97,8 +97,9 @@ async function submit() {
   width: 2.75rem;
   place-items: center;
   border-radius: var(--radius-md);
-  background: var(--color-primary);
-  color: white;
+  border: 1px solid var(--accent-ember-border);
+  background: var(--background-login-mark);
+  color: var(--accent-ember-text);
   font-weight: 800;
 }
 
@@ -121,6 +122,7 @@ p {
 .login-form__error {
   margin: 0;
   border-radius: var(--radius-md);
+  border: 1px solid var(--state-danger-border);
   background: var(--color-danger-soft);
   color: var(--color-danger);
   padding: var(--space-3);

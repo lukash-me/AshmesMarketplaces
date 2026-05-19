@@ -8,6 +8,7 @@ Parser/.idea/*
 Documents/
 .gitignore
 Backend/.idea/*
+.dev/
 
 # User-specific files
 *.rsuser
