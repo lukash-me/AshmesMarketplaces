@@ -1,0 +1,134 @@
+<script setup lang="ts" generic="T extends Record<string, unknown>">
+import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-vue-next';
+
+export type DataTableColumn<T> = {
+  key: string;
+  label: string;
+  sortable?: boolean;
+  align?: 'left' | 'right';
+  className?: string;
+  value?: (row: T) => string | number | null | undefined;
+};
+
+const props = defineProps<{
+  rows: T[];
+  columns: DataTableColumn<T>[];
+  sort?: string | null;
+  rowKey: (row: T) => string;
+}>();
+
+const emit = defineEmits<{
+  sort: [value: string];
+}>();
+
+function getCellValue(row: T, column: DataTableColumn<T>) {
+  return column.value ? column.value(row) : row[column.key];
+}
+
+function sortValue(column: DataTableColumn<T>): string {
+  return props.sort === column.key ? `-${column.key}` : column.key;
+}
+
+function sortState(column: DataTableColumn<T>): 'asc' | 'desc' | 'none' {
+  if (props.sort === column.key) {
+    return 'asc';
+  }
+
+  if (props.sort === `-${column.key}`) {
+    return 'desc';
+  }
+
+  return 'none';
+}
+</script>
+
+<template>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th
+            v-for="column in columns"
+            :key="column.key"
+            :class="[column.align === 'right' ? 'table__cell--right' : '', column.className]"
+          >
+            <button
+              v-if="column.sortable"
+              class="table__sort"
+              type="button"
+              @click="emit('sort', sortValue(column))"
+            >
+              {{ column.label }}
+              <ArrowUp v-if="sortState(column) === 'asc'" :size="14" />
+              <ArrowDown v-else-if="sortState(column) === 'desc'" :size="14" />
+              <ChevronsUpDown v-else :size="14" />
+            </button>
+            <span v-else>{{ column.label }}</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="row in rows" :key="rowKey(row)">
+          <td
+            v-for="column in columns"
+            :key="column.key"
+            :class="[column.align === 'right' ? 'table__cell--right' : '', column.className]"
+          >
+            <slot :name="`cell-${column.key}`" :row="row" :value="getCellValue(row, column)">
+              {{ getCellValue(row, column) ?? '-' }}
+            </slot>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</template>
+
+<style scoped>
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  min-width: 860px;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+td {
+  border-bottom: 1px solid var(--color-border);
+  padding: 0.875rem 1rem;
+  vertical-align: middle;
+}
+
+tbody tr:hover {
+  background: #fafbfc;
+}
+
+.table__cell--right {
+  text-align: right;
+}
+
+.table__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: inherit;
+}
+</style>
