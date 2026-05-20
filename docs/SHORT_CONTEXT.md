@@ -2,10 +2,10 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation complete; Products, Orders, and Reviews frontend slices implemented; broad analytics workflow coverage pending.
+- Current stage: backend/API/auth/seed/frontend foundation complete; Products, Orders, Reviews, Campaigns, and Logistics frontend slices implemented; broad analytics workflow coverage pending.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
-- Frontend maturity: auth shell and Products/Orders/Reviews are real; most other routes are placeholders.
+- Frontend maturity: auth shell and Products/Orders/Reviews/Campaigns/Logistics are real; remaining analytics, finance, recommendations, and access routes are placeholders.
 
 # 2. Stack
 
@@ -66,11 +66,13 @@
 - Products detail drawer is read-only and uses existing `GET /api/v1/products/{id}`.
 - Orders slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, and detail drawer.
 - Reviews slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and lazy linked review replies.
+- Campaigns slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and lazy linked campaign metrics.
+- Logistics slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and drawer-only linked warehouse detail.
 - Visual Redesign Stage 1 implemented.
 - Products Polish Stage implemented.
 - `Frontend/src/styles/tokens.css` is the theme source of truth.
 - Current Products heat is presentation-only, derived from `status` and `dateUpdated`.
-- Placeholders remain: Overview, Logistics, Campaigns, Expenses, Recommendations, Access.
+- Placeholders remain: Overview, Expenses, Recommendations, Access.
 
 # 7. Visual Direction
 

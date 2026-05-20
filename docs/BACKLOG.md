@@ -70,7 +70,7 @@ Strongest current parts:
 
 Weakest current parts:
 
-- Frontend coverage is still narrow. `Overview`, `Logistics`, `Campaigns`, `Expenses`, `Recommendations`, and `Access` are placeholders.
+- Frontend coverage is still incomplete. `Overview`, `Expenses`, `Recommendations`, and `Access` are placeholders.
 - Backend APIs are mostly CRUD. Analytical aggregation, dashboards, comparisons, exports, workflow commands, and real signal systems are absent.
 - CRUD endpoints are anonymous. Workspace authorization and permission enforcement are not implemented.
 - Parser and Intelligence are not integrated with backend/API/frontend.
@@ -81,7 +81,7 @@ Implemented:
 - Backend CRUD for catalog, products, operations, advertising, finance, users/workspaces, access, rules, and recommendations.
 - Auth endpoints: login, refresh, logout, me.
 - Development-only seed with deterministic local accounts and demo records.
-- Frontend auth, protected shell, shared UI primitives, Products list/detail, Orders list/detail, and Reviews list/detail with lazy linked review replies.
+- Frontend auth, protected shell, shared UI primitives, Products list/detail, Orders list/detail, Reviews list/detail with lazy linked review replies, Campaigns list/detail with lazy linked campaign metrics, and Logistics list/detail with drawer-only linked warehouse detail.
 
 Partially implemented:
 
@@ -90,7 +90,9 @@ Partially implemented:
 - Reviews: backend CRUD and read-only frontend list/detail exist, including lazy linked review replies; reply mutations, autoreply workflows, parser ingestion, and AI assistance are absent.
 - Recommendations: backend CRUD storage exists; recommendation generation, scoring interpretation, and frontend workflows are absent.
 - Access: roles/permissions CRUD and auth current-user data exist; enforcement and management UI are absent.
-- Campaigns, logistics, and expenses: backend CRUD exists; frontend sections are placeholders.
+- Campaigns: backend CRUD and read-only frontend list/detail exist, including lazy linked campaign metrics; mutations, automation, bid workflows, and real analytics are absent.
+- Logistics: backend CRUD and read-only frontend list/detail exist, including drawer-only linked warehouse detail; mutations, stock risk semantics, forecasting, geography, and parser-backed logistics analysis are absent.
+- Expenses: backend CRUD exists; frontend section is a placeholder.
 - Heat/signal system: visual scaffolding exists on Products; real business meaning is not implemented.
 
 Missing:
@@ -108,9 +110,7 @@ Missing:
 
 Backend capabilities not reflected in frontend:
 
-- `Marketplaces`, `Brands`, `Categories`, `Warehouses`.
-- `Logistics`.
-- `Campaigns`, `CampaignMetrics`.
+- Standalone catalog/reference views for `Marketplaces`, `Brands`, `Categories`, `Warehouses`.
 - `Expenses`, `ExpenseCategories`.
 - `Users`, `Workspaces`, `UserWorkspaces`.
 - `Roles`, `PermissionCategories`, `Permissions`, `RolePermissions`, `RoleSubroles`.
@@ -120,15 +120,13 @@ Backend capabilities not reflected in frontend:
 Frontend placeholders:
 
 - `Frontend/src/pages/OverviewPage.vue`
-- `Frontend/src/pages/LogisticsPage.vue`
-- `Frontend/src/pages/CampaignsPage.vue`
 - `Frontend/src/pages/ExpensesPage.vue`
 - `Frontend/src/pages/RecommendationsPage.vue`
 - `Frontend/src/pages/AccessSettingsPage.vue`
 
 Recommended next implementation stages:
 
-1. Continue replacing placeholders with read-only/list-first frontend vertical slices over existing APIs.
+1. Continue replacing remaining placeholders with read-only/list-first frontend vertical slices over existing APIs.
 2. Add a real Overview dashboard using existing data first, then reviewed aggregation endpoints.
 3. Improve dense table/filter primitives for marketplace intelligence workflows.
 4. Add auth/workspace authorization hardening.
@@ -228,7 +226,7 @@ Most seller-facing sections are placeholders even though backend CRUD APIs exist
 
 Current State:
 
-Products, Orders, and Reviews have real read-only frontend integration. Overview, Logistics, Campaigns, Expenses, Recommendations, and Access settings render lightweight placeholder states.
+Products, Orders, Reviews, Campaigns, and Logistics have real read-only frontend integration. Overview, Expenses, Recommendations, and Access settings render lightweight placeholder states.
 
 Target State:
 
@@ -244,8 +242,8 @@ Suggested Implementation Order:
 
 1. Orders list/detail. Completed.
 2. Reviews and review replies list/detail. Completed as read-only inspection.
-3. Campaigns and campaign metrics list/detail.
-4. Logistics list/detail.
+3. Campaigns and campaign metrics list/detail. Completed as read-only inspection.
+4. Logistics list/detail. Completed as read-only inspection with drawer-only warehouse detail.
 5. Expenses and expense categories list/detail.
 6. Recommendations list/detail.
 7. Access settings list views for roles, permissions, users, workspaces.
@@ -692,7 +690,7 @@ Campaign APIs exist, but users cannot operate or analyze campaigns in the fronte
 
 Current State:
 
-`Campaigns` and `CampaignMetrics` CRUD APIs exist. Campaigns page is a placeholder.
+`Campaigns` and `CampaignMetrics` CRUD APIs exist. Campaigns page has a read-only frontend list/detail slice with filters, URL sync, dense table, detail drawer, and lazy linked campaign metrics. Mutations, automation, bid workflows, and real campaign analytics are absent.
 
 Target State:
 
@@ -706,8 +704,8 @@ Dependencies:
 
 Suggested Implementation Order:
 
-1. Build campaign list/detail.
-2. Add metrics timeline and spend summaries.
+1. Build campaign list/detail. Completed as read-only inspection.
+2. Add metrics timeline and spend summaries after reviewed analytics semantics exist.
 3. Add campaign settings/read-only rule set display.
 4. Add mutations and automation only when scoped.
 
@@ -800,11 +798,11 @@ Requirements include stock control, critical stock warnings, warehouse/geography
 
 Current State:
 
-`Logistics` and `Warehouses` CRUD APIs exist. Logistics page is a placeholder.
+`Logistics` and `Warehouses` CRUD APIs exist. Logistics page has a read-only frontend list/detail slice with filters, URL sync, dense table, detail drawer, and drawer-only linked warehouse detail. Mutations, stock risk semantics, forecasting, geography, and parser-backed logistics analysis are absent.
 
 Target State:
 
-Logistics page shows stock levels, in-transit amounts, warehouse context, storage/logistics costs, stock risk, and date-based filtering. Future versions add geography and demand-based distribution.
+Logistics page shows stock levels, in-transit amounts, warehouse context, storage/logistics costs, and date-based filtering from real backend fields. Future versions may add reviewed stock risk semantics, geography, and demand-based distribution.
 
 Dependencies:
 
@@ -814,8 +812,8 @@ Dependencies:
 
 Suggested Implementation Order:
 
-1. Build logistics list/detail over existing API.
-2. Add stock risk summary from real fields.
+1. Build logistics list/detail over existing API. Completed as read-only inspection.
+2. Add stock risk summary only after reviewed semantics and backend data contract exist.
 3. Add warehouse filters/selectors.
 4. Add geography/demand analysis after parser-backed data exists.
 
