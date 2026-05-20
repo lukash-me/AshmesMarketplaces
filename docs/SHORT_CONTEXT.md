@@ -2,10 +2,10 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation complete; Products, Orders, Reviews, Campaigns, and Logistics frontend slices implemented; broad analytics workflow coverage pending.
+- Current stage: backend/API/auth/seed/frontend foundation complete; Products, Orders, Reviews, Campaigns, Logistics, Expenses, and Recommendations frontend slices implemented; broad analytics workflow coverage pending.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
-- Frontend maturity: auth shell and Products/Orders/Reviews/Campaigns/Logistics are real; remaining analytics, finance, recommendations, and access routes are placeholders.
+- Frontend maturity: auth shell and Products/Orders/Reviews/Campaigns/Logistics/Expenses/Recommendations are real; Overview analytics and Access routes are placeholders.
 
 # 2. Stack
 
@@ -68,11 +68,13 @@
 - Reviews slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and lazy linked review replies.
 - Campaigns slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and lazy linked campaign metrics.
 - Logistics slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and drawer-only linked warehouse detail.
+- Expenses slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and linked expense category context.
+- Recommendations slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, linked product/category IDs, and plain JSON rendering for explanation/snapshot fields.
 - Visual Redesign Stage 1 implemented.
 - Products Polish Stage implemented.
 - `Frontend/src/styles/tokens.css` is the theme source of truth.
 - Current Products heat is presentation-only, derived from `status` and `dateUpdated`.
-- Placeholders remain: Overview, Expenses, Recommendations, Access.
+- Placeholders remain: Overview, Access.
 
 # 7. Visual Direction
 

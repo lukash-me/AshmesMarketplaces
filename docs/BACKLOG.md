@@ -70,7 +70,7 @@ Strongest current parts:
 
 Weakest current parts:
 
-- Frontend coverage is still incomplete. `Overview`, `Expenses`, `Recommendations`, and `Access` are placeholders.
+- Frontend coverage is still incomplete. `Overview` and `Access` are placeholders.
 - Backend APIs are mostly CRUD. Analytical aggregation, dashboards, comparisons, exports, workflow commands, and real signal systems are absent.
 - CRUD endpoints are anonymous. Workspace authorization and permission enforcement are not implemented.
 - Parser and Intelligence are not integrated with backend/API/frontend.
@@ -81,18 +81,18 @@ Implemented:
 - Backend CRUD for catalog, products, operations, advertising, finance, users/workspaces, access, rules, and recommendations.
 - Auth endpoints: login, refresh, logout, me.
 - Development-only seed with deterministic local accounts and demo records.
-- Frontend auth, protected shell, shared UI primitives, Products list/detail, Orders list/detail, Reviews list/detail with lazy linked review replies, Campaigns list/detail with lazy linked campaign metrics, and Logistics list/detail with drawer-only linked warehouse detail.
+- Frontend auth, protected shell, shared UI primitives, Products list/detail, Orders list/detail, Reviews list/detail with lazy linked review replies, Campaigns list/detail with lazy linked campaign metrics, Logistics list/detail with drawer-only linked warehouse detail, Expenses list/detail with linked expense category context, and Recommendations list/detail with linked product/category IDs and JSON detail rendering.
 
 Partially implemented:
 
 - Products: backend CRUD and frontend list/detail exist; frontend create/edit/delete/media mutation and real analytics are absent.
 - Orders: backend CRUD and read-only frontend list/detail exist; frontend mutations, fulfillment workflows, and real order analytics are absent.
 - Reviews: backend CRUD and read-only frontend list/detail exist, including lazy linked review replies; reply mutations, autoreply workflows, parser ingestion, and AI assistance are absent.
-- Recommendations: backend CRUD storage exists; recommendation generation, scoring interpretation, and frontend workflows are absent.
+- Recommendations: backend CRUD storage and read-only frontend list/detail exist; recommendation generation, score interpretation, ML runtime, and apply/accept/reject workflows are absent.
 - Access: roles/permissions CRUD and auth current-user data exist; enforcement and management UI are absent.
 - Campaigns: backend CRUD and read-only frontend list/detail exist, including lazy linked campaign metrics; mutations, automation, bid workflows, and real analytics are absent.
 - Logistics: backend CRUD and read-only frontend list/detail exist, including drawer-only linked warehouse detail; mutations, stock risk semantics, forecasting, geography, and parser-backed logistics analysis are absent.
-- Expenses: backend CRUD exists; frontend section is a placeholder.
+- Expenses: backend CRUD and read-only frontend list/detail exist, including linked expense category context; mutations, profitability analytics, reporting, and accounting workflows are absent.
 - Heat/signal system: visual scaffolding exists on Products; real business meaning is not implemented.
 
 Missing:
@@ -111,22 +111,18 @@ Missing:
 Backend capabilities not reflected in frontend:
 
 - Standalone catalog/reference views for `Marketplaces`, `Brands`, `Categories`, `Warehouses`.
-- `Expenses`, `ExpenseCategories`.
 - `Users`, `Workspaces`, `UserWorkspaces`.
 - `Roles`, `PermissionCategories`, `Permissions`, `RolePermissions`, `RoleSubroles`.
 - `Rules`, `RuleSets`, `RuleSetRules`.
-- `Recommendations`, `RecommendationProducts`, `RecommendationCategories`.
 
 Frontend placeholders:
 
 - `Frontend/src/pages/OverviewPage.vue`
-- `Frontend/src/pages/ExpensesPage.vue`
-- `Frontend/src/pages/RecommendationsPage.vue`
 - `Frontend/src/pages/AccessSettingsPage.vue`
 
 Recommended next implementation stages:
 
-1. Continue replacing remaining placeholders with read-only/list-first frontend vertical slices over existing APIs.
+1. Finish remaining placeholders with read-only/list-first frontend vertical slices over existing APIs.
 2. Add a real Overview dashboard using existing data first, then reviewed aggregation endpoints.
 3. Improve dense table/filter primitives for marketplace intelligence workflows.
 4. Add auth/workspace authorization hardening.
@@ -226,7 +222,7 @@ Most seller-facing sections are placeholders even though backend CRUD APIs exist
 
 Current State:
 
-Products, Orders, Reviews, Campaigns, and Logistics have real read-only frontend integration. Overview, Expenses, Recommendations, and Access settings render lightweight placeholder states.
+Products, Orders, Reviews, Campaigns, Logistics, Expenses, and Recommendations have real read-only frontend integration. Overview and Access settings render lightweight placeholder states.
 
 Target State:
 
@@ -244,8 +240,8 @@ Suggested Implementation Order:
 2. Reviews and review replies list/detail. Completed as read-only inspection.
 3. Campaigns and campaign metrics list/detail. Completed as read-only inspection.
 4. Logistics list/detail. Completed as read-only inspection with drawer-only warehouse detail.
-5. Expenses and expense categories list/detail.
-6. Recommendations list/detail.
+5. Expenses and expense categories list/detail. Completed as read-only inspection with linked expense category context.
+6. Recommendations list/detail. Completed as read-only inspection with linked product/category IDs and plain JSON detail rendering.
 7. Access settings list views for roles, permissions, users, workspaces.
 
 Notes / References:
@@ -475,7 +471,7 @@ The visual system exists but only Products has been polished deeply.
 
 Current State:
 
-Semantic tokens and obsidian styling exist. Other routes are placeholders.
+Semantic tokens and obsidian styling exist. Most core read-only slices now use consistent dense table/detail patterns. Overview and Access remain placeholders.
 
 Target State:
 
@@ -833,7 +829,7 @@ Finance APIs exist, but there is no frontend workflow for expenses, profitabilit
 
 Current State:
 
-`Expenses` and `ExpenseCategories` CRUD APIs exist. Expenses page is a placeholder.
+`Expenses` and `ExpenseCategories` CRUD APIs exist. Expenses page has a read-only frontend list/detail slice with filters, URL sync, dense table, detail drawer, and linked expense category context.
 
 Target State:
 
@@ -847,8 +843,8 @@ Dependencies:
 
 Suggested Implementation Order:
 
-1. Build expense list/detail.
-2. Add expense category filters.
+1. Build expense list/detail. Completed as read-only inspection.
+2. Add expense category filters/context. Completed for existing backend-supported category filters and linked category display.
 3. Add financial dashboard summaries.
 4. Add profitability/ABC analysis after aggregation endpoints exist.
 
@@ -940,7 +936,7 @@ Recommendation storage APIs exist, but users cannot inspect recommendation recor
 
 Current State:
 
-Recommendations page is a placeholder. Backend CRUD exists for recommendations and product/category links.
+Recommendations page has a read-only frontend list/detail slice. Backend CRUD exists for recommendations and product/category links. ML generation and recommendation workflows are absent.
 
 Target State:
 
@@ -953,9 +949,9 @@ Dependencies:
 
 Suggested Implementation Order:
 
-1. Build read-only recommendations table.
-2. Add detail drawer with explanation/snapshot JSON viewer.
-3. Link targets to Products/Categories pages.
+1. Build read-only recommendations table. Completed.
+2. Add detail drawer with explanation/snapshot JSON viewer. Completed as plain read-only JSON rendering.
+3. Link targets to Products/Categories pages. Partially completed as raw linked product/category ID inspection; navigation/name hydration is not implemented.
 
 Notes / References:
 
