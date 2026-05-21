@@ -2,7 +2,7 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; parser output contract and safe manual WB runner foundation exist; backend ingestion and broad analytics workflows are still pending.
+- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; safe manual WB product-card and review/reply parser slices exist; backend ingestion and broad analytics workflows are still pending.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
 - Frontend maturity: auth shell and Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings are real read-only slices; Overview dashboard remains the main placeholder.
@@ -67,8 +67,11 @@
 - `Parser/` has a safe manual Wildberries product-card runner for explicit subcategory allowlists only.
 - Canonical parser output is `products.jsonl`; CSV and optional XLSX are derived exports; every run writes `manifest.json` plus structured run logs/errors.
 - Runner config exposes region/dest, allowlist, concurrency, delays, retries, catalog/item caps, output path, token handling, and network smoke checks without backend/frontend coupling.
-- Real WB debug validation is currently scoped to selected footwear subcategories; full-category traversal, scheduler/background execution, and DB writes remain out of scope.
-- Next parser milestone: validate representative canonical output, review raw/staging and domain mapping, then build backend ingestion/upsert in a dedicated schema/API task.
+- `Parser/reviews_runner.py` reads existing `products.jsonl`, fetches public WB root feedback payloads by `wb_root_id`, writes canonical `reviews.jsonl` and `review_replies.jsonl`, retains configurable compressed raw payloads, and supports fetch audit, bounded concurrency, and resume.
+- Review rows preserve `review_attribution_mode=root_payload`; WB review ownership is root/sibling scoped and must not be treated as exact product-variant semantics without a reviewed mapping decision.
+- Real WB validation exists on footwear product data and review runs. The public review endpoint often returns a capped payload slice where reported feedback count exceeds returned rows; pagination/full-history research is still pending.
+- Full-category traversal expansion, scheduler/background execution, browser/token review research, and DB writes remain out of scope.
+- Next parser milestone: review product and review/reply raw/staging/domain mapping plus public review pagination/cap behavior, then build backend ingestion/upsert in a dedicated schema/API task.
 
 # 8. Visual Direction
 
@@ -102,8 +105,8 @@
 
 # 11. Current Priorities
 
-1. Validate safe parser output on representative real WB product-card runs and keep execution rate-limit aware.
-2. Design reviewed parser ingestion/raw-staging/domain mapping before adding backend schema or DB writes.
+1. Validate representative WB product and review/reply parser outputs, including review payload cap/pagination behavior, and keep execution rate-limit aware.
+2. Design reviewed parser ingestion/raw-staging/domain mapping for product and review/reply outputs before adding backend schema or DB writes.
 3. Build Overview only after real-data pipeline contracts are stable enough to avoid fake dashboard semantics.
 4. Improve catalog/reference selectors so product and workflow filters stop relying on raw UUIDs where backend names exist.
 5. Define real recommendation/signal semantics before showing heat as business intelligence.

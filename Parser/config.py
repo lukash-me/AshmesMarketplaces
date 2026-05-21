@@ -161,3 +161,112 @@ class ParserConfig:
         snapshot.pop("wb_token_secret", None)
         snapshot["output_base_dir"] = str(self.output_base_dir)
         return snapshot
+
+
+@dataclass(frozen=True)
+class ReviewsParserConfig:
+    marketplace: str = "wildberries"
+    endpoint_base: str = "https://feedbacks1.wb.ru/feedbacks/v1"
+    output_base_dir: Path = BASE_DIR / "output"
+    max_concurrent: int = 3
+    timeout_seconds: int = 10
+    max_retries: int = 2
+    request_delay_min_seconds: float = 1.0
+    request_delay_max_seconds: float = 3.0
+    backoff_base_seconds: float = 1.0
+    backoff_max_seconds: float = 30.0
+    retain_raw_payloads: bool = True
+    raw_payload_compression: str = "gzip"
+    fail_fast: bool = False
+
+    @classmethod
+    def load(cls, env_path: Path | None = None) -> "ReviewsParserConfig":
+        env_values = _read_env_file(env_path or BASE_DIR / ".env")
+
+        config = cls(
+            marketplace=_env_value(env_values, "PARSER_MARKETPLACE", cls.marketplace),
+            endpoint_base=_env_value(
+                env_values,
+                "PARSER_REVIEWS_ENDPOINT_BASE",
+                cls.endpoint_base,
+            ).rstrip("/"),
+            output_base_dir=Path(
+                _env_value(
+                    env_values,
+                    "PARSER_OUTPUT_BASE_DIR",
+                    str(BASE_DIR / "output"),
+                )
+            ),
+            max_concurrent=_env_int(env_values, "PARSER_REVIEWS_MAX_CONCURRENT", 3),
+            timeout_seconds=_env_int(env_values, "PARSER_REVIEWS_TIMEOUT_SECONDS", 10),
+            max_retries=_env_int(env_values, "PARSER_REVIEWS_MAX_RETRIES", 2),
+            request_delay_min_seconds=_env_float(
+                env_values,
+                "PARSER_REVIEWS_REQUEST_DELAY_MIN_SECONDS",
+                1.0,
+            ),
+            request_delay_max_seconds=_env_float(
+                env_values,
+                "PARSER_REVIEWS_REQUEST_DELAY_MAX_SECONDS",
+                3.0,
+            ),
+            backoff_base_seconds=_env_float(
+                env_values,
+                "PARSER_REVIEWS_BACKOFF_BASE_SECONDS",
+                1.0,
+            ),
+            backoff_max_seconds=_env_float(
+                env_values,
+                "PARSER_REVIEWS_BACKOFF_MAX_SECONDS",
+                30.0,
+            ),
+            retain_raw_payloads=_env_bool(
+                env_values,
+                "PARSER_REVIEWS_RETAIN_RAW_PAYLOADS",
+                True,
+            ),
+            raw_payload_compression=_env_value(
+                env_values,
+                "PARSER_REVIEWS_RAW_PAYLOAD_COMPRESSION",
+                "gzip",
+            ),
+            fail_fast=_env_bool(env_values, "PARSER_REVIEWS_FAIL_FAST", False),
+        )
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        if self.marketplace != "wildberries":
+            raise ValueError("Only wildberries marketplace is supported by the reviews runner.")
+
+        if not self.endpoint_base.strip():
+            raise ValueError("PARSER_REVIEWS_ENDPOINT_BASE is required.")
+
+        if self.max_concurrent < 3 or self.max_concurrent > 5:
+            raise ValueError("PARSER_REVIEWS_MAX_CONCURRENT must be between 3 and 5.")
+
+        if self.timeout_seconds < 1:
+            raise ValueError("PARSER_REVIEWS_TIMEOUT_SECONDS must be positive.")
+
+        if self.max_retries < 0 or self.max_retries > 3:
+            raise ValueError("PARSER_REVIEWS_MAX_RETRIES must be between 0 and 3.")
+
+        if self.request_delay_min_seconds < 0:
+            raise ValueError("PARSER_REVIEWS_REQUEST_DELAY_MIN_SECONDS must be non-negative.")
+
+        if self.request_delay_max_seconds < self.request_delay_min_seconds:
+            raise ValueError("Review request delay max must be greater than or equal to min.")
+
+        if self.backoff_base_seconds < 0:
+            raise ValueError("PARSER_REVIEWS_BACKOFF_BASE_SECONDS must be non-negative.")
+
+        if self.backoff_max_seconds < self.backoff_base_seconds:
+            raise ValueError("Review backoff max must be greater than or equal to base.")
+
+        if self.raw_payload_compression != "gzip":
+            raise ValueError("PARSER_REVIEWS_RAW_PAYLOAD_COMPRESSION must be gzip in v1.")
+
+    def safe_snapshot(self) -> dict:
+        snapshot = asdict(self)
+        snapshot["output_base_dir"] = str(self.output_base_dir)
+        return snapshot

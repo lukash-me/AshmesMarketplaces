@@ -1,0 +1,46 @@
+{
+  "feedbackCount": 3,
+  "feedbacks": [
+    {
+      "id": "review-selected-1",
+      "nmId": 1001,
+      "productValuation": 5,
+      "createdDate": "2026-05-21T10:47:02Z",
+      "text": "",
+      "pros": "Comfortable",
+      "cons": "",
+      "wbUserDetails": {
+        "country": "ru",
+        "name": "Irina",
+        "hasPhoto": false
+      },
+      "votes": {
+        "pluses": 2,
+        "minuses": 1
+      },
+      "answer": {
+        "text": "Thank you.",
+        "createDate": "2026-05-21T11:13:29Z",
+        "lastUpdate": null,
+        "state": "wbRu",
+        "metadata": {
+          "editText": ""
+        }
+      },
+      "unknownFutureField": "kept-in-raw"
+    },
+    {
+      "id": "review-sibling-1",
+      "nmId": 2002,
+      "productValuation": 4,
+      "createdDate": "2026-05-20T10:00:00Z",
+      "text": "Sibling variant review"
+    },
+    {
+      "nmId": 1001,
+      "productValuation": 3,
+      "createdDate": "2026-05-19T10:00:00Z",
+      "text": "Missing id"
+    }
+  ]
+}

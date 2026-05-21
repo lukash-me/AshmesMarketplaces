@@ -63,3 +63,44 @@ Parser/output/runs/<parser_run_id>/
 ## Future Backend Handoff
 
 Future ingestion should read canonical JSONL into raw/staging first. The reviewed upsert key should be `marketplace + wb_product_id`, preserving `parser_run_id`, `parsed_at_utc`, source category/query, and source region for traceability. Product, brand, category, seller, image, and app-managed field ownership mappings need a separate reviewed backend schema/ingestion task.
+
+## Reviews And Review Replies Runner
+
+`reviews_runner.py` is a separate manual slice over an existing product parser run. It fetches public WB review payloads by product `wb_root_id`, filters canonical review rows to selected input `wb_product_id` values observed in each feedback row `nmId`, and keeps `review_attribution_mode=root_payload` so downstream code does not treat root payload reviews as exact variant ownership.
+
+Start with small product limits:
+
+```powershell
+& .\Parser\.venv\Scripts\python.exe .\Parser\reviews_runner.py `
+  --products-run-dir .\Parser\output\runs\wb_products_20260521_003158_b1cf9c3 `
+  --limit-products 10 `
+  --smoke-only
+
+& .\Parser\.venv\Scripts\python.exe .\Parser\reviews_runner.py `
+  --products-run-dir .\Parser\output\runs\wb_products_20260521_003158_b1cf9c3 `
+  --limit-products 10
+```
+
+Resume a review run with its existing scope:
+
+```powershell
+& .\Parser\.venv\Scripts\python.exe .\Parser\reviews_runner.py `
+  --resume-run-dir .\Parser\output\runs\<wb_reviews_run_id>
+```
+
+Each review run writes:
+
+```text
+Parser/output/runs/<wb_reviews_run_id>/
+  manifest.json
+  reviews.jsonl
+  review_replies.jsonl
+  review_fetch_results.jsonl
+  errors.jsonl
+  runner.log
+  raw/root_feedbacks/<wb_root_id>.json.gz
+```
+
+`reviews.jsonl` and `review_replies.jsonl` are the normalized contracts. Root WB payload retention is configurable with `PARSER_REVIEWS_RETAIN_RAW_PAYLOADS` or `--no-retain-raw-payloads`; retained raw payloads stay compressed because the public WB review payload shape is not a stable backend contract.
+
+The reviews runner uses bounded low concurrency, request delay jitter, retry, and exponential backoff. Keep the first validation runs at `10`, then `100`, then a reviewed `1000` selected products before broader batches. Review public endpoint caps and error logs before treating the output as complete review history.
