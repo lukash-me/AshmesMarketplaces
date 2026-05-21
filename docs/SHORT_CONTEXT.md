@@ -2,10 +2,10 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation complete; Products, Orders, Reviews, Campaigns, Logistics, Expenses, and Recommendations frontend slices implemented; broad analytics workflow coverage pending.
+- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; parser output contract and safe manual WB runner foundation exist; backend ingestion and broad analytics workflows are still pending.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
-- Frontend maturity: auth shell and Products/Orders/Reviews/Campaigns/Logistics/Expenses/Recommendations are real; Overview analytics and Access routes are placeholders.
+- Frontend maturity: auth shell and Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings are real read-only slices; Overview dashboard remains the main placeholder.
 
 # 2. Stack
 
@@ -45,56 +45,43 @@
 # 5. Current Backend Status
 
 - Backend solution: `Backend/AshmesMarketplaces.sln`.
-- CRUD coverage complete for Catalog, Products, Operations, Advertising, Finance, Users/Workspaces, Access, Rules, Recommendations.
-- Catalog APIs: `Marketplaces`, `Brands`, `Categories`, `Warehouses`.
-- Product APIs: `Products` CRUD, product detail, read-only product history.
-- Operations APIs: `Orders`, `Reviews`, `ReviewReplies`, `Logistics`.
-- Ads/finance/workspace APIs: `Campaigns`, `CampaignMetrics`, `Expenses`, `ExpenseCategories`, `Users`, `Workspaces`, `UserWorkspaces`.
-- Access/rules/recommendations APIs are implemented as CRUD/storage slices.
-- Auth/Security Foundation implemented: `login`, `refresh`, `logout`, `me`.
+- CRUD coverage exists for Catalog, Products, Operations, Advertising, Finance, Users/Workspaces, Access, Rules, and Recommendations.
+- Auth/Security Foundation exists: `login`, `refresh`, `logout`, `me`.
 - Auth uses JWT access tokens + opaque refresh tokens stored as hashes in `Sessions.token`.
-- Development seed implemented, Development-only, config-gated, disabled by default.
+- Development seed exists, Development-only, config-gated, disabled by default.
 - CRUD APIs remain anonymous for compatibility; auth endpoints are protected where appropriate.
-- Workspace authorization and permission enforcement are not implemented.
-- Parser integration, ML runtime, recommendation generation, background jobs are not implemented.
+- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, parser ingestion, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
 
 # 6. Current Frontend Status
 
-- Frontend Foundation v2 implemented under `Frontend/`.
-- Auth flow, token refresh, protected routes, app shell, sidebar/topbar, shared primitives are implemented.
-- Products slice has real backend integration: filters, sorting, pagination, URL sync, KPIs, dense table, loading/error/empty states.
-- Products detail drawer is read-only and uses existing `GET /api/v1/products/{id}`.
-- Orders slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, and detail drawer.
-- Reviews slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and lazy linked review replies.
-- Campaigns slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and lazy linked campaign metrics.
-- Logistics slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and drawer-only linked warehouse detail.
-- Expenses slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, and linked expense category context.
-- Recommendations slice has read-only backend integration: filters, sorting, pagination, URL sync, dense table, loading/error/empty states, detail drawer, linked product/category IDs, and plain JSON rendering for explanation/snapshot fields.
-- Visual Redesign Stage 1 implemented.
-- Products Polish Stage implemented.
-- `Frontend/src/styles/tokens.css` is the theme source of truth.
-- Current Products heat is presentation-only, derived from `status` and `dateUpdated`.
-- Placeholders remain: Overview, Access.
+- Frontend Foundation v2 exists under `Frontend/`.
+- Auth flow, token refresh, protected routes, app shell, sidebar/topbar, shared primitives, and obsidian theme tokens exist.
+- Real read-only slices exist for Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings.
+- Implemented slice patterns: dense tables, compact filters, pagination, URL query sync where useful, loading/error/empty states, row selection, keyboard row opening, and detail drawers with truthful linked context where backend data exists.
+- Products detail drawer uses existing product detail endpoint; Products heat remains presentation-only from `status` and `dateUpdated`.
+- Access Settings shows persisted users/workspaces/roles/memberships/role-permission records read-only; it does not enforce permissions or provide IAM mutation workflows.
+- Main frontend placeholder remaining: `Frontend/src/pages/OverviewPage.vue`.
 
-# 7. Visual Direction
+# 7. Parser Status
+
+- `Parser/` has a safe manual Wildberries product-card runner for explicit subcategory allowlists only.
+- Canonical parser output is `products.jsonl`; CSV and optional XLSX are derived exports; every run writes `manifest.json` plus structured run logs/errors.
+- Runner config exposes region/dest, allowlist, concurrency, delays, retries, catalog/item caps, output path, token handling, and network smoke checks without backend/frontend coupling.
+- Real WB debug validation is currently scoped to selected footwear subcategories; full-category traversal, scheduler/background execution, and DB writes remain out of scope.
+- Next parser milestone: validate representative canonical output, review raw/staging and domain mapping, then build backend ingestion/upsert in a dedicated schema/API task.
+
+# 8. Visual Direction
 
 - Dark obsidian workstation.
 - Dense analytical UI.
 - Transparent layered surfaces.
-- Restrained ember/fire accents.
-- Fire/ember = signal system only, not decoration.
+- Restrained ember/fire accents as signal semantics only, not decoration.
 - Primary feel: premium fintech / market intelligence / operator console.
-- References: TradingView, Coinglass, CoinMarketCap, CoinGecko, MPStats, Moneyplace, MarketGuru, Маяк, TrueStats.
+- References: TradingView, Coinglass, CoinMarketCap, CoinGecko, MPStats, Moneyplace, MarketGuru, Mayak, TrueStats.
 - Use references for workflow density, hierarchy, tables, filtering, dashboards, and signal systems.
-- Do not copy competitor screens pixel-for-pixel.
-- Avoid generic AI SaaS look.
-- Avoid giant rounded cards.
-- Avoid excessive gradients.
-- Avoid gaming/casino aesthetics.
-- Avoid decorative flames.
-- Avoid fake analytics.
+- Avoid generic AI SaaS look, giant rounded cards, excessive gradients, gaming/casino aesthetics, decorative flames, and fake analytics.
 
-# 8. Dev Workflow
+# 9. Dev Workflow
 
 - PowerShell start: `scripts/dev/start-dev.ps1`.
 - PowerShell stop: `scripts/dev/stop-dev.ps1`.
@@ -104,31 +91,26 @@
 - Default frontend URL: `http://localhost:5173`.
 - Default Swagger URL: `http://localhost:5019/swagger`.
 - Runtime logs/PIDs live under `.dev`.
-- Scripts do not auto-apply migrations.
-- Scripts do not auto-enable seed.
-- Scripts do not delete Docker volumes by default.
-- Stop scripts should only stop managed processes from PID files.
+- Scripts do not auto-apply migrations, auto-enable seed, delete Docker volumes by default, or kill untracked port processes.
 
-# 9. Seed Accounts
+# 10. Seed Accounts
 
 - `admin@ashmes.local` / `Admin123!`
 - `manager@ashmes.local` / `Manager123!`
 - `analyst@ashmes.local` / `Analyst123!`
 - `viewer@ashmes.local` / `Viewer123!`
 
-# 10. Current Priorities
+# 11. Current Priorities
 
-- Frontend workflow coverage over existing backend APIs.
-- Analytics UX for orders, reviews, campaigns, expenses, logistics, recommendations.
-- Dense tables, filtering UX, selectors, column controls, URL sync.
-- Overview dashboard over real backend data.
-- Recommendation/signal semantics backed by real data.
-- Authorization/workspace permission hardening later.
-- Parser ingestion later.
-- ML/recommendation runtime later.
-- Testing, observability, performance, deployment hardening later.
+1. Validate safe parser output on representative real WB product-card runs and keep execution rate-limit aware.
+2. Design reviewed parser ingestion/raw-staging/domain mapping before adding backend schema or DB writes.
+3. Build Overview only after real-data pipeline contracts are stable enough to avoid fake dashboard semantics.
+4. Improve catalog/reference selectors so product and workflow filters stop relying on raw UUIDs where backend names exist.
+5. Define real recommendation/signal semantics before showing heat as business intelligence.
+6. Harden authorization/workspace permission enforcement after read-only access surface is stable.
+7. Add focused tests, observability, performance, export, and deployment hardening.
 
-# 11. Source Of Truth
+# 12. Source Of Truth
 
 - `docs/BACKLOG.md` = operational roadmap.
 - Full docs are required for architecture-level changes.
@@ -139,7 +121,7 @@
 - Read `docs/API_GUIDELINES.md` and `docs/API_IMPLEMENTATION_PATTERN.md` before API work.
 - `Documents/` contains local requirements and visual references; it is not source code.
 
-# 12. How To Work With Codex
+# 13. How To Work With Codex
 
 - Plan first for non-trivial work.
 - Implement one stage at a time.

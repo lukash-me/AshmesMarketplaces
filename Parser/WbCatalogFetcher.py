@@ -10,28 +10,97 @@ from typing import List
 from get_token import get_token
 from SearchPhraseParser import SearchPhraseParser
 import random
+from typing import Callable
 
 class WbCatalogFetcher:
     def __init__(self,
                  pages: List[DataPage],
                  search_phrase: str,
                  cookies: dict,
-                 batch_size: int=50,
-                 max_concurrent: int=10,
+                 dest: str='12354108',
+                 batch_size: int=5,
+                 max_concurrent: int=1,
                  timeout: int=10,
-                 max_retries: int=4,
-                 pause_between_batches: float=random.uniform(2, 4)):
+                 max_retries: int=2,
+                 request_delay_bounds: tuple[float, float]=(2.0, 5.0),
+                 batch_delay_bounds: tuple[float, float]=(15.0, 30.0),
+                 max_catalog_pages: int | None=None,
+                 max_limit_signals: int=2,
+                 event_recorder: Callable | None=None,
+                 attempt_recorder: Callable | None=None,
+                 retry_recorder: Callable | None=None,
+                 backoff_recorder: Callable | None=None,
+                 source_category: str | None=None,
+                 source_subcategory: str | None=None):
 
         self.pages = pages
         self.search_phrase = search_phrase
         self.cookies = cookies
+        self.dest = dest
         self.headers = HEADERS
 
         self.batch_size = batch_size
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.timeout = timeout
         self.max_retries = max_retries
-        self.pause_between_batches = pause_between_batches
+        self.request_delay_bounds = request_delay_bounds
+        self.batch_delay_bounds = batch_delay_bounds
+        self.max_catalog_pages = max_catalog_pages
+        self.max_limit_signals = max_limit_signals
+        self.event_recorder = event_recorder
+        self.attempt_recorder = attempt_recorder
+        self.retry_recorder = retry_recorder
+        self.backoff_recorder = backoff_recorder
+        self.source_category = source_category
+        self.source_subcategory = source_subcategory
+        self.limit_signals = 0
+        self.stop_requested = False
+
+    def _record_error(
+            self,
+            *,
+            message: str,
+            http_status: int | None = None,
+            wb_code: str | int | None = None,
+            attempt: int | None = None,
+            action: str | None = None,
+            details: dict | None = None):
+        if not self.event_recorder:
+            return
+
+        self.event_recorder(
+            phase="catalog",
+            source_category=self.source_category,
+            source_subcategory=self.source_subcategory,
+            source_query=self.search_phrase,
+            message=message,
+            http_status=http_status,
+            wb_code=wb_code,
+            attempt=attempt,
+            action=action,
+            details=details,
+        )
+
+    @staticmethod
+    def _extract_wb_code(payload: dict | None):
+        if not isinstance(payload, dict):
+            return None
+        return payload.get("code") or payload.get("error") or payload.get("errorCode")
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        return status_code in {429, 498} or status_code >= 500
+
+    async def _backoff(self, attempt: int):
+        seconds = min(60.0, (2 ** attempt) + random.uniform(0.5, 2.0))
+        if self.backoff_recorder:
+            self.backoff_recorder(seconds)
+        await asyncio.sleep(seconds)
+
+    def _mark_limit_signal(self):
+        self.limit_signals += 1
+        if self.limit_signals >= self.max_limit_signals:
+            self.stop_requested = True
 
 
     def _build_tasks(self) -> list[dict]:
@@ -47,6 +116,11 @@ class WbCatalogFetcher:
                     "page": page_num,
                 })
 
+                if self.max_catalog_pages and len(tasks) >= self.max_catalog_pages:
+                    logger.warning(f"Catalog page cap reached: {self.max_catalog_pages}")
+                    logger.info(f"Сформировано задач: {len(tasks)}")
+                    return tasks
+
         logger.info(f"Сформировано задач: {len(tasks)}")
         return tasks
 
@@ -56,7 +130,7 @@ class WbCatalogFetcher:
             'appType': '1',
             'autoselectFilters': 'false',
             'curr': 'rub',
-            'dest': '12354108',
+            'dest': self.dest,
             'inheritFilters': 'false',
             'lang': 'ru',
             'page': str(task["page"]),
@@ -71,9 +145,20 @@ class WbCatalogFetcher:
     async def _fetch_one(self, client: httpx.AsyncClient, task: dict) -> dict | None:
         params = self._build_params(task=task)
 
-        for attempt in range(1, self.max_retries + 1):
+        max_attempts = self.max_retries + 1
+        for attempt in range(1, max_attempts + 1):
+            if self.stop_requested:
+                return None
+
             try:
                 async with self.semaphore:
+                    delay_min, delay_max = self.request_delay_bounds
+                    if delay_max > 0:
+                        await asyncio.sleep(random.uniform(delay_min, delay_max))
+
+                    if self.attempt_recorder:
+                        self.attempt_recorder()
+
                     response = await client.get(
                         'https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search',
                         params=params,
@@ -82,21 +167,62 @@ class WbCatalogFetcher:
                         timeout=self.timeout
                     )
                     if response.status_code == 200:
-                        data = response.json()
+                        try:
+                            data = response.json()
+                        except ValueError:
+                            self._record_error(
+                                message="WB catalog response is not JSON",
+                                attempt=attempt,
+                                action="stopped")
+                            return None
+
+                        wb_code = self._extract_wb_code(data)
+                        if wb_code:
+                            self._mark_limit_signal()
+                            self._record_error(
+                                message="WB catalog response contains error code",
+                                wb_code=wb_code,
+                                attempt=attempt,
+                                action="retry" if attempt < max_attempts else "stopped")
+                            if attempt < max_attempts and not self.stop_requested:
+                                if self.retry_recorder:
+                                    self.retry_recorder()
+                                await self._backoff(attempt)
+                                continue
+                            return None
+
                         if "products" in data:
                             logger.debug(f"page={task['page']} "
                                          f"price={task['min_price']}-{task['max_price']}")
                             return data
                         else:
                             logger.warning(f"No products {data} | attempt={attempt}")
+                            self._record_error(
+                                message="WB catalog response has no products",
+                                attempt=attempt,
+                                action="retry" if attempt < max_attempts else "skipped")
                     else:
                         logger.warning(f"status={response.status_code} "
                                        f"page={task['page']} | attempt={attempt}")
+                        if self._is_retryable_status(response.status_code):
+                            self._mark_limit_signal()
+                        self._record_error(
+                            message=f"WB catalog HTTP status {response.status_code}",
+                            http_status=response.status_code,
+                            attempt=attempt,
+                            action="retry" if attempt < max_attempts else "stopped")
 
             except httpx.RequestError as err:
                 logger.error(err)
+                self._record_error(
+                    message=str(err),
+                    attempt=attempt,
+                    action="retry" if attempt < max_attempts else "stopped")
 
-            await asyncio.sleep(0.5 * attempt)
+            if attempt < max_attempts and not self.stop_requested:
+                if self.retry_recorder:
+                    self.retry_recorder()
+                await self._backoff(attempt)
 
         logger.error(
             f"failed page={task['page']} "
@@ -110,6 +236,10 @@ class WbCatalogFetcher:
 
         async with httpx.AsyncClient() as client:
             for i in range(0, len(tasks), self.batch_size):
+                if self.stop_requested:
+                    logger.warning("Catalog fetching stopped after repeated WB limit signals")
+                    break
+
                 batch = tasks[i: i + self.batch_size]
 
                 logger.info(f"Батч {i // self.batch_size + 1} "
@@ -126,7 +256,9 @@ class WbCatalogFetcher:
 
                 logger.success(f"Батч завершен, всего ответов: {len(results)}")
 
-                await asyncio.sleep(self.pause_between_batches)
+                delay_min, delay_max = self.batch_delay_bounds
+                if delay_max > 0:
+                    await asyncio.sleep(random.uniform(delay_min, delay_max))
 
         logger.info(f"Готово. Всего ответов: {len(results)}")
 

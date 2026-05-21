@@ -6,13 +6,31 @@ from common_data import HEADERS
 from get_token import get_token
 import time
 import random
+from typing import Callable
 
 
 # Парсинг на основе поисковых запросов
 class SearchPhraseParser:
-    def __init__(self, search_phrase: str, cookies: dict = None):
+    def __init__(
+            self,
+            search_phrase: str,
+            cookies: dict = None,
+            dest: str = "12354108",
+            timeout: int = 10,
+            max_retries: int = 2,
+            request_delay_bounds: tuple[float, float] = (0.4, 1.2),
+            event_recorder: Callable | None = None,
+            source_category: str | None = None,
+            source_subcategory: str | None = None):
         self.search_phrase = search_phrase
         self.cookies = cookies
+        self.dest = dest
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.request_delay_bounds = request_delay_bounds
+        self.event_recorder = event_recorder
+        self.source_category = source_category
+        self.source_subcategory = source_subcategory
 
         self.default_step = 500 * 100
         self.max_count_of_good = 5000
@@ -23,13 +41,46 @@ class SearchPhraseParser:
         self.max_split_depth = 10
         self.low_goods_threshold = 500
 
+    def _record_error(
+            self,
+            *,
+            message: str,
+            http_status: int | None = None,
+            wb_code: str | int | None = None,
+            attempt: int | None = None,
+            action: str | None = None):
+        if not self.event_recorder:
+            return
+
+        self.event_recorder(
+            phase="filters",
+            source_category=self.source_category,
+            source_subcategory=self.source_subcategory,
+            source_query=self.search_phrase,
+            message=message,
+            http_status=http_status,
+            wb_code=wb_code,
+            attempt=attempt,
+            action=action,
+        )
+
+    @staticmethod
+    def _extract_wb_code(payload: dict | None):
+        if not isinstance(payload, dict):
+            return None
+        return payload.get("code") or payload.get("error") or payload.get("errorCode")
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        return status_code in {429, 498} or status_code >= 500
+
     def fetch_data(self, add_params: dict = None):
         params = {
             'ab_testing': 'false',
             'appType': '1',
             'autoselectFilters': 'false',
             'curr': 'rub',
-            'dest': '12354108',
+            'dest': self.dest,
             'lang': 'ru',
             'locale': 'ru',
             'query': self.search_phrase,
@@ -41,16 +92,60 @@ class SearchPhraseParser:
             params.update(add_params)
             logger.debug(add_params)
 
-        time.sleep(random.uniform(0.4, 1.2))
-        response = requests.get("https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search",
-                                params=params,
-                                cookies=self.cookies,
-                                headers=HEADERS)
+        for attempt in range(1, self.max_retries + 2):
+            delay_min, delay_max = self.request_delay_bounds
+            if delay_max > 0:
+                time.sleep(random.uniform(delay_min, delay_max))
 
-        if response.status_code == 200:
-            return response.json()
+            try:
+                response = requests.get(
+                    "https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search",
+                    params=params,
+                    cookies=self.cookies,
+                    headers=HEADERS,
+                    timeout=self.timeout)
+            except requests.RequestException as err:
+                logger.warning(f"WB filters request failed: {err}")
+                self._record_error(message=str(err), attempt=attempt, action="retry")
+                if attempt <= self.max_retries:
+                    time.sleep(0.75 * attempt)
+                    continue
+                return None
 
-        logger.error(f"WB status: {response.status_code}")
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    self._record_error(message="WB filters response is not JSON", attempt=attempt, action="stopped")
+                    return None
+
+                wb_code = self._extract_wb_code(payload)
+                if wb_code:
+                    self._record_error(
+                        message="WB filters response contains error code",
+                        wb_code=wb_code,
+                        attempt=attempt,
+                        action="retry" if attempt <= self.max_retries else "stopped")
+                    if attempt <= self.max_retries:
+                        time.sleep(0.75 * attempt)
+                        continue
+
+                return payload
+
+            logger.error(f"WB status: {response.status_code}")
+            action = "retry" if self._is_retryable_status(response.status_code) and attempt <= self.max_retries else "stopped"
+            self._record_error(
+                message=f"WB filters HTTP status {response.status_code}",
+                http_status=response.status_code,
+                attempt=attempt,
+                action=action)
+
+            if action == "retry":
+                time.sleep(0.75 * attempt)
+                continue
+
+            return None
+
         return None
 
     @staticmethod

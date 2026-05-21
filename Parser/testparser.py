@@ -4,8 +4,6 @@ from get_token import get_token
 import json
 from common_data import HEADERS
 
-TOKEN = '1.1000.fce283080ef34ad49b48f48373413543.MTV8NS4xNDkuMjIxLjE4M3xNb3ppbGxhLzUuMCAoV2luZG93cyBOVCAxMC4wOyBXaW42NDsgeDY0KSBBcHBsZVdlYktpdC81MzcuMzYgKEtIVE1MLCBsaWtlIEdlY2tvKSBDaHJvbWUvMTQ3LjAuMC4wIFNhZmFyaS81MzcuMzZ8MTc3ODY4Njg4MHxyZXVzYWJsZXwyfGV5Sm9ZWE5vSWpvaUluMD18MHwzfDE3NzgwODIwODB8MQ==.MEUCIGSN8ZMQflBDQonWU0uL9gg3CYiwKLaxEdO8BREwHK0KAiEA+kM6Eiz50S8IQFSAQrjw8jprILmwYARhqkS/eK+vIAM='
-
 # Парсинг позиции карточки по поисковому запросу
 class WbRank:
     SEARCH_URL = 'https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search'
@@ -25,9 +23,9 @@ class WbRank:
         'suppressSpellcheck': 'false',
     }
 
-    def __init__(self, goods: list):
+    def __init__(self, goods: list, token: str | None = None):
         self.goods = goods
-        self.token = TOKEN
+        self.token = token
 
     def _update_token(self):
         logger.info("Обновляем токен")
@@ -40,6 +38,9 @@ class WbRank:
 
         for attempt in range(1, retries + 2):
             logger.info(f"Попытка {attempt}")
+            if not self.token:
+                self._update_token()
+
             response = requests.get(
                 self.SEARCH_URL,
                 params=params,
@@ -104,10 +105,3 @@ class WbRank:
             )
 
         return results
-
-
-cookies = {
-    'x_wbaas_token': '1.1000.fce283080ef34ad49b48f48373413543.MTV8NS4xNDkuMjIxLjE4M3xNb3ppbGxhLzUuMCAoV2luZG93cyBOVCAxMC4wOyBXaW42NDsgeDY0KSBBcHBsZVdlYktpdC81MzcuMzYgKEtIVE1MLCBsaWtlIEdlY2tvKSBDaHJvbWUvMTQ3LjAuMC4wIFNhZmFyaS81MzcuMzZ8MTc3ODY4Njg4MHxyZXVzYWJsZXwyfGV5Sm9ZWE5vSWpvaUluMD18MHwzfDE3NzgwODIwODB8MQ==.MEUCIGSN8ZMQflBDQonWU0uL9gg3CYiwKLaxEdO8BREwHK0KAiEA+kM6Eiz50S8IQFSAQrjw8jprILmwYARhqkS/eK+vIAM=',
-    '_wbauid': '9646763631777477282',
-}
-
