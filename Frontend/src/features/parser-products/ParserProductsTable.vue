@@ -166,7 +166,7 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
 <template>
   <div class="market-products-table app-surface">
     <header class="table-toolbar">
-      <p>Товары из данных сервиса для сравнения ассортимента и карточек маркетплейса.</p>
+      <p>Исследуйте товары конкурентов, цены, рейтинги и отзывы, чтобы находить перспективные ниши.</p>
       <div class="column-picker">
         <Button variant="secondary" @click="columnMenuOpen = !columnMenuOpen">
           <Columns3 :size="16" />
@@ -409,6 +409,9 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
   display: -webkit-box;
   max-width: 28rem;
   overflow: hidden;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 740;
   line-height: 1.28;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

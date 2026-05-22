@@ -154,8 +154,11 @@ function getLabel(key: string): string {
 
 <style scoped>
 .filters {
+  position: relative;
+  z-index: 3;
   display: grid;
   gap: var(--space-3);
+  overflow: visible;
   padding: var(--space-3);
 }
 

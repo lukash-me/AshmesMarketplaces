@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 
+const loadedImageUrls = new Set<string>();
+
 const props = withDefaults(
   defineProps<{
     src?: string | null;
@@ -23,7 +25,7 @@ watch(
   () => [props.src, props.fallbackSrc] as const,
   ([src, fallbackSrc]) => {
     activeSrc.value = src || fallbackSrc || null;
-    loaded.value = false;
+    loaded.value = activeSrc.value ? loadedImageUrls.has(activeSrc.value) : false;
     failed.value = !activeSrc.value;
   },
   { immediate: true }
@@ -31,8 +33,25 @@ watch(
 
 const loadingMode = computed(() => (props.priority ? 'eager' : 'lazy'));
 const fetchPriority = computed(() => (props.priority ? 'high' : 'auto'));
+const hasPreview = computed(
+  () => Boolean(props.fallbackSrc && activeSrc.value && activeSrc.value !== props.fallbackSrc)
+);
 
-function onLoad() {
+async function onLoad(event: Event) {
+  const image = event.currentTarget as HTMLImageElement;
+  const loadedSrc = activeSrc.value;
+
+  try {
+    await image.decode();
+  } catch {
+    // Decode can reject after a successful network load. Keep the loaded image visible.
+  }
+
+  if (!loadedSrc || activeSrc.value !== loadedSrc) {
+    return;
+  }
+
+  loadedImageUrls.add(loadedSrc);
   loaded.value = true;
   failed.value = false;
 }
@@ -40,7 +59,8 @@ function onLoad() {
 function onError() {
   if (props.fallbackSrc && activeSrc.value !== props.fallbackSrc) {
     activeSrc.value = props.fallbackSrc;
-    loaded.value = false;
+    loaded.value = loadedImageUrls.has(props.fallbackSrc);
+    failed.value = false;
     return;
   }
 
@@ -51,14 +71,14 @@ function onError() {
 <template>
   <span class="market-image" :class="{ 'market-image--ready': loaded, 'market-image--failed': failed }">
     <img
-      v-if="fallbackSrc && activeSrc !== fallbackSrc && !loaded"
+      v-if="hasPreview && !loaded"
       class="market-image__preview"
       :src="fallbackSrc"
       alt=""
       loading="eager"
       decoding="async"
     />
-    <span v-if="activeSrc && !loaded && !failed" class="market-image__skeleton" aria-hidden="true" />
+    <span v-if="activeSrc && !loaded && !failed && !hasPreview" class="market-image__skeleton" aria-hidden="true" />
     <img
       v-if="activeSrc && !failed"
       class="market-image__asset"
@@ -110,7 +130,7 @@ function onError() {
 .market-image__preview {
   position: absolute;
   inset: 0;
-  opacity: 0.72;
+  opacity: 1;
 }
 
 .market-image--ready .market-image__asset {

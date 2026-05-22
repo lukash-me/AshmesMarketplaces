@@ -95,6 +95,10 @@ function clear(event: MouseEvent) {
   min-width: 0;
 }
 
+.filter-select[open] {
+  z-index: 2;
+}
+
 .filter-select summary {
   display: grid;
   min-height: 3.25rem;
@@ -160,7 +164,7 @@ function clear(event: MouseEvent) {
 
 .filter-select__menu {
   position: absolute;
-  z-index: 5;
+  z-index: 20;
   top: calc(100% + var(--space-2));
   left: 0;
   display: grid;
