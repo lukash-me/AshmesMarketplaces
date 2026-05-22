@@ -20,6 +20,8 @@ public sealed class ParserFileConfiguration : IEntityTypeConfiguration<ParserFil
         builder.Property(x => x.RowCount).HasColumnName("row_count");
         builder.Property(x => x.DateRegisteredUtc).IsRequired().HasColumnName("date_registered_utc");
 
+        builder.HasIndex(x => new { x.IdParserRun, x.Kind });
+
         builder.HasOne<ParserRun>()
             .WithMany()
             .HasForeignKey(x => x.IdParserRun)

@@ -39,6 +39,9 @@ public sealed class ParserReviewRootFetchConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.IsCappedRootPayload).IsRequired().HasColumnName("is_capped_root_payload");
         builder.Property(x => x.IsFullHistoryUnknown).IsRequired().HasColumnName("is_full_history_unknown");
 
+        builder.HasIndex(x => new { x.IdParserFile, x.SourceLineNumber }).IsUnique();
+        builder.HasIndex(x => new { x.IdParserRun, x.SourceWbRootId });
+
         builder.HasOne<ParserRun>().WithMany().HasForeignKey(x => x.IdParserRun).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<ParserFile>().WithMany().HasForeignKey(x => x.IdParserFile).OnDelete(DeleteBehavior.Restrict);
     }

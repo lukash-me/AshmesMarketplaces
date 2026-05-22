@@ -49,6 +49,13 @@ public sealed class ParserProductRowConfiguration : IEntityTypeConfiguration<Par
         builder.Property(x => x.SubjectId).HasColumnName("subject_id");
         builder.Property(x => x.RawObservedFields).HasColumnType("jsonb").HasColumnName("raw_observed_fields");
 
+        builder.HasIndex(x => new { x.IdParserFile, x.SourceLineNumber }).IsUnique();
+        builder.HasIndex(x => x.ParserRunId);
+        builder.HasIndex(x => x.WbProductId);
+        builder.HasIndex(x => x.WbRootId);
+        builder.HasIndex(x => x.ParsedAtUtc);
+        builder.HasIndex(x => new { x.ParserRunId, x.ParsedAtUtc });
+
         builder.HasOne<ParserRun>().WithMany().HasForeignKey(x => x.IdParserRun).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<ParserFile>().WithMany().HasForeignKey(x => x.IdParserFile).OnDelete(DeleteBehavior.Restrict);
     }

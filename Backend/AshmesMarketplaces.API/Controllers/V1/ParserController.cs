@@ -1,0 +1,133 @@
+using AshmesMarketplaces.Application.Common.Pagination;
+using AshmesMarketplaces.Application.Common.Results;
+using AshmesMarketplaces.Application.ParserObservability.Dtos;
+using AshmesMarketplaces.Application.ParserObservability.Services;
+using Microsoft.AspNetCore.Mvc;
+
+namespace AshmesMarketplaces.API.Controllers.V1;
+
+[ApiController]
+[Route("api/v1/parser")]
+[Produces("application/json")]
+public sealed class ParserController : ControllerBase
+{
+    private readonly IParserProductReadService _productReadService;
+    private readonly IParserReviewReadService _reviewReadService;
+    private readonly IParserRunReadService _runReadService;
+
+    public ParserController(
+        IParserProductReadService productReadService,
+        IParserReviewReadService reviewReadService,
+        IParserRunReadService runReadService)
+    {
+        _productReadService = productReadService;
+        _reviewReadService = reviewReadService;
+        _runReadService = runReadService;
+    }
+
+    [HttpGet("products")]
+    [ProducesResponseType(typeof(PagedResponse<ParserProductListItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResponse<ParserProductListItemDto>>> GetProducts(
+        [FromQuery] ParserProductListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetListAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("products/{id:guid}")]
+    [ProducesResponseType(typeof(ParserProductDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserProductDetailDto>> GetProduct(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetByIdAsync(id, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("reviews")]
+    [ProducesResponseType(typeof(PagedResponse<ParserReviewListItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResponse<ParserReviewListItemDto>>> GetReviews(
+        [FromQuery] ParserReviewListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _reviewReadService.GetListAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("reviews/{id:guid}")]
+    [ProducesResponseType(typeof(ParserReviewDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserReviewDetailDto>> GetReview(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _reviewReadService.GetByIdAsync(id, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("reviews/{id:guid}/replies")]
+    [ProducesResponseType(typeof(PagedResponse<ParserReviewReplyDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PagedResponse<ParserReviewReplyDto>>> GetReviewReplies(
+        Guid id,
+        [FromQuery] ParserReviewReplyListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _reviewReadService.GetRepliesAsync(id, query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("runs")]
+    [ProducesResponseType(typeof(PagedResponse<ParserRunSummaryDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PagedResponse<ParserRunSummaryDto>>> GetRuns(
+        [FromQuery] ParserRunListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _runReadService.GetListAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    private ActionResult<T> ToActionResult<T>(ServiceResult<T> result)
+    {
+        if (result.IsSuccess)
+            return Ok(result.Value);
+
+        return ToActionResult(result.Error!);
+    }
+
+    private ObjectResult ToActionResult(ServiceError error)
+    {
+        var statusCode = error.Type switch
+        {
+            ServiceErrorType.BadRequest => StatusCodes.Status400BadRequest,
+            ServiceErrorType.NotFound => StatusCodes.Status404NotFound,
+            ServiceErrorType.Conflict => StatusCodes.Status409Conflict,
+            _ => StatusCodes.Status500InternalServerError
+        };
+
+        return Problem(
+            title: GetProblemTitle(error.Type),
+            detail: error.Message,
+            statusCode: statusCode,
+            type: $"https://httpstatuses.com/{statusCode}");
+    }
+
+    private static string GetProblemTitle(ServiceErrorType errorType)
+    {
+        return errorType switch
+        {
+            ServiceErrorType.BadRequest => "Invalid request",
+            ServiceErrorType.NotFound => "Resource not found",
+            ServiceErrorType.Conflict => "Conflict",
+            _ => "Unexpected error"
+        };
+    }
+}

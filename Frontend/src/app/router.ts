@@ -4,6 +4,8 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import AuthLayout from '@/layouts/AuthLayout.vue';
 import { useAuthStore } from '@/features/auth/auth.store';
 import LoginPage from '@/features/auth/LoginPage.vue';
+import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vue';
+import ParserReviewsPage from '@/features/parser-reviews/ParserReviewsPage.vue';
 import ProductsPage from '@/features/products/ProductsPage.vue';
 import AccessSettingsPage from '@/pages/AccessSettingsPage.vue';
 import CampaignsPage from '@/pages/CampaignsPage.vue';
@@ -37,8 +39,10 @@ export const router = createRouter({
         { path: '', redirect: '/overview' },
         { path: 'overview', name: 'overview', component: OverviewPage },
         { path: 'products', name: 'products', component: ProductsPage },
+        { path: 'parser/products', name: 'parser-products', component: ParserProductsPage },
         { path: 'orders', name: 'orders', component: OrdersPage },
         { path: 'reviews', name: 'reviews', component: ReviewsPage },
+        { path: 'parser/reviews', name: 'parser-reviews', component: ParserReviewsPage },
         { path: 'logistics', name: 'logistics', component: LogisticsPage },
         { path: 'campaigns', name: 'campaigns', component: CampaignsPage },
         { path: 'expenses', name: 'expenses', component: ExpensesPage },

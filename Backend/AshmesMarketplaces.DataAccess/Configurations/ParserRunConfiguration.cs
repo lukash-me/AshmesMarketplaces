@@ -23,5 +23,7 @@ public sealed class ParserRunConfiguration : IEntityTypeConfiguration<ParserRun>
         builder.Property(x => x.RequestedScope).HasColumnType("jsonb").HasColumnName("requested_scope");
         builder.Property(x => x.Counters).HasColumnType("jsonb").HasColumnName("counters");
         builder.Property(x => x.DateRegisteredUtc).IsRequired().HasColumnName("date_registered_utc");
+
+        builder.HasIndex(x => new { x.ParserRunId, x.Marketplace, x.Kind }).IsUnique();
     }
 }

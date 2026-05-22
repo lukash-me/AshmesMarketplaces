@@ -13,6 +13,7 @@ using AshmesMarketplaces.Application.Logistics.Services;
 using AshmesMarketplaces.Application.Marketplaces.Services;
 using AshmesMarketplaces.Application.Marketplaces.Validators;
 using AshmesMarketplaces.Application.Orders.Services;
+using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.Products.Services;
 using AshmesMarketplaces.Application.PermissionCategories.Services;
 using AshmesMarketplaces.Application.Permissions.Services;
@@ -45,6 +46,9 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IWarehouseService, WarehouseService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductHistoryService, ProductHistoryService>();
+        services.AddScoped<IParserProductReadService, ParserProductReadService>();
+        services.AddScoped<IParserReviewReadService, ParserReviewReadService>();
+        services.AddScoped<IParserRunReadService, ParserRunReadService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IReviewReplyService, ReviewReplyService>();
