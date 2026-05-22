@@ -3,7 +3,6 @@ import {
   BarChart3,
   Boxes,
   CreditCard,
-  Database,
   LayoutDashboard,
   Megaphone,
   PackageSearch,
@@ -24,11 +23,10 @@ defineEmits<{
 
 const navItems = [
   { to: '/overview', label: 'Overview', icon: LayoutDashboard },
-  { to: '/products', label: 'Products', icon: PackageSearch },
-  { to: '/parser/products', label: 'Parsed Products', icon: Database },
+  { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 },
+  { to: '/products', label: 'Мои товары', icon: PackageSearch },
   { to: '/orders', label: 'Orders', icon: Boxes },
-  { to: '/reviews', label: 'Reviews', icon: Star },
-  { to: '/parser/reviews', label: 'Parsed Reviews', icon: Database },
+  { to: '/reviews', label: 'Отзывы моих товаров', icon: Star },
   { to: '/logistics', label: 'Logistics', icon: Truck },
   { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
   { to: '/expenses', label: 'Expenses', icon: CreditCard },

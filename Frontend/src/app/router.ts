@@ -38,8 +38,9 @@ export const router = createRouter({
       children: [
         { path: '', redirect: '/overview' },
         { path: 'overview', name: 'overview', component: OverviewPage },
+        { path: 'market/products', name: 'market-products', component: ParserProductsPage },
         { path: 'products', name: 'products', component: ProductsPage },
-        { path: 'parser/products', name: 'parser-products', component: ParserProductsPage },
+        { path: 'parser/products', redirect: { name: 'market-products' } },
         { path: 'orders', name: 'orders', component: OrdersPage },
         { path: 'reviews', name: 'reviews', component: ReviewsPage },
         { path: 'parser/reviews', name: 'parser-reviews', component: ParserReviewsPage },

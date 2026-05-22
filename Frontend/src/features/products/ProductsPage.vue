@@ -114,8 +114,8 @@ function closeProduct() {
 <template>
   <div class="products-page">
     <PageHeader
-      title="Products"
-      description="Operational product catalog with marketplace identifiers, status, commission and update recency signals."
+      title="Мои товары"
+      description="Каталог товаров пользователя с идентификаторами маркетплейса, статусами и операционными полями."
     />
 
     <KpiGrid :items="kpis" />
@@ -132,15 +132,15 @@ function closeProduct() {
     <EmptyState
       v-else-if="error"
       class="app-surface"
-      title="Products could not be loaded"
+      title="Не удалось загрузить мои товары"
       :description="error"
     />
 
     <EmptyState
       v-else-if="products.length === 0"
       class="app-surface"
-      title="No products found"
-      description="Adjust filters or add products through the backend API."
+      title="Мои товары не найдены"
+      description="Измените фильтры или добавьте товары через backend API."
     />
 
     <ProductsTable

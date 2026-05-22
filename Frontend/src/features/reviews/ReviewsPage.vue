@@ -92,8 +92,8 @@ function closeReview() {
 <template>
   <div class="reviews-page">
     <PageHeader
-      title="Reviews"
-      description="Read-only review monitoring with marketplace IDs, ratings, reply state and product context."
+      title="Отзывы моих товаров"
+      description="Отзывы по товарам пользователя: идентификаторы маркетплейса, рейтинги, ответы и контекст товара."
     />
 
     <ReviewsFilters
@@ -108,15 +108,15 @@ function closeReview() {
     <EmptyState
       v-else-if="error"
       class="app-surface"
-      title="Reviews could not be loaded"
+      title="Не удалось загрузить отзывы моих товаров"
       :description="error"
     />
 
     <EmptyState
       v-else-if="reviews.length === 0"
       class="app-surface"
-      title="No reviews found"
-      description="Adjust filters or load reviews through the existing backend API."
+      title="Отзывы моих товаров не найдены"
+      description="Измените фильтры или загрузите отзывы через существующий backend API."
     />
 
     <ReviewsTable

@@ -58,6 +58,10 @@ export interface ParserProductListParams {
   feedbackCountTo?: number;
 }
 
+export type ParserProductReviewPresence = {
+  status: 'loading' | 'present' | 'absent' | 'error';
+};
+
 export type ParserProductQueryState = {
   page: number;
   pageSize: number;

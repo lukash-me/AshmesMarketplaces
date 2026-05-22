@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue';
+import { SlidersHorizontal } from 'lucide-vue-next';
 
 import Button from '@/shared/ui/Button.vue';
 import Input from '@/shared/ui/Input.vue';
 
+import MarketFilterSelect from './MarketFilterSelect.vue';
 import type { ParserProductQueryFilterKey } from './parserProductsQuery';
-import type { ParserProductQueryState } from './parserProducts.types';
+import type { ParserProductListItem, ParserProductQueryState } from './parserProducts.types';
 
 const props = defineProps<{
   state: ParserProductQueryState;
+  rows: ParserProductListItem[];
 }>();
 
 const emit = defineEmits<{
@@ -19,12 +22,10 @@ const emit = defineEmits<{
 
 const form = reactive({
   search: props.state.search,
-  parserRunId: props.state.parserRunId,
   sourceCategory: props.state.sourceCategory,
   sourceSubcategory: props.state.sourceSubcategory,
   brandName: props.state.brandName,
   sellerName: props.state.sellerName,
-  wbRootId: props.state.wbRootId,
   priceDiscountedFrom: props.state.priceDiscountedFrom,
   priceDiscountedTo: props.state.priceDiscountedTo,
   reviewRatingFrom: props.state.reviewRatingFrom,
@@ -37,12 +38,10 @@ watch(
   () => props.state,
   (state) => {
     form.search = state.search;
-    form.parserRunId = state.parserRunId;
     form.sourceCategory = state.sourceCategory;
     form.sourceSubcategory = state.sourceSubcategory;
     form.brandName = state.brandName;
     form.sellerName = state.sellerName;
-    form.wbRootId = state.wbRootId;
     form.priceDiscountedFrom = state.priceDiscountedFrom;
     form.priceDiscountedTo = state.priceDiscountedTo;
     form.reviewRatingFrom = state.reviewRatingFrom;
@@ -52,6 +51,11 @@ watch(
   },
   { deep: true }
 );
+
+const categoryOptions = computed(() => getOptions('sourceCategory'));
+const subcategoryOptions = computed(() => getOptions('sourceSubcategory'));
+const brandOptions = computed(() => getOptions('brandName'));
+const sellerOptions = computed(() => getOptions('sellerName'));
 
 const chips = computed(() =>
   (Object.keys(form) as Array<keyof typeof form>)
@@ -63,35 +67,36 @@ const chips = computed(() =>
     }))
     .concat(
       props.state.sort
-        ? [{ key: 'sort' as ParserProductQueryFilterKey, label: 'Sort', value: props.state.sort }]
+        ? [{ key: 'sort' as ParserProductQueryFilterKey, label: 'Сортировка', value: props.state.sort }]
         : []
     )
 );
 
+function getOptions(key: 'sourceCategory' | 'sourceSubcategory' | 'brandName' | 'sellerName') {
+  return [...new Set(props.rows.map((row) => row[key]).filter((value): value is string => Boolean(value?.trim())))]
+    .sort((left, right) => left.localeCompare(right, 'ru-RU'));
+}
+
 function apply() {
   emit('apply', {
     page: 1,
-    ...Object.fromEntries(
-      Object.entries(form).map(([key, value]) => [key, value.trim()])
-    )
+    ...Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]))
   });
 }
 
 function getLabel(key: string): string {
   const labels: Record<string, string> = {
-    search: 'Search',
-    parserRunId: 'Run',
-    sourceCategory: 'Category',
-    sourceSubcategory: 'Subcategory',
-    brandName: 'Brand',
-    sellerName: 'Seller',
-    wbRootId: 'Root',
-    priceDiscountedFrom: 'Price from',
-    priceDiscountedTo: 'Price to',
-    reviewRatingFrom: 'Rating from',
-    reviewRatingTo: 'Rating to',
-    feedbackCountFrom: 'Feedback from',
-    feedbackCountTo: 'Feedback to'
+    search: 'Поиск',
+    sourceCategory: 'Категория',
+    sourceSubcategory: 'Подкатегория',
+    brandName: 'Бренд',
+    sellerName: 'Продавец',
+    priceDiscountedFrom: 'Цена от',
+    priceDiscountedTo: 'Цена до',
+    reviewRatingFrom: 'Рейтинг от',
+    reviewRatingTo: 'Рейтинг до',
+    feedbackCountFrom: 'Отзывы от',
+    feedbackCountTo: 'Отзывы до'
   };
 
   return labels[key] ?? key;
@@ -100,36 +105,43 @@ function getLabel(key: string): string {
 
 <template>
   <form class="filters app-surface" @submit.prevent="apply">
-    <div class="filters__toolbar">
-      <Input v-model="form.search" label="Search" placeholder="Name, WB id, brand, seller" />
-      <Input v-model="form.parserRunId" label="Parser run" placeholder="wb_products_..." />
-      <Input v-model="form.wbRootId" label="WB root id" placeholder="root id" />
+    <div class="filters__search">
+      <Input v-model="form.search" label="Поиск" placeholder="Название или WB id" />
       <div class="filters__actions">
-        <Button type="submit">Apply</Button>
-        <Button v-if="chips.length" type="button" variant="ghost" @click="$emit('reset')">Reset</Button>
+        <Button type="submit">Применить</Button>
+        <Button v-if="chips.length" type="button" variant="ghost" @click="$emit('reset')">Сбросить</Button>
       </div>
     </div>
 
-    <div class="filters__grid">
-      <Input v-model="form.sourceCategory" label="Source category" />
-      <Input v-model="form.sourceSubcategory" label="Source subcategory" />
-      <Input v-model="form.brandName" label="Brand" />
-      <Input v-model="form.sellerName" label="Seller" />
-      <Input v-model="form.priceDiscountedFrom" label="Discounted price from" type="number" />
-      <Input v-model="form.priceDiscountedTo" label="Discounted price to" type="number" />
-      <Input v-model="form.reviewRatingFrom" label="Review rating from" type="number" />
-      <Input v-model="form.reviewRatingTo" label="Review rating to" type="number" />
-      <Input v-model="form.feedbackCountFrom" label="Feedback count from" type="number" />
-      <Input v-model="form.feedbackCountTo" label="Feedback count to" type="number" />
+    <div class="filters__selects">
+      <MarketFilterSelect v-model="form.sourceCategory" label="Категория" placeholder="Все категории" :options="categoryOptions" />
+      <MarketFilterSelect v-model="form.sourceSubcategory" label="Подкатегория" placeholder="Все подкатегории" :options="subcategoryOptions" />
+      <MarketFilterSelect v-model="form.brandName" label="Бренд" placeholder="Все бренды" :options="brandOptions" />
+      <MarketFilterSelect v-model="form.sellerName" label="Продавец" placeholder="Все продавцы" :options="sellerOptions" />
     </div>
 
-    <div v-if="chips.length" class="filters__chips" aria-label="Active parsed product filters">
+    <details class="filters__ranges">
+      <summary>
+        <SlidersHorizontal :size="15" />
+        Диапазоны
+      </summary>
+      <div class="filters__range-grid">
+        <Input v-model="form.priceDiscountedFrom" label="Цена от" type="number" />
+        <Input v-model="form.priceDiscountedTo" label="Цена до" type="number" />
+        <Input v-model="form.reviewRatingFrom" label="Рейтинг от" type="number" />
+        <Input v-model="form.reviewRatingTo" label="Рейтинг до" type="number" />
+        <Input v-model="form.feedbackCountFrom" label="Отзывы от" type="number" />
+        <Input v-model="form.feedbackCountTo" label="Отзывы до" type="number" />
+      </div>
+    </details>
+
+    <div v-if="chips.length" class="filters__chips" aria-label="Активные фильтры товаров маркетплейса">
       <button
         v-for="chip in chips"
         :key="chip.key"
         class="filters__chip"
         type="button"
-        :title="`Remove ${chip.label}`"
+        :title="`Убрать ${chip.label}`"
         @click="emit('remove', chip.key)"
       >
         <span>{{ chip.label }}</span>
@@ -147,8 +159,9 @@ function getLabel(key: string): string {
   padding: var(--space-3);
 }
 
-.filters__toolbar,
-.filters__grid {
+.filters__search,
+.filters__selects,
+.filters__range-grid {
   display: grid;
   gap: var(--space-3);
 }
@@ -157,6 +170,27 @@ function getLabel(key: string): string {
   display: flex;
   align-items: end;
   gap: var(--space-2);
+}
+
+.filters__ranges {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-control);
+  padding: var(--space-2) var(--space-3);
+}
+
+.filters__ranges summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  font-weight: 680;
+}
+
+.filters__range-grid {
+  margin-top: var(--space-3);
 }
 
 .filters__chips {
@@ -188,13 +222,17 @@ function getLabel(key: string): string {
 }
 
 @media (min-width: 860px) {
-  .filters__toolbar {
-    grid-template-columns: minmax(18rem, 1fr) minmax(13rem, 0.7fr) minmax(10rem, 0.45fr) auto;
+  .filters__search {
+    grid-template-columns: minmax(18rem, 1fr) auto;
     align-items: end;
   }
 
-  .filters__grid {
-    grid-template-columns: repeat(5, minmax(8rem, 1fr));
+  .filters__selects {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .filters__range-grid {
+    grid-template-columns: repeat(6, minmax(7rem, 1fr));
   }
 }
 </style>
