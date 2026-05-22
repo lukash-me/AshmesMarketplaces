@@ -2,7 +2,7 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; safe manual WB product-card and review/reply parser slices exist; backend ingestion and broad analytics workflows are still pending.
+- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; safe manual WB product-card and review/reply parser slices exist; backend parser raw/staging ingestion code exists without a reviewed migration; broad analytics workflows are still pending.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
 - Frontend maturity: auth shell and Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings are real read-only slices; Overview dashboard remains the main placeholder.
@@ -50,7 +50,8 @@
 - Auth uses JWT access tokens + opaque refresh tokens stored as hashes in `Sessions.token`.
 - Development seed exists, Development-only, config-gated, disabled by default.
 - CRUD APIs remain anonymous for compatibility; auth endpoints are protected where appropriate.
-- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, parser ingestion, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
+- Parser ingestion foundation exists as backend-owned entities/configurations, application service, and a manual CLI for parser run validation, raw/staging registration, and selective existing-product promotion design. No ingestion migration has been created yet.
+- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, applied parser ingestion schema/runtime verification on PostgreSQL, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
 
 # 6. Current Frontend Status
 
@@ -70,8 +71,10 @@
 - `Parser/reviews_runner.py` reads existing `products.jsonl`, fetches public WB root feedback payloads by `wb_root_id`, writes canonical `reviews.jsonl` and `review_replies.jsonl`, retains configurable compressed raw payloads, and supports fetch audit, bounded concurrency, and resume.
 - Review rows preserve `review_attribution_mode=root_payload`; WB review ownership is root/sibling scoped and must not be treated as exact product-variant semantics without a reviewed mapping decision.
 - Real WB validation exists on footwear product data and review runs. The public review endpoint often returns a capped payload slice where reported feedback count exceeds returned rows; pagination/full-history research is still pending.
-- Full-category traversal expansion, scheduler/background execution, browser/token review research, and DB writes remain out of scope.
-- Next parser milestone: review product and review/reply raw/staging/domain mapping plus public review pagination/cap behavior, then build backend ingestion/upsert in a dedicated schema/API task.
+- Backend parser ingestion stage now has raw run/file registration, import audit/error entities, product/review/reply staging entities, review root-fetch completeness metadata, and a manual CLI/service path that reads existing parser output offline.
+- Current review ingestion decision is staging-only: review/reply data remains partial/capped/root-attributed evidence until pagination/full-history and domain attribution semantics are proven.
+- Full-category traversal expansion, scheduler/background execution, browser/token review research, reviewed ingestion migrations/DB writes, and domain review import remain out of scope.
+- Next parser milestone: review and apply the ingestion schema migration for raw/staging tables, verify product staging on PostgreSQL, then continue review pagination/cap research before any domain review upsert.
 
 # 8. Visual Direction
 
@@ -105,8 +108,8 @@
 
 # 11. Current Priorities
 
-1. Validate representative WB product and review/reply parser outputs, including review payload cap/pagination behavior, and keep execution rate-limit aware.
-2. Design reviewed parser ingestion/raw-staging/domain mapping for product and review/reply outputs before adding backend schema or DB writes.
+1. Review and apply the parser ingestion raw/staging schema migration as a dedicated task, then verify product-only staging on PostgreSQL from existing WB parser artifacts.
+2. Keep review/reply import at raw/staging semantics and research public WB review payload cap/pagination/full-history behavior before any domain review import.
 3. Build Overview only after real-data pipeline contracts are stable enough to avoid fake dashboard semantics.
 4. Improve catalog/reference selectors so product and workflow filters stop relying on raw UUIDs where backend names exist.
 5. Define real recommendation/signal semantics before showing heat as business intelligence.

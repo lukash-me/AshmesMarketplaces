@@ -38,7 +38,7 @@ Weakest parts:
 - The product still lacks a real operator landing screen: `Overview` remains a placeholder.
 - Backend APIs are mostly CRUD/storage. Analytical aggregation, dashboards, comparisons, exports, workflow commands, and real signal systems are absent.
 - CRUD endpoints are still anonymous for compatibility. Workspace authorization and permission enforcement are not implemented.
-- Parser and Intelligence are not integrated with backend/API/frontend.
+- Parser backend ingestion has a first raw/staging code path, but its reviewed database migration and DB-backed verification are still pending; Intelligence is not integrated with backend/API/frontend.
 - Testing, observability, performance strategy, export strategy, and production deployment are not mature.
 
 Implemented:
@@ -50,18 +50,19 @@ Implemented:
 - Existing slice doctrine: dense operational tables, compact filters, pagination, URL query sync where useful, loading/error/empty states, selected row state, keyboard row opening, and detail drawers.
 - Parser product-card foundation: safe manual WB runner, explicit subcategory allowlist, network smoke checks, rate-limit-aware execution knobs, canonical JSONL output, derived CSV/XLSX exports, manifest, and structured run/error capture.
 - Parser reviews/replies slice: manual runner over existing `products.jsonl`, public WB root feedback payload fetch by `wb_root_id`, bounded low concurrency, canonical review/reply JSONL, compressed raw root payload retention, fetch audit, structured errors/logs, and resume.
+- Backend parser ingestion foundation: ingestion entities/configurations and a manual CLI/application service for parser run validation, raw file/run registration, product/review/reply staging, review root fetch completeness metadata, import audit/errors, and selective existing-product promotion rules without scheduler/API/frontend coupling.
 
 Partially implemented:
 
 - Products: backend CRUD and frontend list/detail exist; create/edit/delete/media mutation and real analytics are absent.
 - Orders: backend CRUD and read-only frontend list/detail exist; fulfillment workflows and real order analytics are absent.
-- Reviews: backend CRUD and read-only frontend list/detail with linked replies exist; parser review/reply output exists without backend ingestion; reply mutation, autoreply workflow, and AI assistance are absent.
+- Reviews: backend CRUD and read-only frontend list/detail with linked replies exist; parser review/reply output and staging design exist, but current parser reviews/replies must stay raw/staging because they are partial/capped/root-attributed; reply mutation, autoreply workflow, and AI assistance are absent.
 - Campaigns: backend CRUD and read-only frontend list/detail with linked metrics exist; operations, bid workflows, automation, and real campaign analytics are absent.
 - Logistics: backend CRUD and read-only frontend list/detail with warehouse context exist; stock risk semantics, forecasting, geography, and parser-backed analysis are absent.
 - Expenses: backend CRUD and read-only frontend list/detail with category context exist; profitability, ABC analysis, reporting, and accounting workflows are absent.
 - Recommendations: backend CRUD/storage and read-only frontend list/detail exist; ML generation, score interpretation, apply/accept/reject workflows, and target name hydration are absent.
 - Access: backend access CRUD and read-only membership surface exist; authorization enforcement, permission policy matrix, and user/role/workspace mutations are absent.
-- Parser: product-card and review/reply output contracts plus manual safe runners exist; broader real-data validation, public review pagination/full-history research, backend ingestion, raw/staging persistence, reviewed upsert mapping, and daily execution are absent.
+- Parser: product-card and review/reply output contracts plus manual safe runners exist; backend raw/staging ingestion code exists without a migration; broader real-data validation, public review pagination/full-history research, DB-backed raw/staging persistence verification, reviewed domain upsert mapping, and daily execution are absent.
 - Products heat/signal presentation exists, but it is not real business intelligence.
 
 Still missing:
@@ -74,29 +75,28 @@ Still missing:
 - Campaign bid, budget, schedule, stop-rule, and automation workflows.
 - Pricing automation and marketplace action workflows.
 - Stock risk, warehouse/geography, logistics cost, profitability, and ABC analysis.
-- Parser ingestion pipeline and ML/recommendation service integration.
+- Applied parser ingestion schema/runtime verification and ML/recommendation service integration.
 - Reports/export workflows.
 - Workspace authorization and production-grade security hardening.
 
 ## Near-Term Roadmap
 
-### 1. Parser Output Validation And Ingestion Design
+### 1. Parser Raw/Staging Schema And Verification
 
 Priority: critical
 Scope: medium-to-large
-Layers: parser, backend later, docs
+Layers: backend, parser evidence, docs
 
-Use the safe manual WB runners to validate representative product-card and review/reply JSONL output before any DB integration. Review field population, duplicates, timestamps, source identifiers, WB errors, rate-limit behavior, product ownership boundaries, and root-level review attribution semantics.
+The first backend ingestion code stage now exists for existing parser artifacts: manual validation, run/file registration, import audit/errors, product staging, review root-fetch staging, review/reply staging, and constrained product promotion rules.
 
-Next reviewed backend task should define:
+Next reviewed backend task should:
 
-- raw/staging storage and parser run traceability;
-- upsert key and ownership rules for `marketplace + wb_product_id`;
-- review/reply identifiers, root payload attribution, and ownership rules before review ingestion;
-- mapping to Products, Brands, Categories, sellers, and product images only where observed data supports it;
-- schema/API/migration scope for ingestion without coupling parser execution to frontend/backend dev scripts.
+- review and create the dedicated ingestion migration for raw/staging tables only;
+- run product staging against PostgreSQL from existing parser output with idempotency and audit verification;
+- keep product domain creation blocked until seller-managed fields such as real `SkuSeller` and status policy are decided;
+- verify review staging preserves parser run lineage, root fetch cap evidence, fallback reply identity risk, and root-level attribution without importing domain `Reviews` or `ReviewReplies`.
 
-Before review ingestion, research the public WB review payload cap/pagination behavior: current root payloads can report more feedback rows than the endpoint returns. Keep scheduler, broad domain parsing, ML enrichment, and all-category traversal out of this stage.
+Before any domain review ingestion, research the public WB review payload cap/pagination behavior: current root payloads can report more feedback rows than the endpoint returns, and the interrupted run is only a partial snapshot. Keep scheduler, broad domain parsing, ML enrichment, and all-category traversal out of this stage.
 
 ### 2. Overview Dashboard On Real Existing Data
 
@@ -221,7 +221,7 @@ Priority: high
 Scope: large
 Layers: parser, backend, infra, docs
 
-`Parser/` now has safe manual WB product-card and review/reply runners with canonical output contracts. The next parser/backend stage is to validate product and review/reply outputs, clarify public review payload cap/pagination behavior, and define reviewed ingestion storage, source identifiers, deduplication, timestamps, root-level review attribution, marketplace/product/category mapping, error handling, and audit metadata before building ingestion services or scheduled execution.
+`Parser/` now has safe manual WB product-card and review/reply runners with canonical output contracts. Backend ingestion code now covers raw/staging entities, manual import orchestration, source lineage, audit/error capture, product staging, review root-fetch cap evidence, review/reply staging, and constrained product promotion boundaries. The next parser/backend stage is a dedicated reviewed migration plus PostgreSQL verification for that raw/staging path, while public review payload cap/pagination and root-level attribution remain blockers for domain review import or scheduled execution.
 
 ### ML/Recommendation Runtime
 
@@ -295,8 +295,8 @@ Local dev scripts must not auto-apply migrations, auto-enable seed, delete volum
 
 ## Recommended Next Stages
 
-1. Validate representative product and review/reply parser JSONL/manifests from safe WB runs, including public review cap/pagination behavior, and lock ingestion mapping assumptions.
-2. Plan and implement reviewed parser raw/staging ingestion and product-card/review attribution boundaries.
+1. Review and create the parser raw/staging ingestion migration, then verify product staging and import audit behavior on PostgreSQL from existing WB artifacts.
+2. Keep review/reply data raw/staging-only while validating cap/pagination/full-history behavior and locking review attribution assumptions before domain import.
 3. Build Overview over truthful persisted real data after parser/backend pipeline contracts settle.
 4. Add catalog/reference selectors and name hydration for high-friction UUID filters.
 5. Specify reviewed analytics aggregation endpoints and real signal semantics.

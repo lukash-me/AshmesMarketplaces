@@ -18,6 +18,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.DataAcce
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.Infrastructure", "AshmesMarketplaces.Infrastructure\AshmesMarketplaces.Infrastructure.csproj", "{13EF5459-B556-4B94-A9EB-770A234F5754}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.ParserIngestionCli", "AshmesMarketplaces.ParserIngestionCli\AshmesMarketplaces.ParserIngestionCli.csproj", "{5A6B1D0B-5342-4CB8-84AF-1055A35B41D8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,5 +53,9 @@ Global
 		{13EF5459-B556-4B94-A9EB-770A234F5754}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{13EF5459-B556-4B94-A9EB-770A234F5754}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{13EF5459-B556-4B94-A9EB-770A234F5754}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5A6B1D0B-5342-4CB8-84AF-1055A35B41D8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5A6B1D0B-5342-4CB8-84AF-1055A35B41D8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5A6B1D0B-5342-4CB8-84AF-1055A35B41D8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5A6B1D0B-5342-4CB8-84AF-1055A35B41D8}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
