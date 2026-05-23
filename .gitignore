@@ -19,6 +19,7 @@ Backend/.idea/*
 *.sln.docstates
 *.env
 !Parser/config.example.env
+!Parser/presets/home_goods_demo.env
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

@@ -66,6 +66,7 @@ def _make_manifest(config: ParserConfig, run_dir: Path, parser_run_id: str) -> R
         requested_scope={
             "parent_category": config.parent_category,
             "subcategory_allowlist": config.subcategory_allowlist,
+            "product_fetch_mode": config.product_fetch_mode,
         },
     )
     manifest.set_output_files(
@@ -254,35 +255,40 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
 
             try:
                 logger.info("Parsing subcategory: {}", subcategory_name)
-                price_ranges = SearchPhraseParser(
-                    search_phrase=source_query,
-                    cookies=cookies,
-                    dest=config.source_region_dest,
-                    timeout=config.timeout_seconds,
-                    max_retries=config.max_retries,
-                    request_delay_bounds=(
-                        config.request_delay_min_seconds,
-                        config.request_delay_max_seconds,
-                    ),
-                    event_recorder=manifest.record_error,
-                    source_category=config.parent_category,
-                    source_subcategory=subcategory_name,
-                ).parse()
-
-                if not price_ranges:
-                    category_result.status = "failed"
-                    manifest.record_error(
-                        phase="filters",
+                price_split_enabled = config.product_fetch_mode == "price_split"
+                if price_split_enabled:
+                    price_ranges = SearchPhraseParser(
+                        search_phrase=source_query,
+                        cookies=cookies,
+                        dest=config.source_region_dest,
+                        timeout=config.timeout_seconds,
+                        max_retries=config.max_retries,
+                        request_delay_bounds=(
+                            config.request_delay_min_seconds,
+                            config.request_delay_max_seconds,
+                        ),
+                        event_recorder=manifest.record_error,
                         source_category=config.parent_category,
                         source_subcategory=subcategory_name,
-                        source_query=source_query,
-                        message="No price ranges were discovered.",
-                        action="skipped",
-                    )
-                    manifest.add_category_result(category_result)
-                    if config.fail_fast:
-                        break
-                    continue
+                    ).parse()
+
+                    if not price_ranges:
+                        category_result.status = "failed"
+                        manifest.record_error(
+                            phase="filters",
+                            source_category=config.parent_category,
+                            source_subcategory=subcategory_name,
+                            source_query=source_query,
+                            message="No price ranges were discovered.",
+                            action="skipped",
+                        )
+                        manifest.add_category_result(category_result)
+                        if config.fail_fast:
+                            break
+                        continue
+                else:
+                    price_ranges = []
+                    manifest.record_warning("price_discovery_skipped")
 
                 fetcher = WbCatalogFetcher(
                     pages=price_ranges,
@@ -303,6 +309,7 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
                     ),
                     max_catalog_pages=config.max_catalog_pages_per_subcategory,
                     max_limit_signals=config.max_limit_signals_per_subcategory,
+                    price_split_enabled=price_split_enabled,
                     event_recorder=manifest.record_error,
                     attempt_recorder=manifest.record_attempt,
                     retry_recorder=manifest.record_retry,
@@ -341,15 +348,6 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
                             config.max_items_per_subcategory
                             and category_result.total_rows >= config.max_items_per_subcategory):
                         manifest.record_warning("item_cap")
-                        manifest.record_error(
-                            phase="catalog",
-                            source_category=config.parent_category,
-                            source_subcategory=subcategory_name,
-                            source_query=source_query,
-                            message="Configured item cap reached for subcategory.",
-                            action="stopped",
-                            details={"max_items_per_subcategory": config.max_items_per_subcategory},
-                        )
                         break
 
                     category_result.total_rows += 1

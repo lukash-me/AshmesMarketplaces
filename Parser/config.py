@@ -49,6 +49,8 @@ def _env_list(values: dict[str, str], key: str, default: list[str]) -> list[str]
 
 @dataclass(frozen=True)
 class ParserConfig:
+    PRODUCT_FETCH_MODES = {"price_split", "direct"}
+
     marketplace: str = "wildberries"
     parent_category: str = "Обувь"
     subcategory_allowlist: list[str] = field(
@@ -62,6 +64,7 @@ class ParserConfig:
     acquire_token: bool = True
     wb_token_secret: str | None = None
     include_wb_wallet_prices: bool = True
+    product_fetch_mode: str = "price_split"
     max_concurrent: int = 1
     batch_size: int = 5
     timeout_seconds: int = 10
@@ -95,6 +98,7 @@ class ParserConfig:
             acquire_token=_env_bool(env_values, "PARSER_ACQUIRE_TOKEN", True),
             wb_token_secret=_env_value(env_values, "PARSER_WB_TOKEN", "").strip() or None,
             include_wb_wallet_prices=_env_bool(env_values, "PARSER_INCLUDE_WB_WALLET_PRICES", True),
+            product_fetch_mode=_env_value(env_values, "PARSER_PRODUCT_FETCH_MODE", cls.product_fetch_mode),
             max_concurrent=_env_int(env_values, "PARSER_MAX_CONCURRENT", 1),
             batch_size=_env_int(env_values, "PARSER_BATCH_SIZE", 5),
             timeout_seconds=_env_int(env_values, "PARSER_TIMEOUT_SECONDS", 10),
@@ -122,6 +126,9 @@ class ParserConfig:
     def validate(self) -> None:
         if self.marketplace != "wildberries":
             raise ValueError("Only wildberries marketplace is supported by this runner.")
+
+        if self.product_fetch_mode not in self.PRODUCT_FETCH_MODES:
+            raise ValueError("PARSER_PRODUCT_FETCH_MODE must be one of: direct, price_split.")
 
         if not self.parent_category.strip():
             raise ValueError("PARSER_PARENT_CATEGORY is required.")

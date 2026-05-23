@@ -29,10 +29,22 @@ class CategoriesParser:
         return not node.get("childs")
 
 
+    @staticmethod
+    def matches_target(node: dict, target_names: set[str] | None) -> bool:
+        if not target_names:
+            return False
+
+        labels = {
+            str(node.get("name") or "").casefold(),
+            str(node.get("seo") or "").casefold(),
+        }
+        return bool(labels & target_names)
+
+
     def dfs(self, node: dict, target_names: set = None, in_target_category: bool = False):
 
         current_in_target = in_target_category or (
-                target_names and node["name"] in target_names
+                self.matches_target(node, target_names)
         )
 
         childs = node.get("childs")
@@ -55,7 +67,7 @@ class CategoriesParser:
     def parse(self, target_names: List[str] = None):
         data = self.fetch()
 
-        target_set = set(target_names) if target_names else None
+        target_set = {str(name).casefold() for name in target_names} if target_names else None
 
         for node in data:
             if not target_names:

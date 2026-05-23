@@ -26,6 +26,7 @@ class WbCatalogFetcher:
                  batch_delay_bounds: tuple[float, float]=(15.0, 30.0),
                  max_catalog_pages: int | None=None,
                  max_limit_signals: int=2,
+                 price_split_enabled: bool=True,
                  event_recorder: Callable | None=None,
                  attempt_recorder: Callable | None=None,
                  retry_recorder: Callable | None=None,
@@ -47,6 +48,7 @@ class WbCatalogFetcher:
         self.batch_delay_bounds = batch_delay_bounds
         self.max_catalog_pages = max_catalog_pages
         self.max_limit_signals = max_limit_signals
+        self.price_split_enabled = price_split_enabled
         self.event_recorder = event_recorder
         self.attempt_recorder = attempt_recorder
         self.retry_recorder = retry_recorder
@@ -106,6 +108,14 @@ class WbCatalogFetcher:
     def _build_tasks(self) -> list[dict]:
         tasks = []
 
+        if not self.price_split_enabled:
+            page_count = self.max_catalog_pages or 1
+            for page_num in range(1, page_count + 1):
+                tasks.append({"page": page_num})
+
+            logger.info(f"Direct catalog mode tasks: {len(tasks)}")
+            return tasks
+
         for page in self.pages:
             page_count = math.ceil(page.total / 100)
 
@@ -125,7 +135,7 @@ class WbCatalogFetcher:
         return tasks
 
     def _build_params(self, task: dict) -> dict:
-        return {
+        params = {
             'ab_testing': 'false',
             'appType': '1',
             'autoselectFilters': 'false',
@@ -134,13 +144,20 @@ class WbCatalogFetcher:
             'inheritFilters': 'false',
             'lang': 'ru',
             'page': str(task["page"]),
-            'priceU': f'{task["min_price"]};{task["max_price"]}',
             'locale': 'ru',
             'query': self.search_phrase,
             'resultset': 'catalog',
             'spp': '30',
             'suppressSpellcheck': 'false',
         }
+        if self.price_split_enabled:
+            params['priceU'] = f'{task["min_price"]};{task["max_price"]}'
+        return params
+
+    def _task_label(self, task: dict) -> str:
+        if self.price_split_enabled:
+            return f"page={task['page']} price={task['min_price']}-{task['max_price']}"
+        return f"page={task['page']} direct"
 
     async def _fetch_one(self, client: httpx.AsyncClient, task: dict) -> dict | None:
         params = self._build_params(task=task)
@@ -192,8 +209,7 @@ class WbCatalogFetcher:
                             return None
 
                         if "products" in data:
-                            logger.debug(f"page={task['page']} "
-                                         f"price={task['min_price']}-{task['max_price']}")
+                            logger.debug(self._task_label(task))
                             return data
                         else:
                             logger.warning(f"No products {data} | attempt={attempt}")
@@ -224,10 +240,7 @@ class WbCatalogFetcher:
                     self.retry_recorder()
                 await self._backoff(attempt)
 
-        logger.error(
-            f"failed page={task['page']} "
-            f"price={task['min_price']}-{task['max_price']}"
-        )
+        logger.error(f"failed {self._task_label(task)}")
         return None
 
     async def fetch_all(self) -> list[dict]:
