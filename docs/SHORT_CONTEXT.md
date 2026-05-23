@@ -2,7 +2,7 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; Market Analytics now reads parser staging rows through a seller-facing UX; safe manual WB product/review/rank parser paths exist; a manual Market Analytics refresh pipeline can orchestrate rank, product, and review artifact runs. Parser rank staging persistence/CLI ingestion is implemented, while rank read API/UI exposure and auto-staging remain pending.
+- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; Market Analytics now reads parser staging rows through a seller-facing UX; safe manual WB product/review/rank parser paths exist; a manual Market Analytics refresh pipeline can orchestrate rank, product, and review artifact runs. Parser rank staging persistence/CLI ingestion, parser product rank/review evidence read model, Market Analytics position/evidence UX, and opt-in refresh auto-staging are implemented.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
 - Frontend maturity: auth shell and Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings are real read-only slices; Overview dashboard remains the main placeholder.
@@ -52,7 +52,7 @@
 - CRUD APIs remain anonymous for compatibility; auth endpoints are protected where appropriate.
 - Parser ingestion foundation exists as backend-owned entities/configurations, dedicated migrations, application service, and a manual CLI for parser run validation, raw/staging registration, product/review/rank staging, and selective existing-product promotion design.
 - Parser observability API now exposes staging-only read routes for parser products, reviews, linked observed review replies, and parser runs under `/api/v1/parser/*`; frontend labels this seller-facing surface as Market Analytics where appropriate, but it must not be treated as domain product/review API.
-- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, rank read API/Market Analytics rank UI, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
+- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
 
 # 6. Current Frontend Status
 
@@ -61,7 +61,7 @@
 - Real read-only slices exist for Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, Access Settings, and Market Analytics over parser staging data.
 - Implemented slice patterns: dense tables, compact filters, pagination, URL query sync where useful, loading/error/empty states, row selection, keyboard row opening, and detail drawers with truthful linked context where backend data exists.
 - Products detail drawer uses existing product detail endpoint; Products heat remains presentation-only from `status` and `dateUpdated`.
-- Market Analytics is the primary seller-facing parser staging UX under `/market/products`; `/parser/products` is a compatibility redirect and `/parser/reviews` remains a hidden internal/debug observability route. Competitor reviews are shown in product context, not as a primary navigation area.
+- Market Analytics is the primary seller-facing parser staging UX under `/market/products`; `/parser/products` is a compatibility redirect and `/parser/reviews` remains a hidden internal/debug observability route. Product rows show staged rank as a nullable observed position and keep WB card feedback metadata separate from parsed review evidence. Competitor reviews are shown in product context, not as a primary navigation area.
 - Access Settings shows persisted users/workspaces/roles/memberships/role-permission records read-only; it does not enforce permissions or provide IAM mutation workflows.
 - Main frontend placeholder remaining: `Frontend/src/pages/OverviewPage.vue`.
 
@@ -73,16 +73,17 @@
 - Product parser supports `PARSER_PRODUCT_FETCH_MODE=price_split|direct`: `price_split` preserves the existing broad traversal; `direct` skips price-range discovery for fast smoke/bounded Market Analytics refresh runs while keeping the canonical product output contract.
 - Home-goods demo preset exists for seller-facing category `Товары для дома` with `Органайзеры для хранения вещей`, `Коврики для ванной`, and `Светильники бра`.
 - `Parser/rank_runner.py` writes separate WB search-rank artifacts (`product_rank_snapshots.jsonl`, `rank_page_fetches.jsonl`, `manifest.json`) for observed query-context positions. Rank is not inferred from `products.jsonl` and is not mixed with product enrichment.
-- `Parser/market_refresh_runner.py` is a manual orchestration entrypoint for rank -> products -> reviews. It writes `Parser/output/pipelines/<market_refresh_run_id>/pipeline_manifest.json`, streams progress to console and `pipeline.log`, supports smoke/bounded/full modes, resume, skips, and dry-run, and does not write PostgreSQL by default.
+- `Parser/market_refresh_runner.py` is a manual orchestration entrypoint for rank -> products -> reviews. It writes `Parser/output/pipelines/<market_refresh_run_id>/pipeline_manifest.json`, streams progress to console and `pipeline.log`, supports smoke/bounded/full modes, resume, skips, force-step, dry-run, and opt-in auto-staging through the existing .NET ingestion CLI via `--stage-to-db` or `PARSER_STAGE_TO_DB`. It does not write PostgreSQL by default and Python never writes to PostgreSQL directly.
 - `Parser/reviews_runner.py` reads existing `products.jsonl`, fetches public WB root feedback payloads by `wb_root_id`, writes canonical `reviews.jsonl` and `review_replies.jsonl`, retains configurable compressed raw payloads, and supports fetch audit, bounded concurrency, and resume.
 - Review rows preserve `review_attribution_mode=root_payload`; WB review ownership is root/sibling scoped and must not be treated as exact product-variant semantics without a reviewed mapping decision.
 - Real WB validation exists on footwear product data and review runs. The public review endpoint often returns a capped payload slice where reported feedback count exceeds returned rows; pagination/full-history research is still pending.
 - Backend parser ingestion stage now has raw run/file registration, import audit/error entities, product/review/reply staging entities, rank snapshot/page-fetch staging entities, review root-fetch completeness metadata, reviewed raw/staging migrations, and a manual CLI/service path that reads existing parser output offline.
-- Rank staging Stage 1 is implemented with `validate-ranks` and `stage-ranks`, persisted `ParserRankSnapshotRows` and `ParserRankPageFetches`, idempotent file-line staging, and parser run/file lineage. Rank remains staging evidence only; no parser products are promoted and no fake positions are generated.
-- Parser staging observability now has staging-only backend API routes and Market Analytics frontend UX. Seller-facing Market Analytics hides parser/evidence noise; hidden debug routes keep deeper observability where needed.
+- Rank staging is implemented with `validate-ranks` and `stage-ranks`, persisted `ParserRankSnapshotRows` and `ParserRankPageFetches`, idempotent file-line staging, and parser run/file lineage. Parser product list/detail read models expose nullable best observed rank from the latest staged rank run only; no parser products are promoted and no fake positions are generated.
+- Parser staging observability now has staging-only backend API routes and Market Analytics frontend UX. Seller-facing Market Analytics shows position, WB card metadata, and parsed review evidence separately; hidden debug routes keep deeper observability where needed.
 - Current review ingestion decision is staging-only: review/reply data remains partial/capped/root-attributed evidence until pagination/full-history and domain attribution semantics are proven.
 - Full-category traversal expansion, scheduler/background execution, browser/token review research, and domain review import remain out of scope until explicitly approved.
-- Next parser/data milestone: expose staged rank through a reviewed parser product read model and Market Analytics `Позиция` column, then add opt-in refresh pipeline auto-staging and use repeated rank/product/review runs for rule-based hot-product signals before any ML model.
+- Latest auto-staging smoke: `market_refresh_20260523_205752_8d2e72d` staged rank `wb_rank_20260523_205753_8d2e72d`, products `wb_products_20260523_205913_8d2e72d`, and reviews `wb_reviews_20260523_210833_8d2e72d`; API default `/api/v1/parser/products` resolved to the new smoke product run. Built-in `--mode smoke` still has a caveat: review `smoke_only` artifacts are not stageable, so an actual review-staging smoke used a minimal temporary config with one reviewed product.
+- Next parser/data milestone: research WB review payload cap/pagination/full-history behavior, collect repeated staged rank/product/review snapshots for reviewed rule-based signals, and only then define any hot-product semantics before ML.
 
 # 8. Visual Direction
 
@@ -116,13 +117,12 @@
 
 # 11. Current Priorities
 
-1. Expose staged rank snapshots through a reviewed parser product read model and add the Market Analytics `Позиция` column with truthful context.
-2. Add opt-in local/demo `market_refresh_runner.py` auto-staging through the existing ingestion CLI so fresh rank/product/review artifacts update PostgreSQL without manual command fan-out.
-3. Keep review/reply import at raw/staging semantics and research public WB review payload cap/pagination/full-history behavior before any domain review import.
-4. Define rule-based hot-product signal semantics from repeated rank/product/review snapshots before showing recommendations as business intelligence.
-5. Build Overview only after real-data pipeline contracts are stable enough to avoid fake dashboard semantics.
-6. Improve catalog/reference selectors so product and workflow filters stop relying on raw UUIDs where backend names exist.
-7. Harden authorization/workspace permission enforcement after read-only access surface is stable.
+1. Keep review/reply import at raw/staging semantics and research public WB review payload cap/pagination/full-history behavior before any domain review import.
+2. Collect repeated staged rank/product/review snapshots and define reviewed rule-based hot-product signal semantics before showing recommendations as business intelligence.
+3. Make the built-in smoke preset stageable for reviews without broad parsing, or document a first-class staging smoke preset.
+4. Build Overview only after real-data pipeline contracts are stable enough to avoid fake dashboard semantics.
+5. Improve catalog/reference selectors so product and workflow filters stop relying on raw UUIDs where backend names exist.
+6. Harden authorization/workspace permission enforcement after read-only access surface is stable.
 
 # 12. Source Of Truth
 

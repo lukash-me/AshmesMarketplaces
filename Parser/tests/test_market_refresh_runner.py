@@ -78,8 +78,62 @@ class FakeExecutor:
         return "products"
 
 
+class FakeStagingExecutor:
+    def __init__(self, *, failure_kind: str | None = None, leak_secret: str | None = None) -> None:
+        self.failure_kind = failure_kind
+        self.leak_secret = leak_secret
+        self.calls: list[list[str]] = []
+
+    def __call__(
+        self,
+        *,
+        command: list[str],
+        cwd: Path,
+        env: dict[str, str],
+        timeout_seconds: int | None = None,
+        output_callback=None,
+    ) -> runner.CommandResult:
+        self.calls.append(command)
+        kind = self._kind_for(command)
+        if self.failure_kind == kind:
+            return runner.CommandResult(
+                exit_code=1,
+                stdout=f"failed stdout {self.leak_secret or ''}",
+                stderr=f"{kind} failed {self.leak_secret or ''}",
+            )
+
+        payload = {
+            "Mode": kind,
+            "ParserRunId": Path(command[command.index("--connection-string") - 1]).name,
+            "DryRun": False,
+            "RowsRead": 11,
+            "RowsWritten": 7,
+            "RowsSkipped": 4,
+            "ErrorCount": 0,
+            "Details": {f"{kind}_rows_staged": 7},
+        }
+        suffix = f"\nconnection={self.leak_secret}" if self.leak_secret else ""
+        return runner.CommandResult(exit_code=0, stdout=json.dumps(payload) + suffix)
+
+    @staticmethod
+    def _kind_for(command: list[str]) -> str:
+        for item in command:
+            if item == "stage-ranks":
+                return "ranks"
+            if item == "stage-products":
+                return "products"
+            if item == "stage-reviews":
+                return "reviews"
+        return "unknown"
+
+
 class MarketRefreshRunnerTests(unittest.TestCase):
-    def _config(self, temp_dir: Path) -> runner.PipelineConfig:
+    def _config(
+        self,
+        temp_dir: Path,
+        *,
+        review_subcategories: list[str] | None = None,
+    ) -> runner.PipelineConfig:
         payload: dict[str, Any] = {
             "pipeline_name": "test_refresh",
             "output_base_dir": str(temp_dir / "output"),
@@ -102,7 +156,7 @@ class MarketRefreshRunnerTests(unittest.TestCase):
                     "reviews": {
                         "config": "Parser/presets/home_goods_demo.env",
                         "limit_products": 10,
-                        "source_subcategories": ["Органайзеры для хранения вещей"],
+                        "source_subcategories": review_subcategories or ["Органайзеры для хранения вещей"],
                         "smoke_only": True,
                     },
                 }
@@ -142,7 +196,11 @@ class MarketRefreshRunnerTests(unittest.TestCase):
 
         self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "reviews"])
         self.assertEqual(manifest["status"], "succeeded")
-        self.assertEqual(len(manifest["suggested_ingestion_commands"]), 2)
+        self.assertEqual(
+            [command[5] for command in manifest["suggested_ingestion_commands"]],
+            ["stage-ranks", "stage-products", "stage-reviews"],
+        )
+        self.assertEqual(manifest["staging"]["status"], "not_requested")
 
     def test_product_failure_blocks_reviews_and_keeps_rank_partial(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -173,6 +231,165 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(statuses["products"], "succeeded")
         self.assertEqual(statuses["reviews"], "succeeded")
         self.assertEqual(manifest["status"], "partial")
+
+    def test_stage_to_db_runs_ranks_products_reviews_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir, review_subcategories=["one", "two"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            staging = FakeStagingExecutor()
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "products", "reviews", "reviews"])
+        self.assertEqual(manifest["status"], "succeeded")
+        self.assertEqual(manifest["staging"]["status"], "succeeded")
+        self.assertEqual(manifest["staging"]["connection_string_source"], "argument")
+        self.assertEqual(manifest["staging"]["commands"][0]["rows_read"], 11)
+        self.assertEqual(manifest["staging"]["commands"][0]["rows_written"], 7)
+        self.assertEqual(manifest["staging"]["commands"][0]["rows_skipped"], 4)
+        self.assertEqual(manifest["staging"]["commands"][0]["error_count"], 0)
+        self.assertEqual(manifest["staging"]["commands"][0]["details"], {"ranks_rows_staged": 7})
+
+    def test_stage_to_db_without_connection_string_fails_before_parser_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+
+            with self.assertRaisesRegex(ValueError, "connection string"):
+                runner.run_pipeline(
+                    config=config,
+                    mode="smoke",
+                    stage_to_db=True,
+                    executor=fake,
+                )
+
+        self.assertEqual(fake.calls, [])
+
+    def test_dry_run_stage_to_db_skips_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            staging = FakeStagingExecutor()
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                dry_run=True,
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(staging.calls, [])
+        self.assertEqual(manifest["status"], "succeeded")
+        self.assertEqual(manifest["staging"]["status"], "skipped")
+        self.assertEqual(manifest["staging"]["skip_reason"], "dry_run")
+
+    def test_stage_to_db_redacts_connection_string_from_manifest_and_log(self) -> None:
+        secret = "Host=localhost;Port=5432;Password=super-secret"
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            staging = FakeStagingExecutor(leak_secret=secret)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                run_dir = runner.run_pipeline(
+                    config=config,
+                    mode="smoke",
+                    stage_to_db=True,
+                    connection_string=secret,
+                    connection_string_source="argument",
+                    executor=fake,
+                    staging_executor=staging,
+                )
+            manifest_text = (run_dir / "pipeline_manifest.json").read_text(encoding="utf-8")
+            log_text = (run_dir / "pipeline.log").read_text(encoding="utf-8")
+
+        self.assertNotIn(secret, manifest_text)
+        self.assertNotIn(secret, log_text)
+        self.assertNotIn(secret, output.getvalue())
+        self.assertIn("<connection-string>", manifest_text)
+        self.assertIn("<redacted>", manifest_text)
+
+    def test_staging_failure_marks_pipeline_partial_without_deleting_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            staging = FakeStagingExecutor(failure_kind="products")
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+            artifact_dirs = [
+                Path(run_dir_value)
+                for step in manifest["steps"]
+                for run_dir_value in (step.get("output_run_dirs") or [])
+            ]
+            artifacts_exist = all(path.exists() for path in artifact_dirs)
+
+        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "products"])
+        self.assertEqual(manifest["status"], "partial")
+        self.assertEqual(manifest["staging"]["status"], "failed")
+        self.assertTrue(artifact_dirs)
+        self.assertTrue(artifacts_exist)
+
+    def test_stage_to_db_env_parser(self) -> None:
+        for value in ("1", "true", "yes", "on"):
+            self.assertTrue(runner._parse_stage_to_db_env(value))
+
+        for value in (None, "", "0", "false", "no", "off"):
+            self.assertFalse(runner._parse_stage_to_db_env(value))
+
+        with self.assertRaisesRegex(ValueError, "PARSER_STAGE_TO_DB"):
+            runner._parse_stage_to_db_env("maybe")
+
+    def test_staging_preflight_resolves_env_connection_sources(self) -> None:
+        enabled = runner._resolve_staging_preflight(
+            stage_to_db_arg=False,
+            connection_string_arg=None,
+            environ={
+                "PARSER_STAGE_TO_DB": "yes",
+                "ConnectionStrings__Postgres": "from-env",
+                "ASHMES_POSTGRES_CONNECTION": "fallback-env",
+            },
+        )
+        disabled = runner._resolve_staging_preflight(
+            stage_to_db_arg=False,
+            connection_string_arg=None,
+            environ={"PARSER_STAGE_TO_DB": "off", "ConnectionStrings__Postgres": "from-env"},
+        )
+
+        self.assertTrue(enabled.requested)
+        self.assertEqual(enabled.connection_string, "from-env")
+        self.assertEqual(enabled.connection_string_source, "ConnectionStrings__Postgres")
+        self.assertFalse(disabled.requested)
+        self.assertIsNone(disabled.connection_string)
 
     def test_resume_skips_succeeded_steps(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

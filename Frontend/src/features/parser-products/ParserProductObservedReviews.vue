@@ -207,8 +207,8 @@ function ratingTone(value: number | null): string {
   <section class="reviews">
     <header class="reviews__header">
       <div>
-        <h3>Отзывы</h3>
-        <p>Найденные отзывы по данным сервиса.</p>
+        <h3>Parser evidence</h3>
+        <p>Staged review rows, root-scoped; не гарантируют точную variant-level принадлежность.</p>
       </div>
     </header>
 
@@ -216,14 +216,14 @@ function ratingTone(value: number | null): string {
     <EmptyState
       v-else-if="listError"
       class="review-state"
-      title="Не удалось загрузить отзывы"
+      title="Не удалось загрузить staged review rows"
       :description="listError"
     />
     <EmptyState
       v-else-if="rows.length === 0"
       class="review-state"
-      title="Отзывы не найдены"
-      description="Для этого товара отзывы не найдены в данных сервиса."
+      title="Staged review rows не найдены"
+      description="Для этого root/product нет спаршенных отзывов в staging. Число отзывов WB относится к metadata карточки."
     />
     <div v-else class="review-list">
       <button

@@ -9,16 +9,17 @@ import DataTable, { type DataTableColumn } from '@/shared/ui/DataTable.vue';
 import MarketProductImage from './MarketProductImage.vue';
 import type {
   ParserProductListItem,
-  ParserProductReviewPresence
+  ParserProductReviewEvidence
 } from './parserProducts.types';
 
 type MarketProductColumnId =
   | 'thumbnailUrl'
   | 'product'
+  | 'rank'
   | 'brandSeller'
   | 'price'
   | 'reviewRating'
-  | 'reviewPresence'
+  | 'parsedReviewEvidence'
   | 'wbProductId'
   | 'brandName'
   | 'sellerName'
@@ -41,7 +42,6 @@ const props = defineProps<{
   pageSize: number;
   totalCount: number;
   sort: string;
-  reviewPresence: Record<string, ParserProductReviewPresence | undefined>;
   selectedId?: string | null;
 }>();
 
@@ -51,23 +51,35 @@ const emit = defineEmits<{
   open: [row: ParserProductListItem];
 }>();
 
-const storageKey = 'ashmes.market-products.columns.v1';
+const storageKey = 'ashmes.market-products.columns.v2';
 const mandatoryColumns: MarketProductColumnId[] = ['product'];
 const defaultColumnIds: MarketProductColumnId[] = [
   'thumbnailUrl',
   'product',
+  'rank',
   'brandSeller',
   'price',
   'reviewRating',
-  'reviewPresence'
+  'parsedReviewEvidence'
 ];
+const emptyReviewEvidence: ParserProductReviewEvidence = {
+  rootFetchCount: 0,
+  parsedReviewCount: 0,
+  parsedReplyCount: 0,
+  latestReviewRunId: null,
+  attributionMode: 'root_payload',
+  isRootScoped: true,
+  isFullHistoryUnknown: true,
+  hasCappedRootPayload: false
+};
 const columns: MarketProductColumn[] = [
   { key: 'thumbnailUrl', label: 'Фото', optionLabel: 'Фото', group: 'default', className: 'table__cell--image' },
   { key: 'product', label: 'Товар', optionLabel: 'Товар', group: 'default', className: 'table__cell--product' },
+  { key: 'rank', label: 'Позиция', optionLabel: 'Позиция', group: 'default' },
   { key: 'brandSeller', label: 'Бренд и продавец', optionLabel: 'Бренд и продавец', group: 'default' },
   { key: 'price', label: 'Цена', optionLabel: 'Цена', group: 'default', align: 'right' },
-  { key: 'reviewRating', label: 'Рейтинг', optionLabel: 'Рейтинг', group: 'default', sortable: true, align: 'right' },
-  { key: 'reviewPresence', label: 'Найденные отзывы', optionLabel: 'Найденные отзывы', group: 'default' },
+  { key: 'reviewRating', label: 'WB карточка', optionLabel: 'WB карточка', group: 'default', sortable: true, align: 'right' },
+  { key: 'parsedReviewEvidence', label: 'Спаршенные отзывы', optionLabel: 'Спаршенные отзывы', group: 'default' },
   { key: 'wbProductId', label: 'WB id', optionLabel: 'WB id', group: 'optional', sortable: true },
   { key: 'brandName', label: 'Бренд', optionLabel: 'Бренд', group: 'optional' },
   { key: 'sellerName', label: 'Продавец', optionLabel: 'Продавец', group: 'optional' },
@@ -76,7 +88,7 @@ const columns: MarketProductColumn[] = [
   { key: 'priceRegular', label: 'Цена без скидки', optionLabel: 'Цена без скидки', group: 'optional', align: 'right' },
   { key: 'priceWbWallet', label: 'WB кошелек', optionLabel: 'Цена с WB кошельком', group: 'optional', align: 'right' },
   { key: 'discountPercent', label: 'Скидка', optionLabel: 'Скидка', group: 'optional', align: 'right' },
-  { key: 'feedbackCount', label: 'Отзывы', optionLabel: 'Количество отзывов', group: 'optional', sortable: true, align: 'right' }
+  { key: 'feedbackCount', label: 'Отзывы WB', optionLabel: 'Количество отзывов WB', group: 'optional', sortable: true, align: 'right' }
 ];
 const columnIdSet = new Set(columns.map((column) => column.key));
 
@@ -158,8 +170,56 @@ function formatPercent(value: number | null): string {
   return value === null ? '-' : `${new Intl.NumberFormat('ru-RU').format(value)}%`;
 }
 
-function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
-  return props.reviewPresence[row.id] ?? { status: 'loading' };
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat('ru-RU').format(value);
+}
+
+function rankTitle(row: ParserProductListItem): string {
+  if (!row.rank) {
+    return 'Позиция не найдена в последнем staged rank run.';
+  }
+
+  const observed = formatDateTime(row.rank.observedAtUtc);
+  const source = [row.rank.sourceSubcategory, row.rank.sourceCategory].filter(Boolean).join(' · ');
+  return [
+    'Лучшая наблюдаемая позиция в последнем staged rank run. Не универсальный рейтинг маркетплейса.',
+    `Запрос: ${row.rank.query}`,
+    source ? `Источник: ${source}` : null,
+    observed !== '-' ? `Наблюдение: ${observed}` : null,
+    `Rank context: ${row.rank.rankContextId}`
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function reviewEvidenceFor(row: ParserProductListItem): ParserProductReviewEvidence {
+  return row.parsedReviewEvidence ?? emptyReviewEvidence;
+}
+
+function hasParsedEvidence(row: ParserProductListItem): boolean {
+  const evidence = reviewEvidenceFor(row);
+  return evidence.rootFetchCount > 0 || evidence.parsedReviewCount > 0 || evidence.parsedReplyCount > 0;
+}
+
+function evidenceScopeLabel(evidence: ParserProductReviewEvidence): string {
+  return evidence.isRootScoped ? 'root-scoped' : 'product-scoped';
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat('ru-RU', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date)
+    : '-';
 }
 </script>
 
@@ -219,6 +279,14 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
         <code class="code-cell">WB {{ row.wbProductId }}</code>
       </template>
 
+      <template #cell-rank="{ row }">
+        <div v-if="row.rank" class="rank-cell" :title="rankTitle(row)">
+          <strong>#{{ formatNumber(row.rank.absolutePosition) }}</strong>
+          <span>{{ row.rank.query }} · стр. {{ row.rank.page }}</span>
+        </div>
+        <span v-else class="empty-cell" :title="rankTitle(row)">—</span>
+      </template>
+
       <template #cell-brandSeller="{ row }">
         <div class="brand-seller">
           <strong>{{ fieldValue(row.brandName) }}</strong>
@@ -237,16 +305,20 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
       <template #cell-reviewRating="{ row }">
         <div class="rating-cell numeric">
           <strong>{{ fieldValue(row.reviewRating) }}</strong>
-          <span>{{ fieldValue(row.feedbackCount) }} отзывов</span>
+          <span>{{ fieldValue(row.feedbackCount) }} отзывов WB</span>
+          <small>WB карточка</small>
         </div>
       </template>
 
-      <template #cell-reviewPresence="{ row }">
-        <div class="presence-cell">
-          <Badge v-if="presenceFor(row).status === 'present'" tone="success">Есть отзывы</Badge>
-          <Badge v-else-if="presenceFor(row).status === 'absent'" tone="neutral">Не найдены</Badge>
-          <Badge v-else-if="presenceFor(row).status === 'error'" tone="warning">Не удалось проверить</Badge>
-          <Badge v-else tone="info">Проверяем</Badge>
+      <template #cell-parsedReviewEvidence="{ row }">
+        <div v-if="hasParsedEvidence(row)" class="evidence-cell">
+          <strong>{{ formatNumber(reviewEvidenceFor(row).parsedReviewCount) }} отзывов</strong>
+          <span>{{ formatNumber(reviewEvidenceFor(row).parsedReplyCount) }} ответов</span>
+          <small>{{ evidenceScopeLabel(reviewEvidenceFor(row)) }}</small>
+        </div>
+        <div v-else class="evidence-cell evidence-cell--empty">
+          <strong>—</strong>
+          <span>Нет staged review rows</span>
         </div>
       </template>
 
@@ -401,7 +473,9 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
 .meta-line,
 .brand-seller,
 .price-cell,
-.rating-cell {
+.rating-cell,
+.rank-cell,
+.evidence-cell {
   display: block;
 }
 
@@ -420,7 +494,8 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
 .brand-seller,
 .price-cell,
 .rating-cell,
-.presence-cell {
+.rank-cell,
+.evidence-cell {
   display: grid;
   gap: var(--space-1);
 }
@@ -428,14 +503,18 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
 .brand-seller span,
 .meta-line,
 .price-cell,
-.rating-cell {
+.rating-cell,
+.rank-cell,
+.evidence-cell {
   color: var(--color-text-muted);
   font-size: 0.75rem;
 }
 
 .brand-seller strong,
 .price-cell strong,
-.rating-cell strong {
+.rating-cell strong,
+.rank-cell strong,
+.evidence-cell strong {
   color: var(--color-text);
   font-size: 0.9375rem;
 }
@@ -445,9 +524,34 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
   justify-items: end;
 }
 
-.presence-cell {
+.rating-cell small,
+.evidence-cell small {
+  color: var(--color-text-subtle);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+}
+
+.rank-cell {
+  max-width: 11rem;
+}
+
+.rank-cell strong {
+  font-size: 1rem;
+}
+
+.rank-cell span,
+.evidence-cell span {
+  overflow-wrap: anywhere;
+}
+
+.evidence-cell {
   max-width: 12rem;
   justify-items: start;
+}
+
+.evidence-cell--empty strong,
+.empty-cell {
+  color: var(--color-text-muted);
 }
 
 .code-cell {
@@ -459,7 +563,7 @@ function presenceFor(row: ParserProductListItem): ParserProductReviewPresence {
 }
 
 :deep(.table) {
-  min-width: 1050px;
+  min-width: 1180px;
 }
 
 :deep(tbody tr) {

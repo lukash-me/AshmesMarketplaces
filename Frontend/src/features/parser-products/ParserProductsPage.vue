@@ -9,7 +9,6 @@ import PageHeader from '@/widgets/PageHeader.vue';
 
 import ParserProductDetailDrawer from './ParserProductDetailDrawer.vue';
 import { getParserProducts } from './parserProducts.api';
-import { getParserReviews } from '@/features/parser-reviews/parserReviews.api';
 import ParserProductsFilters from './ParserProductsFilters.vue';
 import {
   parseParserProductsQuery,
@@ -22,8 +21,7 @@ import {
 import ParserProductsTable from './ParserProductsTable.vue';
 import type {
   ParserProductListItem,
-  ParserProductQueryState,
-  ParserProductReviewPresence
+  ParserProductQueryState
 } from './parserProducts.types';
 
 const route = useRoute();
@@ -34,9 +32,6 @@ const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
 const selected = ref<ParserProductListItem | null>(null);
-const reviewPresence = ref<Record<string, ParserProductReviewPresence>>({});
-const reviewPresenceCache = new Map<string, ParserProductReviewPresence>();
-const activeReviewPresenceScopes = new Set<string>();
 
 watch(
   () => route.query,
@@ -55,7 +50,6 @@ async function loadRows() {
     const response = await getParserProducts(toParserProductsApiParams(queryState.value));
     rows.value = response.items;
     totalCount.value = response.totalCount;
-    void loadReviewPresence(response.items);
   } catch (err) {
     rows.value = [];
     totalCount.value = 0;
@@ -63,76 +57,6 @@ async function loadRows() {
   } finally {
     loading.value = false;
   }
-}
-
-async function loadReviewPresence(visibleRows: ParserProductListItem[]) {
-  const rowsByScope = new Map<string, ParserProductListItem[]>();
-  for (const row of visibleRows) {
-    const key = reviewPresenceScope(row);
-    rowsByScope.set(key, [...(rowsByScope.get(key) ?? []), row]);
-  }
-
-  const queue: Array<[string, ParserProductListItem[]]> = [];
-  for (const [key, scopeRows] of rowsByScope) {
-    const cached = reviewPresenceCache.get(key);
-    if (cached) {
-      setReviewPresence(scopeRows, cached);
-      continue;
-    }
-
-    setReviewPresence(scopeRows, { status: 'loading' });
-    if (!activeReviewPresenceScopes.has(key)) {
-      activeReviewPresenceScopes.add(key);
-      queue.push([key, scopeRows]);
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(4, queue.length) }, async () => {
-      while (queue.length) {
-        const next = queue.shift();
-        if (!next) {
-          return;
-        }
-
-        const [key, scopeRows] = next;
-        const result = await probeReviewPresence(scopeRows[0]);
-        reviewPresenceCache.set(key, result);
-        activeReviewPresenceScopes.delete(key);
-        setReviewPresence(scopeRows, result);
-      }
-    })
-  );
-}
-
-async function probeReviewPresence(row: ParserProductListItem): Promise<ParserProductReviewPresence> {
-  try {
-    const response = await getParserReviews({
-      page: 1,
-      pageSize: 1,
-      sort: '-createdAtOnMp',
-      ...(row.wbRootId ? { sourceWbRootId: row.wbRootId } : { wbProductId: row.wbProductId })
-    });
-    return {
-      status: response.totalCount > 0 ? 'present' : 'absent'
-    };
-  } catch {
-    return { status: 'error' };
-  }
-}
-
-function reviewPresenceScope(row: ParserProductListItem): string {
-  return row.wbRootId ? `root:${row.wbRootId}` : `product:${row.wbProductId}`;
-}
-
-function setReviewPresence(
-  scopeRows: ParserProductListItem[],
-  presence: ParserProductReviewPresence
-) {
-  reviewPresence.value = {
-    ...reviewPresence.value,
-    ...Object.fromEntries(scopeRows.map((row) => [row.id, presence]))
-  };
 }
 
 function updateQuery(patch: Partial<ParserProductQueryState>) {
@@ -190,7 +114,6 @@ function removeFilter(key: ParserProductQueryFilterKey) {
       :total-count="totalCount"
       :sort="queryState.sort"
       :selected-id="selected?.id"
-      :review-presence="reviewPresence"
       @sort="updateQuery({ page: 1, sort: $event })"
       @page="updateQuery({ page: $event })"
       @open="selected = $event"

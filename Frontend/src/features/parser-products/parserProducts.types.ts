@@ -18,6 +18,8 @@ export interface ParserProductListItem {
   sourceSubcategory: string | null;
   sourceQuery: string | null;
   thumbnailUrl: string | null;
+  rank?: ParserProductRankSummary | null;
+  parsedReviewEvidence?: ParserProductReviewEvidence;
 }
 
 export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbnailUrl'> {
@@ -39,6 +41,32 @@ export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbn
   rowHash: string;
 }
 
+export interface ParserProductRankSummary {
+  absolutePosition: number;
+  page: number;
+  positionOnPage: number;
+  query: string;
+  sourceCategory: string | null;
+  sourceSubcategory: string | null;
+  sourceRegionDest: string | null;
+  sort: string | null;
+  observedAtUtc: string;
+  parserRunId: string;
+  rankContextId: string;
+  contextsCount: number;
+}
+
+export interface ParserProductReviewEvidence {
+  rootFetchCount: number;
+  parsedReviewCount: number;
+  parsedReplyCount: number;
+  latestReviewRunId: string | null;
+  attributionMode: string;
+  isRootScoped: boolean;
+  isFullHistoryUnknown: boolean;
+  hasCappedRootPayload: boolean;
+}
+
 export interface ParserProductListParams {
   page: number;
   pageSize: number;
@@ -57,10 +85,6 @@ export interface ParserProductListParams {
   feedbackCountFrom?: number;
   feedbackCountTo?: number;
 }
-
-export type ParserProductReviewPresence = {
-  status: 'loading' | 'present' | 'absent' | 'error';
-};
 
 export type ParserProductQueryState = {
   page: number;

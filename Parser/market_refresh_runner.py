@@ -21,6 +21,9 @@ from manifest import get_git_commit, utc_now_iso
 STEP_ORDER = ["rank", "products", "reviews"]
 TERMINAL_SUCCESS = {"succeeded", "skipped"}
 RETRYABLE_STATUSES = {"failed", "interrupted", "skipped"}
+STAGE_ENV_ENABLED_VALUES = {"1", "true", "yes", "on"}
+STAGE_ENV_DISABLED_VALUES = {"", "0", "false", "no", "off"}
+INGESTION_CLI_PROJECT = Path("Backend") / "AshmesMarketplaces.ParserIngestionCli" / "AshmesMarketplaces.ParserIngestionCli.csproj"
 
 
 def _make_pipeline_run_id() -> str:
@@ -40,6 +43,90 @@ def _python_executable() -> str:
 def _to_abs(path_value: str | Path, *, base_dir: Path) -> Path:
     path = Path(path_value)
     return path if path.is_absolute() else base_dir / path
+
+
+def _redact_text(value: str | None, secrets: list[str] | tuple[str, ...]) -> str:
+    if value is None:
+        return ""
+
+    redacted = str(value)
+    for secret in secrets:
+        if secret:
+            redacted = redacted.replace(secret, "<redacted>")
+    return redacted
+
+
+def _sanitize_command(command: list[str], secrets: list[str] | tuple[str, ...]) -> list[str]:
+    sanitized: list[str] = []
+    skip_next_connection_value = False
+    for part in command:
+        if skip_next_connection_value:
+            sanitized.append("<connection-string>")
+            skip_next_connection_value = False
+            continue
+
+        sanitized_part = _redact_text(part, secrets)
+        sanitized.append(sanitized_part)
+        if part == "--connection-string":
+            skip_next_connection_value = True
+    return sanitized
+
+
+def _command_display(command: list[str], secrets: list[str] | tuple[str, ...] = ()) -> str:
+    return " ".join(_sanitize_command(command, secrets))
+
+
+def _parse_stage_to_db_env(value: str | None) -> bool:
+    if value is None:
+        return False
+
+    normalized = value.strip().lower()
+    if normalized in STAGE_ENV_ENABLED_VALUES:
+        return True
+    if normalized in STAGE_ENV_DISABLED_VALUES:
+        return False
+
+    allowed = ", ".join(sorted(STAGE_ENV_ENABLED_VALUES | STAGE_ENV_DISABLED_VALUES))
+    raise ValueError(f"PARSER_STAGE_TO_DB has unsupported value '{value}'. Allowed values: {allowed}.")
+
+
+def _resolve_connection_string(
+    *,
+    argument_value: str | None,
+    environ: dict[str, str] | os._Environ[str] = os.environ,
+) -> tuple[str | None, str]:
+    if argument_value and argument_value.strip():
+        return argument_value, "argument"
+
+    for key in ("ConnectionStrings__Postgres", "ASHMES_POSTGRES_CONNECTION"):
+        value = environ.get(key)
+        if value and value.strip():
+            return value, key
+
+    return None, "missing"
+
+
+def _resolve_staging_preflight(
+    *,
+    stage_to_db_arg: bool,
+    connection_string_arg: str | None,
+    environ: dict[str, str] | os._Environ[str] = os.environ,
+) -> StagingPreflight:
+    requested = bool(stage_to_db_arg) or _parse_stage_to_db_env(environ.get("PARSER_STAGE_TO_DB"))
+    connection_string, source = _resolve_connection_string(
+        argument_value=connection_string_arg,
+        environ=environ,
+    )
+    if requested and not connection_string:
+        raise ValueError(
+            "Staging was requested, but no PostgreSQL connection string was available. "
+            "Pass --connection-string or set ConnectionStrings__Postgres or ASHMES_POSTGRES_CONNECTION."
+        )
+    return StagingPreflight(
+        requested=requested,
+        connection_string=connection_string if requested else None,
+        connection_string_source=source if requested else "missing",
+    )
 
 
 @dataclass(frozen=True)
@@ -72,6 +159,13 @@ class CommandResult:
     stdout: str = ""
     stderr: str = ""
     timed_out: bool = False
+
+
+@dataclass(frozen=True)
+class StagingPreflight:
+    requested: bool
+    connection_string: str | None
+    connection_string_source: str
 
 
 def _console(message: str) -> None:
@@ -291,16 +385,31 @@ def _useful_artifact_count(manifest: dict[str, Any]) -> int:
 def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
     commands: list[list[str]] = []
     for step in manifest["steps"]:
+        if step.get("step_name") == "rank" and step.get("status") == "succeeded":
+            for run_dir in step.get("output_run_dirs") or []:
+                commands.append([
+                    "dotnet",
+                    "run",
+                    "--project",
+                    str(INGESTION_CLI_PROJECT),
+                    "--",
+                    "stage-ranks",
+                    run_dir,
+                    "--connection-string",
+                    "<connection-string>",
+                ])
         if step.get("step_name") == "products" and step.get("status") == "succeeded":
             for run_dir in step.get("output_run_dirs") or []:
                 commands.append([
                     "dotnet",
                     "run",
                     "--project",
-                    "Backend/AshmesMarketplaces.ParserIngestionCli/AshmesMarketplaces.ParserIngestionCli.csproj",
+                    str(INGESTION_CLI_PROJECT),
                     "--",
                     "stage-products",
                     run_dir,
+                    "--connection-string",
+                    "<connection-string>",
                 ])
         if step.get("step_name") == "reviews" and step.get("status") == "succeeded":
             for run_dir in step.get("output_run_dirs") or []:
@@ -308,10 +417,12 @@ def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
                     "dotnet",
                     "run",
                     "--project",
-                    "Backend/AshmesMarketplaces.ParserIngestionCli/AshmesMarketplaces.ParserIngestionCli.csproj",
+                    str(INGESTION_CLI_PROJECT),
                     "--",
                     "stage-reviews",
                     run_dir,
+                    "--connection-string",
+                    "<connection-string>",
                 ])
     return commands
 
@@ -321,6 +432,10 @@ def _final_status(manifest: dict[str, Any], interrupted: bool = False) -> str:
         return "interrupted"
     if manifest.get("dry_run"):
         return "succeeded"
+
+    staging = manifest.get("staging") or {}
+    if staging.get("requested") and staging.get("status") == "failed":
+        return "partial" if _useful_artifact_count(manifest) else "failed"
 
     required = [
         step
@@ -410,6 +525,246 @@ def _execute_subprocess(
             stdout="\n".join(output_lines),
             stderr=str(exception),
         )
+
+
+def _execute_subprocess_capture(
+    *,
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: int | None = None,
+    output_callback: Callable[[str], None] | None = None,
+) -> CommandResult:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        if output_callback and completed.stdout:
+            for line in completed.stdout.splitlines():
+                output_callback(line)
+        if output_callback and completed.stderr:
+            for line in completed.stderr.splitlines():
+                output_callback(line)
+        return CommandResult(
+            exit_code=int(completed.returncode),
+            stdout=completed.stdout or "",
+            stderr=completed.stderr or "",
+        )
+    except subprocess.TimeoutExpired as exception:
+        return CommandResult(
+            exit_code=124,
+            stdout=exception.stdout or "",
+            stderr=exception.stderr or f"Command timed out after {timeout_seconds} seconds.",
+            timed_out=True,
+        )
+    except Exception as exception:
+        return CommandResult(exit_code=1, stderr=str(exception))
+
+
+def _parse_cli_json(text: str) -> dict[str, Any] | None:
+    if not text.strip():
+        return None
+
+    try:
+        parsed = json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start : end + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _json_value(payload: dict[str, Any] | None, pascal: str, camel: str) -> Any:
+    if not payload:
+        return None
+    return payload.get(pascal, payload.get(camel))
+
+
+def _initial_staging_manifest(*, requested: bool, connection_string_source: str) -> dict[str, Any]:
+    return {
+        "requested": bool(requested),
+        "enabled": bool(requested),
+        "status": "pending" if requested else "not_requested",
+        "connection_string_source": connection_string_source if requested else "missing",
+        "started_at_utc": None,
+        "finished_at_utc": None,
+        "skip_reason": None,
+        "commands": [],
+    }
+
+
+def _staging_command_specs(manifest: dict[str, Any], connection_string: str) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    command_by_step = {
+        "rank": ("ranks", "stage-ranks"),
+        "products": ("products", "stage-products"),
+        "reviews": ("reviews", "stage-reviews"),
+    }
+
+    for step_name in STEP_ORDER:
+        kind_command = command_by_step.get(step_name)
+        if kind_command is None:
+            continue
+
+        step = _record_for(manifest, step_name)
+        if step.get("status") != "succeeded":
+            continue
+
+        kind, cli_command = kind_command
+        for run_dir in step.get("output_run_dirs") or []:
+            command = [
+                "dotnet",
+                "run",
+                "--project",
+                str(INGESTION_CLI_PROJECT),
+                "--",
+                cli_command,
+                run_dir,
+                "--connection-string",
+                connection_string,
+            ]
+            specs.append({
+                "kind": kind,
+                "run_dir": run_dir,
+                "command": command,
+            })
+    return specs
+
+
+def _run_staging(
+    *,
+    manifest: dict[str, Any],
+    pipeline_run_dir: Path,
+    repo_root: Path,
+    connection_string: str | None,
+    connection_string_source: str,
+    parser_status: str,
+    dry_run: bool,
+    executor: Callable[..., CommandResult],
+) -> None:
+    staging = _initial_staging_manifest(requested=True, connection_string_source=connection_string_source)
+    manifest["staging"] = staging
+    secrets = [connection_string] if connection_string else []
+
+    if dry_run:
+        staging["status"] = "skipped"
+        staging["enabled"] = False
+        staging["skip_reason"] = "dry_run"
+        _emit_pipeline(pipeline_run_dir, "STAGING SKIPPED: dry-run is active")
+        return
+
+    if parser_status != "succeeded":
+        staging["status"] = "skipped"
+        staging["enabled"] = False
+        staging["skip_reason"] = f"parser_status={parser_status}"
+        _emit_pipeline(pipeline_run_dir, f"STAGING SKIPPED: parser status is {parser_status}")
+        return
+
+    if not connection_string:
+        staging["status"] = "failed"
+        staging["enabled"] = False
+        staging["skip_reason"] = "connection_string_missing"
+        _emit_pipeline(pipeline_run_dir, "STAGING FAILED: connection string is missing")
+        return
+
+    specs = _staging_command_specs(manifest, connection_string)
+    if not specs:
+        staging["status"] = "skipped"
+        staging["enabled"] = False
+        staging["skip_reason"] = "no_artifacts"
+        _emit_pipeline(pipeline_run_dir, "STAGING SKIPPED: no successful parser artifacts to stage")
+        return
+
+    staging["status"] = "running"
+    staging["started_at_utc"] = utc_now_iso()
+    _emit_pipeline(pipeline_run_dir, f"STAGING START: {len(specs)} command(s)")
+    env = os.environ.copy()
+
+    for index, spec in enumerate(specs, start=1):
+        command = spec["command"]
+        command_record: dict[str, Any] = {
+            "kind": spec["kind"],
+            "run_dir": spec["run_dir"],
+            "command": _sanitize_command(command, secrets),
+            "started_at_utc": utc_now_iso(),
+            "finished_at_utc": None,
+            "exit_code": None,
+            "stdout": "",
+            "stderr": "",
+            "parsed_json": None,
+            "rows_read": None,
+            "rows_written": None,
+            "rows_skipped": None,
+            "error_count": None,
+            "details": None,
+        }
+        staging["commands"].append(command_record)
+        _emit_pipeline(
+            pipeline_run_dir,
+            f"STAGING RUN {index}/{len(specs)} {spec['kind']}: {_command_display(command, secrets)}",
+        )
+
+        try:
+            result = executor(
+                command=command,
+                cwd=repo_root,
+                env=env,
+                timeout_seconds=None,
+                output_callback=None,
+            )
+        except Exception as exception:
+            result = CommandResult(exit_code=1, stderr=_redact_text(str(exception), secrets))
+
+        stdout = _redact_text(result.stdout, secrets)
+        stderr = _redact_text(result.stderr, secrets)
+        parsed_json = _parse_cli_json(stdout)
+        command_record.update({
+            "finished_at_utc": utc_now_iso(),
+            "exit_code": result.exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "parsed_json": parsed_json,
+            "rows_read": _json_value(parsed_json, "RowsRead", "rowsRead"),
+            "rows_written": _json_value(parsed_json, "RowsWritten", "rowsWritten"),
+            "rows_skipped": _json_value(parsed_json, "RowsSkipped", "rowsSkipped"),
+            "error_count": _json_value(parsed_json, "ErrorCount", "errorCount"),
+            "details": _json_value(parsed_json, "Details", "details"),
+        })
+
+        _emit_pipeline(
+            pipeline_run_dir,
+            "STAGING RESULT "
+            f"{index}/{len(specs)} {spec['kind']}: exit_code={result.exit_code} "
+            f"rows_written={command_record['rows_written']} errors={command_record['error_count']}",
+        )
+
+        if result.exit_code != 0:
+            staging["status"] = "failed"
+            staging["skip_reason"] = f"{spec['kind']} staging failed"
+            _emit_pipeline(
+                pipeline_run_dir,
+                f"STAGING FAILED: {spec['kind']} command exited with code {result.exit_code}; artifacts were kept",
+            )
+            break
+
+    staging["finished_at_utc"] = utc_now_iso()
+    if staging["status"] == "running":
+        staging["status"] = "succeeded"
+    _emit_pipeline(pipeline_run_dir, f"STAGING FINISHED: status={staging['status']}")
 
 
 def _append_pipeline_log(run_dir: Path, message: str) -> None:
@@ -557,6 +912,8 @@ def _build_manifest(
     pipeline_run_dir: Path,
     config: PipelineConfig,
     mode: str,
+    staging_requested: bool,
+    connection_string_source: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -576,6 +933,10 @@ def _build_manifest(
             "cwd": str(_repo_root()),
         },
         "steps": [asdict(PipelineStepRecord(step_name=name)) for name in STEP_ORDER],
+        "staging": _initial_staging_manifest(
+            requested=staging_requested,
+            connection_string_source=connection_string_source,
+        ),
         "suggested_ingestion_commands": [],
         "output_files": {
             "pipeline_manifest": str(pipeline_run_dir / "pipeline_manifest.json"),
@@ -595,8 +956,18 @@ def run_pipeline(
     force_step: str | None = None,
     fail_fast: bool = False,
     dry_run: bool = False,
+    stage_to_db: bool = False,
+    connection_string: str | None = None,
+    connection_string_source: str = "missing",
     executor: Callable[..., CommandResult] = _execute_subprocess,
+    staging_executor: Callable[..., CommandResult] = _execute_subprocess_capture,
 ) -> Path:
+    if stage_to_db and not connection_string:
+        raise ValueError(
+            "Staging was requested, but no PostgreSQL connection string was available. "
+            "Pass --connection-string or set ConnectionStrings__Postgres or ASHMES_POSTGRES_CONNECTION."
+        )
+
     repo_root = _repo_root()
     mode_config = config.mode_config(mode)
     output_base_dir = config.output_base_dir
@@ -617,9 +988,18 @@ def run_pipeline(
             pipeline_run_dir=pipeline_run_dir,
             config=config,
             mode=mode,
+            staging_requested=stage_to_db,
+            connection_string_source=connection_string_source,
         )
+    manifest["staging"] = _initial_staging_manifest(
+        requested=stage_to_db,
+        connection_string_source=connection_string_source,
+    )
     manifest["dry_run"] = bool(dry_run)
-    _emit_pipeline(pipeline_run_dir, f"PIPELINE {pipeline_run_id}: mode={mode} dry_run={bool(dry_run)}")
+    _emit_pipeline(
+        pipeline_run_dir,
+        f"PIPELINE {pipeline_run_id}: mode={mode} dry_run={bool(dry_run)} stage_to_db={bool(stage_to_db)}",
+    )
 
     effective_fail_fast = bool(fail_fast or config.defaults.get("fail_fast"))
     python_executable = _python_executable()
@@ -703,12 +1083,26 @@ def run_pipeline(
         _emit_pipeline(pipeline_run_dir, "INTERRUPTED by user")
     finally:
         manifest["suggested_ingestion_commands"] = _suggested_ingestion_commands(manifest)
+        parser_status = _final_status(manifest, interrupted=interrupted)
+        if stage_to_db and not interrupted:
+            _run_staging(
+                manifest=manifest,
+                pipeline_run_dir=pipeline_run_dir,
+                repo_root=repo_root,
+                connection_string=connection_string,
+                connection_string_source=connection_string_source,
+                parser_status=parser_status,
+                dry_run=dry_run,
+                executor=staging_executor,
+            )
         manifest["status"] = _final_status(manifest, interrupted=interrupted)
         manifest["finished_at_utc"] = utc_now_iso()
         _write_manifest(pipeline_run_dir, manifest)
         _emit_pipeline(
             pipeline_run_dir,
-            f"PIPELINE FINISHED: status={manifest['status']} staging_commands={len(manifest['suggested_ingestion_commands'])}",
+            "PIPELINE FINISHED: "
+            f"status={manifest['status']} staging_status={(manifest.get('staging') or {}).get('status')} "
+            f"staging_commands={len(manifest['suggested_ingestion_commands'])}",
         )
 
     return pipeline_run_dir
@@ -730,13 +1124,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-step", choices=STEP_ORDER)
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--stage-to-db", action="store_true", help="After successful parser run, stage artifacts through the .NET ingestion CLI.")
+    parser.add_argument("--connection-string", help="PostgreSQL connection string for opt-in staging.")
     parser.add_argument("--no-ingestion", action="store_true", default=True)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    config = PipelineConfig.load(args.config)
+    try:
+        staging = _resolve_staging_preflight(
+            stage_to_db_arg=args.stage_to_db,
+            connection_string_arg=args.connection_string,
+        )
+        config = PipelineConfig.load(args.config)
+    except Exception as exception:
+        print(_redact_text(str(exception), [args.connection_string] if getattr(args, "connection_string", None) else []), file=sys.stderr)
+        raise SystemExit(2)
+
     run_dir = run_pipeline(
         config=config,
         mode=args.mode,
@@ -747,8 +1152,20 @@ def main() -> None:
         force_step=args.force_step,
         fail_fast=args.fail_fast,
         dry_run=args.dry_run,
+        stage_to_db=staging.requested,
+        connection_string=staging.connection_string,
+        connection_string_source=staging.connection_string_source,
     )
     print(f"Pipeline run directory: {run_dir}")
+    manifest = _load_manifest(run_dir)
+    staging_manifest = manifest.get("staging") or {}
+    if staging_manifest.get("requested") and staging_manifest.get("status") == "failed":
+        print(
+            "Parser artifacts were produced, but DB staging failed. "
+            "Artifacts were kept; rerun staging safely with the ingestion CLI.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

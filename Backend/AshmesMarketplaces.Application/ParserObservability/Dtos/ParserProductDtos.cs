@@ -19,7 +19,9 @@ public sealed record ParserProductListItemDto(
     string? SourceCategory,
     string? SourceSubcategory,
     string? SourceQuery,
-    string? ThumbnailUrl);
+    string? ThumbnailUrl,
+    ParserProductRankSummaryDto? Rank,
+    ParserProductReviewEvidenceDto ParsedReviewEvidence);
 
 public sealed record ParserProductDetailDto(
     Guid Id,
@@ -55,7 +57,33 @@ public sealed record ParserProductDetailDto(
     string SourceFileKind,
     string SourceFileSha256,
     long SourceLineNumber,
-    string RowHash);
+    string RowHash,
+    ParserProductRankSummaryDto? Rank,
+    ParserProductReviewEvidenceDto ParsedReviewEvidence);
+
+public sealed record ParserProductRankSummaryDto(
+    int AbsolutePosition,
+    int Page,
+    int PositionOnPage,
+    string Query,
+    string? SourceCategory,
+    string? SourceSubcategory,
+    string? SourceRegionDest,
+    string? Sort,
+    DateTime ObservedAtUtc,
+    string ParserRunId,
+    string RankContextId,
+    int ContextsCount);
+
+public sealed record ParserProductReviewEvidenceDto(
+    int RootFetchCount,
+    int ParsedReviewCount,
+    int ParsedReplyCount,
+    string? LatestReviewRunId,
+    string AttributionMode,
+    bool IsRootScoped,
+    bool IsFullHistoryUnknown,
+    bool HasCappedRootPayload);
 
 public sealed class ParserProductListQuery
 {

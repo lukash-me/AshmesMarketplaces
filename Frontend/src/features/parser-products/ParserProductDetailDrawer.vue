@@ -9,7 +9,11 @@ import LoadingState from '@/shared/ui/LoadingState.vue';
 import MarketProductImage from './MarketProductImage.vue';
 import ParserProductObservedReviews from './ParserProductObservedReviews.vue';
 import { getParserProduct } from './parserProducts.api';
-import type { ParserProductDetail, ParserProductListItem } from './parserProducts.types';
+import type {
+  ParserProductDetail,
+  ParserProductListItem,
+  ParserProductReviewEvidence
+} from './parserProducts.types';
 import { getWildberriesProductUrl } from './wildberriesLinks';
 
 const props = defineProps<{
@@ -26,10 +30,29 @@ const loading = ref(false);
 const error = ref('');
 let loadVersion = 0;
 
+const emptyReviewEvidence: ParserProductReviewEvidence = {
+  rootFetchCount: 0,
+  parsedReviewCount: 0,
+  parsedReplyCount: 0,
+  latestReviewRunId: null,
+  attributionMode: 'root_payload',
+  isRootScoped: true,
+  isFullHistoryUnknown: true,
+  hasCappedRootPayload: false
+};
+
 const displayProduct = computed(() => detail.value ?? props.product);
 const images = computed(() => detail.value?.imageUrls ?? []);
 const mainImage = computed(() => images.value[0] ?? null);
 const productUrl = computed(() => getWildberriesProductUrl(displayProduct.value?.wbProductId));
+const rankSummary = computed(() => displayProduct.value?.rank ?? null);
+const reviewEvidence = computed(() => displayProduct.value?.parsedReviewEvidence ?? emptyReviewEvidence);
+const hasParsedEvidence = computed(
+  () =>
+    reviewEvidence.value.rootFetchCount > 0 ||
+    reviewEvidence.value.parsedReviewCount > 0 ||
+    reviewEvidence.value.parsedReplyCount > 0
+);
 
 watch(
   () => [props.open, props.product?.id] as const,
@@ -94,6 +117,35 @@ function formatPercent(value: number | null): string {
   return value === null ? '-' : `${new Intl.NumberFormat('ru-RU').format(value)}%`;
 }
 
+function formatNumber(value: number | null | undefined): string {
+  return value === null || value === undefined ? '-' : new Intl.NumberFormat('ru-RU').format(value);
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return '-';
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat('ru-RU', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date)
+    : '-';
+}
+
+function formatBoolean(value: boolean): string {
+  return value ? 'Да' : 'Нет';
+}
+
+function evidenceScopeLabel(value: ParserProductReviewEvidence): string {
+  return value.isRootScoped ? 'root-scoped' : 'product-scoped';
+}
+
 </script>
 
 <template>
@@ -129,11 +181,11 @@ function formatPercent(value: number | null): string {
                   <dd class="overview__price numeric">{{ formatMoney(displayProduct.priceDiscounted) }}</dd>
                 </div>
                 <div>
-                  <dt>Рейтинг</dt>
+                  <dt>Рейтинг WB</dt>
                   <dd class="numeric">{{ fieldValue(displayProduct.reviewRating) }}</dd>
                 </div>
                 <div>
-                  <dt>Отзывы</dt>
+                  <dt>Отзывы WB</dt>
                   <dd class="numeric">{{ fieldValue(displayProduct.feedbackCount) }}</dd>
                 </div>
               </dl>
@@ -152,6 +204,43 @@ function formatPercent(value: number | null): string {
 
           <LoadingState v-if="loading" class="drawer__loading" :rows="3" />
           <section v-if="error" class="drawer__notice">{{ error }}</section>
+
+          <section class="drawer__section">
+            <h3>Позиция</h3>
+            <template v-if="rankSummary">
+              <dl class="drawer__fields drawer__fields--two">
+                <div><dt>Позиция</dt><dd class="numeric">#{{ formatNumber(rankSummary.absolutePosition) }}</dd></div>
+                <div><dt>Запрос</dt><dd>{{ rankSummary.query }}</dd></div>
+                <div><dt>Категория</dt><dd>{{ fieldValue(rankSummary.sourceCategory) }}</dd></div>
+                <div><dt>Подкатегория</dt><dd>{{ fieldValue(rankSummary.sourceSubcategory) }}</dd></div>
+                <div><dt>Страница</dt><dd class="numeric">{{ formatNumber(rankSummary.page) }}</dd></div>
+                <div><dt>Позиция на странице</dt><dd class="numeric">{{ formatNumber(rankSummary.positionOnPage) }}</dd></div>
+                <div><dt>Наблюдение</dt><dd>{{ formatDateTime(rankSummary.observedAtUtc) }}</dd></div>
+                <div><dt>Контекстов</dt><dd class="numeric">{{ formatNumber(rankSummary.contextsCount) }}</dd></div>
+                <div><dt>Rank context id</dt><dd>{{ rankSummary.rankContextId }}</dd></div>
+                <div><dt>Rank parser run</dt><dd>{{ rankSummary.parserRunId }}</dd></div>
+              </dl>
+              <p class="drawer__hint">Позиция — лучшая наблюдаемая позиция в последнем staged rank run. Это не универсальный рейтинг маркетплейса.</p>
+            </template>
+            <p v-else class="drawer__empty">Позиция не найдена в последнем staged rank run.</p>
+          </section>
+
+          <section class="drawer__section">
+            <h3>Спаршенные отзывы</h3>
+            <dl class="drawer__fields drawer__fields--two">
+              <div><dt>Рейтинг WB</dt><dd class="numeric">{{ fieldValue(displayProduct.reviewRating) }}</dd></div>
+              <div><dt>Отзывы WB</dt><dd class="numeric">{{ fieldValue(displayProduct.feedbackCount) }}</dd></div>
+              <div><dt>Root fetch count</dt><dd class="numeric">{{ formatNumber(reviewEvidence.rootFetchCount) }}</dd></div>
+              <div><dt>Parsed reviews</dt><dd class="numeric">{{ formatNumber(reviewEvidence.parsedReviewCount) }}</dd></div>
+              <div><dt>Parsed replies</dt><dd class="numeric">{{ formatNumber(reviewEvidence.parsedReplyCount) }}</dd></div>
+              <div><dt>Latest review run</dt><dd>{{ fieldValue(reviewEvidence.latestReviewRunId) }}</dd></div>
+              <div><dt>Attribution</dt><dd>{{ reviewEvidence.attributionMode }} · {{ evidenceScopeLabel(reviewEvidence) }}</dd></div>
+              <div><dt>Full history unknown</dt><dd>{{ formatBoolean(reviewEvidence.isFullHistoryUnknown) }}</dd></div>
+              <div><dt>Capped payload</dt><dd>{{ formatBoolean(reviewEvidence.hasCappedRootPayload) }}</dd></div>
+            </dl>
+            <p v-if="hasParsedEvidence" class="drawer__hint">Спаршенные отзывы — staging evidence, root-scoped; это не гарантирует точную variant-level принадлежность.</p>
+            <p v-else class="drawer__empty">Для этого root/product нет staged review rows. Число отзывов WB выше — это metadata карточки, а не результат парсинга отзывов.</p>
+          </section>
 
           <ParserProductObservedReviews :product="displayProduct" />
 
@@ -323,6 +412,22 @@ function formatPercent(value: number | null): string {
   font-size: 0.78rem;
   font-weight: 740;
   text-transform: uppercase;
+}
+
+.drawer__hint,
+.drawer__empty {
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.drawer__empty {
+  border-style: dashed;
+  background: var(--surface-control);
 }
 
 .drawer__fields {
