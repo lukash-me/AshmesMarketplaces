@@ -2,7 +2,7 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; Market Analytics now reads parser staging rows through a seller-facing UX; safe manual WB product/review/rank parser paths exist; a manual Market Analytics refresh pipeline can orchestrate rank, product, and review artifact runs. Broad analytics workflows and rank DB ingestion are still pending.
+- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; Market Analytics now reads parser staging rows through a seller-facing UX; safe manual WB product/review/rank parser paths exist; a manual Market Analytics refresh pipeline can orchestrate rank, product, and review artifact runs. Parser rank staging persistence/CLI ingestion is implemented, while rank read API/UI exposure and auto-staging remain pending.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
 - Frontend maturity: auth shell and Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings are real read-only slices; Overview dashboard remains the main placeholder.
@@ -50,9 +50,9 @@
 - Auth uses JWT access tokens + opaque refresh tokens stored as hashes in `Sessions.token`.
 - Development seed exists, Development-only, config-gated, disabled by default.
 - CRUD APIs remain anonymous for compatibility; auth endpoints are protected where appropriate.
-- Parser ingestion foundation exists as backend-owned entities/configurations, dedicated migration, application service, and a manual CLI for parser run validation, raw/staging registration, and selective existing-product promotion design.
+- Parser ingestion foundation exists as backend-owned entities/configurations, dedicated migrations, application service, and a manual CLI for parser run validation, raw/staging registration, product/review/rank staging, and selective existing-product promotion design.
 - Parser observability API now exposes staging-only read routes for parser products, reviews, linked observed review replies, and parser runs under `/api/v1/parser/*`; frontend labels this seller-facing surface as Market Analytics where appropriate, but it must not be treated as domain product/review API.
-- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, rank snapshot staging/read API, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
+- Missing backend capabilities: analytics aggregation endpoints, workspace authorization/permission enforcement, rank read API/Market Analytics rank UI, ML runtime, recommendation generation, background jobs, exports, observability and production hardening.
 
 # 6. Current Frontend Status
 
@@ -77,11 +77,12 @@
 - `Parser/reviews_runner.py` reads existing `products.jsonl`, fetches public WB root feedback payloads by `wb_root_id`, writes canonical `reviews.jsonl` and `review_replies.jsonl`, retains configurable compressed raw payloads, and supports fetch audit, bounded concurrency, and resume.
 - Review rows preserve `review_attribution_mode=root_payload`; WB review ownership is root/sibling scoped and must not be treated as exact product-variant semantics without a reviewed mapping decision.
 - Real WB validation exists on footwear product data and review runs. The public review endpoint often returns a capped payload slice where reported feedback count exceeds returned rows; pagination/full-history research is still pending.
-- Backend parser ingestion stage now has raw run/file registration, import audit/error entities, product/review/reply staging entities, review root-fetch completeness metadata, a reviewed raw/staging migration, and a manual CLI/service path that reads existing parser output offline.
+- Backend parser ingestion stage now has raw run/file registration, import audit/error entities, product/review/reply staging entities, rank snapshot/page-fetch staging entities, review root-fetch completeness metadata, reviewed raw/staging migrations, and a manual CLI/service path that reads existing parser output offline.
+- Rank staging Stage 1 is implemented with `validate-ranks` and `stage-ranks`, persisted `ParserRankSnapshotRows` and `ParserRankPageFetches`, idempotent file-line staging, and parser run/file lineage. Rank remains staging evidence only; no parser products are promoted and no fake positions are generated.
 - Parser staging observability now has staging-only backend API routes and Market Analytics frontend UX. Seller-facing Market Analytics hides parser/evidence noise; hidden debug routes keep deeper observability where needed.
 - Current review ingestion decision is staging-only: review/reply data remains partial/capped/root-attributed evidence until pagination/full-history and domain attribution semantics are proven.
-- Full-category traversal expansion, scheduler/background execution, rank DB ingestion, browser/token review research, and domain review import remain out of scope until explicitly approved.
-- Next parser/data milestone: stage fresh home-goods product/review artifacts into PostgreSQL, design/apply reviewed rank snapshot staging schema/API, then use repeated rank/product/review runs for rule-based hot-product signals before any ML model.
+- Full-category traversal expansion, scheduler/background execution, browser/token review research, and domain review import remain out of scope until explicitly approved.
+- Next parser/data milestone: expose staged rank through a reviewed parser product read model and Market Analytics `Позиция` column, then add opt-in refresh pipeline auto-staging and use repeated rank/product/review runs for rule-based hot-product signals before any ML model.
 
 # 8. Visual Direction
 
@@ -115,8 +116,8 @@
 
 # 11. Current Priorities
 
-1. Stage fresh home-goods product and review parser artifacts into PostgreSQL and verify Market Analytics reads the new demo data, not older footwear staging rows.
-2. Design the reviewed rank snapshot DB ingestion/read API stage; rank artifacts currently remain parser-only.
+1. Expose staged rank snapshots through a reviewed parser product read model and add the Market Analytics `Позиция` column with truthful context.
+2. Add opt-in local/demo `market_refresh_runner.py` auto-staging through the existing ingestion CLI so fresh rank/product/review artifacts update PostgreSQL without manual command fan-out.
 3. Keep review/reply import at raw/staging semantics and research public WB review payload cap/pagination/full-history behavior before any domain review import.
 4. Define rule-based hot-product signal semantics from repeated rank/product/review snapshots before showing recommendations as business intelligence.
 5. Build Overview only after real-data pipeline contracts are stable enough to avoid fake dashboard semantics.

@@ -14,6 +14,7 @@ public sealed class ParserIngestionService : IParserIngestionService
 {
     private const string ProductsKind = "products";
     private const string ReviewsKind = "reviews";
+    private const string RanksKind = "ranks";
     private readonly ApplicationDbContext _dbContext;
 
     public ParserIngestionService(ApplicationDbContext dbContext)
@@ -37,6 +38,39 @@ public sealed class ParserIngestionService : IParserIngestionService
         CancellationToken cancellationToken)
     {
         return await ScanReviewRunAsync("validate-reviews", runDirectory, options, cancellationToken);
+    }
+
+    public async Task<ParserIngestionResult> ValidateRanksAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        return await ScanRankRunAsync("validate-ranks", runDirectory, options, cancellationToken);
+    }
+
+    private async Task<ParserIngestionResult> ScanRankRunAsync(
+        string mode,
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        var manifest = LoadManifest(runDirectory, RanksKind);
+        var summary = new ImportSummary(mode, manifest.ParserRunId, options.DryRun);
+
+        await ScanRankSnapshotsAsync(
+            RequiredFile(runDirectory, "product_rank_snapshots.jsonl"),
+            manifest,
+            options,
+            summary,
+            cancellationToken);
+        await ScanRankPageFetchesAsync(
+            RequiredFile(runDirectory, "rank_page_fetches.jsonl"),
+            manifest,
+            options,
+            summary,
+            cancellationToken);
+
+        return summary.ToResult();
     }
 
     private async Task<ParserIngestionResult> ScanReviewRunAsync(
@@ -164,6 +198,60 @@ public sealed class ParserIngestionService : IParserIngestionService
                 registered.Files["review_replies.jsonl"],
                 execution,
                 rootFetches,
+                options,
+                summary,
+                cancellationToken);
+            await FinishExecutionAsync(execution, summary, "succeeded", cancellationToken);
+        }
+        catch
+        {
+            await FinishExecutionAsync(execution, summary, "failed", cancellationToken);
+            throw;
+        }
+
+        return summary.ToResult();
+    }
+
+    public async Task<ParserIngestionResult> StageRanksAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        var manifest = LoadManifest(runDirectory, RanksKind);
+        if (options.DryRun)
+            return await ScanRankRunAsync("stage-ranks", runDirectory, options, cancellationToken);
+
+        var registered = await RegisterRunAndFilesAsync(
+            runDirectory,
+            manifest,
+            [
+                "manifest.json",
+                "product_rank_snapshots.jsonl",
+                "rank_page_fetches.jsonl",
+                "errors.jsonl",
+                "runner.log"
+            ],
+            cancellationToken);
+        var execution = await StartExecutionAsync(registered.Run.Id, "stage-ranks", cancellationToken);
+        var summary = new ImportSummary("stage-ranks", manifest.ParserRunId, isDryRun: false);
+
+        try
+        {
+            await StageRankSnapshotsAsync(
+                RequiredFile(runDirectory, "product_rank_snapshots.jsonl"),
+                manifest,
+                registered.Run,
+                registered.Files["product_rank_snapshots.jsonl"],
+                execution,
+                options,
+                summary,
+                cancellationToken);
+            await StageRankPageFetchesAsync(
+                RequiredFile(runDirectory, "rank_page_fetches.jsonl"),
+                manifest,
+                registered.Run,
+                registered.Files["rank_page_fetches.jsonl"],
+                execution,
                 options,
                 summary,
                 cancellationToken);
@@ -694,6 +782,208 @@ public sealed class ParserIngestionService : IParserIngestionService
         errors.Clear();
     }
 
+    private async Task ScanRankSnapshotsAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var validRows = 0L;
+        var invalidRows = 0L;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                using var row = ParseRankSnapshot(source, manifest, Guid.NewGuid(), Guid.NewGuid());
+                summary.RowsWritten++;
+                validRows++;
+            }
+            catch
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                invalidRows++;
+            }
+        }
+
+        summary.Increment("rank_snapshot_rows_valid", validRows);
+        summary.Increment("rank_snapshot_rows_invalid", invalidRows);
+    }
+
+    private async Task ScanRankPageFetchesAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var validRows = 0L;
+        var invalidRows = 0L;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                using var row = ParseRankPageFetch(source, manifest, Guid.NewGuid(), Guid.NewGuid());
+                summary.RowsWritten++;
+                validRows++;
+            }
+            catch
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                invalidRows++;
+            }
+        }
+
+        summary.Increment("rank_page_fetch_rows_valid", validRows);
+        summary.Increment("rank_page_fetch_rows_invalid", invalidRows);
+    }
+
+    private async Task StageRankSnapshotsAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserRun run,
+        ParserFile file,
+        ParserImportExecution execution,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<ParserRankSnapshotRow>(options.NormalizedBatchSize);
+        var errors = new List<ParserImportError>();
+        var writtenBefore = summary.RowsWritten;
+        var skippedBefore = summary.RowsSkipped;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                rows.Add(ParseRankSnapshot(source, manifest, run.Id, file.Id));
+            }
+            catch (Exception exception)
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                summary.Increment("rank_snapshot_rows_invalid");
+                errors.Add(CreateError(execution.Id, run.Id, file.Id, source.LineNumber, "rank-snapshot-row", exception.Message));
+            }
+
+            if (rows.Count + errors.Count >= options.NormalizedBatchSize)
+                await FlushRankSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        }
+
+        await FlushRankSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        summary.Increment("rank_snapshot_rows_staged", summary.RowsWritten - writtenBefore);
+        summary.Increment("rank_snapshot_rows_skipped", summary.RowsSkipped - skippedBefore);
+    }
+
+    private async Task FlushRankSnapshotBatchAsync(
+        Guid fileId,
+        List<ParserRankSnapshotRow> rows,
+        List<ParserImportError> errors,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0 && errors.Count == 0)
+            return;
+
+        var lineNumbers = rows.Select(x => x.SourceLineNumber).ToList();
+        var existing = lineNumbers.Count == 0
+            ? []
+            : await _dbContext.ParserRankSnapshotRows
+                .AsNoTracking()
+                .Where(x => x.IdParserFile == fileId && lineNumbers.Contains(x.SourceLineNumber))
+                .Select(x => x.SourceLineNumber)
+                .ToListAsync(cancellationToken);
+        var existingLines = existing.ToHashSet();
+        var newRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+
+        summary.RowsSkipped += rows.Count - newRows.Count;
+        summary.RowsWritten += newRows.Count;
+        _dbContext.ParserRankSnapshotRows.AddRange(newRows);
+        _dbContext.ParserImportErrors.AddRange(errors);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        _dbContext.ChangeTracker.Clear();
+        rows.Clear();
+        errors.Clear();
+    }
+
+    private async Task StageRankPageFetchesAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserRun run,
+        ParserFile file,
+        ParserImportExecution execution,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<ParserRankPageFetch>(options.NormalizedBatchSize);
+        var errors = new List<ParserImportError>();
+        var writtenBefore = summary.RowsWritten;
+        var skippedBefore = summary.RowsSkipped;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                rows.Add(ParseRankPageFetch(source, manifest, run.Id, file.Id));
+            }
+            catch (Exception exception)
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                summary.Increment("rank_page_fetch_rows_invalid");
+                errors.Add(CreateError(execution.Id, run.Id, file.Id, source.LineNumber, "rank-page-fetch-row", exception.Message));
+            }
+
+            if (rows.Count + errors.Count >= options.NormalizedBatchSize)
+                await FlushRankPageFetchBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        }
+
+        await FlushRankPageFetchBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        summary.Increment("rank_page_fetch_rows_staged", summary.RowsWritten - writtenBefore);
+        summary.Increment("rank_page_fetch_rows_skipped", summary.RowsSkipped - skippedBefore);
+    }
+
+    private async Task FlushRankPageFetchBatchAsync(
+        Guid fileId,
+        List<ParserRankPageFetch> rows,
+        List<ParserImportError> errors,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0 && errors.Count == 0)
+            return;
+
+        var lineNumbers = rows.Select(x => x.SourceLineNumber).ToList();
+        var existing = lineNumbers.Count == 0
+            ? []
+            : await _dbContext.ParserRankPageFetches
+                .AsNoTracking()
+                .Where(x => x.IdParserFile == fileId && lineNumbers.Contains(x.SourceLineNumber))
+                .Select(x => x.SourceLineNumber)
+                .ToListAsync(cancellationToken);
+        var existingLines = existing.ToHashSet();
+        var newRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+
+        summary.RowsSkipped += rows.Count - newRows.Count;
+        summary.RowsWritten += newRows.Count;
+        _dbContext.ParserRankPageFetches.AddRange(newRows);
+        _dbContext.ParserImportErrors.AddRange(errors);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        _dbContext.ChangeTracker.Clear();
+        rows.Clear();
+        errors.Clear();
+    }
+
     private async Task<IReadOnlyDictionary<string, RootFetchSnapshot>> LoadRootFetchSnapshotsAsync(
         Guid runId,
         CancellationToken cancellationToken)
@@ -887,7 +1177,7 @@ public sealed class ParserIngestionService : IParserIngestionService
         var path = RequiredFile(runDirectory, "manifest.json");
         using var manifest = JsonDocument.Parse(File.ReadAllText(path));
         var root = manifest.RootElement;
-        var countersName = kind == ProductsKind ? "row_counts" : "counters";
+        var countersName = kind is ProductsKind or RanksKind ? "row_counts" : "counters";
         return new ManifestInfo(
             kind,
             RequiredString(root, "parser_run_id"),
@@ -989,6 +1279,77 @@ public sealed class ParserIngestionService : IParserIngestionService
             ReadLong(row, "subject_parent_id"),
             ReadLong(row, "subject_id"),
             CloneDocument(CloneElement(row, "raw_observed_fields")));
+    }
+
+    private static ParserRankSnapshotRow ParseRankSnapshot(
+        JsonLine source,
+        ManifestInfo manifest,
+        Guid runId,
+        Guid fileId)
+    {
+        source.ThrowIfInvalid();
+        var row = source.Payload.RootElement;
+        return new ParserRankSnapshotRow(
+            runId,
+            fileId,
+            source.LineNumber,
+            RowHash(source.RawLine),
+            ReadInt(row, "schema_version") ?? 1,
+            RequiredString(row, "parser_run_id"),
+            RequiredUtcDate(row, "observed_at_utc"),
+            RequiredString(row, "marketplace"),
+            RequiredString(row, "rank_context_id"),
+            RequiredString(row, "rank_context_type"),
+            ReadString(row, "source_category"),
+            ReadString(row, "source_subcategory"),
+            RequiredString(row, "query"),
+            ReadString(row, "source_region_dest"),
+            ReadString(row, "sort"),
+            CloneDocument(CloneElement(row, "filters")),
+            RequiredString(row, "request_fingerprint"),
+            RequiredPositiveInt(row, "page"),
+            RequiredPositiveInt(row, "position_on_page"),
+            RequiredPositiveInt(row, "absolute_position"),
+            RequiredString(row, "wb_product_id"),
+            ReadString(row, "wb_root_id"),
+            ReadNonNegativeInt(row, "response_total"),
+            RequiredString(row, "fetch_status"));
+    }
+
+    private static ParserRankPageFetch ParseRankPageFetch(
+        JsonLine source,
+        ManifestInfo manifest,
+        Guid runId,
+        Guid fileId)
+    {
+        source.ThrowIfInvalid();
+        var row = source.Payload.RootElement;
+        return new ParserRankPageFetch(
+            runId,
+            fileId,
+            source.LineNumber,
+            RowHash(source.RawLine),
+            ReadInt(row, "schema_version") ?? 1,
+            RequiredString(row, "parser_run_id"),
+            RequiredUtcDate(row, "observed_at_utc"),
+            manifest.Marketplace,
+            RequiredString(row, "rank_context_id"),
+            RequiredString(row, "rank_context_type"),
+            ReadString(row, "source_category"),
+            ReadString(row, "source_subcategory"),
+            RequiredString(row, "query"),
+            ReadString(row, "source_region_dest"),
+            ReadString(row, "sort"),
+            CloneDocument(CloneElement(row, "filters")),
+            RequiredString(row, "request_fingerprint"),
+            RequiredPositiveInt(row, "page"),
+            RequiredString(row, "status"),
+            RequiredNonNegativeInt(row, "product_count"),
+            ReadNonNegativeInt(row, "response_total"),
+            RequiredNonNegativeInt(row, "retry_count"),
+            ReadNonNegativeInt(row, "http_status"),
+            ReadString(row, "wb_code"),
+            ReadString(row, "message"));
     }
 
     private static ParserReviewRootFetch ParseReviewRootFetch(
@@ -1129,6 +1490,32 @@ public sealed class ParserIngestionService : IParserIngestionService
         var value = ReadString(row, name);
         if (string.IsNullOrWhiteSpace(value))
             throw new InvalidDataException($"Required parser field '{name}' is missing.");
+        return value;
+    }
+
+    private static int RequiredPositiveInt(JsonElement row, string name)
+    {
+        var value = ReadInt(row, name)
+                    ?? throw new InvalidDataException($"Required parser field '{name}' is missing.");
+        if (value < 1)
+            throw new InvalidDataException($"Parser field '{name}' must be positive.");
+        return value;
+    }
+
+    private static int RequiredNonNegativeInt(JsonElement row, string name)
+    {
+        var value = ReadInt(row, name)
+                    ?? throw new InvalidDataException($"Required parser field '{name}' is missing.");
+        if (value < 0)
+            throw new InvalidDataException($"Parser field '{name}' must be non-negative.");
+        return value;
+    }
+
+    private static int? ReadNonNegativeInt(JsonElement row, string name)
+    {
+        var value = ReadInt(row, name);
+        if (value is < 0)
+            throw new InvalidDataException($"Parser field '{name}' must be non-negative.");
         return value;
     }
 

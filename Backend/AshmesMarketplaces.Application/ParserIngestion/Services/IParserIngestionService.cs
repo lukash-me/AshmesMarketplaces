@@ -14,12 +14,22 @@ public interface IParserIngestionService
         ParserIngestionOptions options,
         CancellationToken cancellationToken);
 
+    Task<ParserIngestionResult> ValidateRanksAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken);
+
     Task<ParserIngestionResult> StageProductsAsync(
         string runDirectory,
         ParserIngestionOptions options,
         CancellationToken cancellationToken);
 
     Task<ParserIngestionResult> StageReviewsAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken);
+
+    Task<ParserIngestionResult> StageRanksAsync(
         string runDirectory,
         ParserIngestionOptions options,
         CancellationToken cancellationToken);

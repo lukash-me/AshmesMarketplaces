@@ -32,6 +32,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserReviewRootFetch> ParserReviewRootFetches => Set<ParserReviewRootFetch>();
     public DbSet<ParserReviewRow> ParserReviewRows => Set<ParserReviewRow>();
     public DbSet<ParserReviewReplyRow> ParserReviewReplyRows => Set<ParserReviewReplyRow>();
+    public DbSet<ParserRankSnapshotRow> ParserRankSnapshotRows => Set<ParserRankSnapshotRow>();
+    public DbSet<ParserRankPageFetch> ParserRankPageFetches => Set<ParserRankPageFetch>();
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
     public DbSet<Logistic> Logistics => Set<Logistic>();

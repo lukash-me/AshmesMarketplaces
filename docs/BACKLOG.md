@@ -38,7 +38,7 @@ Weakest parts:
 - The product still lacks a real operator landing screen: `Overview` remains a placeholder.
 - Backend APIs are mostly CRUD/storage. Analytical aggregation, dashboards, comparisons, exports, workflow commands, and real signal systems are absent.
 - CRUD endpoints are still anonymous for compatibility. Workspace authorization and permission enforcement are not implemented.
-- Parser backend ingestion has a raw/staging code path, a dedicated parser ingestion migration, and a read-only parser staging observability API/UI slice. Market Analytics now presents parser staging products as a seller-facing market research area, while rank snapshots and the refresh pipeline remain parser-artifact only until reviewed DB ingestion is added. Intelligence is not integrated with backend/API/frontend.
+- Parser backend ingestion has a raw/staging code path, dedicated parser ingestion migrations, product/review/rank staging CLI support, and a read-only parser staging observability API/UI slice. Market Analytics now presents parser staging products as a seller-facing market research area, while staged rank still needs a parser product read model and UI exposure. Intelligence is not integrated with backend/API/frontend.
 - Testing, observability, performance strategy, export strategy, and production deployment are not mature.
 
 Implemented:
@@ -52,7 +52,7 @@ Implemented:
 - Parser reviews/replies slice: manual runner over existing `products.jsonl`, public WB root feedback payload fetch by `wb_root_id`, bounded low concurrency, canonical review/reply JSONL, compressed raw root payload retention, fetch audit, structured errors/logs, and resume.
 - Parser search-rank slice: manual WB search-rank runner writes `product_rank_snapshots.jsonl`, `rank_page_fetches.jsonl`, and manifest for observed query-context positions without price splitting or product enrichment.
 - Parser orchestration slice: manual Market Analytics refresh runner executes rank -> products -> reviews, writes a pipeline manifest/log, streams progress to console, supports smoke/bounded/full modes, resume, skips, force-step, and dry-run, and performs no DB writes by default.
-- Backend parser ingestion foundation: ingestion entities/configurations, reviewed migration, and a manual CLI/application service for parser run validation, raw file/run registration, product/review/reply staging, review root fetch completeness metadata, import audit/errors, and selective existing-product promotion rules without scheduler coupling.
+- Backend parser ingestion foundation: ingestion entities/configurations, reviewed migrations, and a manual CLI/application service for parser run validation, raw file/run registration, product/review/reply staging, rank snapshot/page-fetch staging, review root fetch completeness metadata, import audit/errors, and selective existing-product promotion rules without scheduler coupling.
 - Parser staging observability slice: staging-only `/api/v1/parser/*` read endpoints plus `/parser/products` and `/parser/reviews` frontend routes with lineage, observed review replies, and honest partial/capped/root-attribution review warnings.
 
 Partially implemented:
@@ -65,7 +65,7 @@ Partially implemented:
 - Expenses: backend CRUD and read-only frontend list/detail with category context exist; profitability, ABC analysis, reporting, and accounting workflows are absent.
 - Recommendations: backend CRUD/storage and read-only frontend list/detail exist; ML generation, score interpretation, apply/accept/reject workflows, and target name hydration are absent.
 - Access: backend access CRUD and read-only membership surface exist; authorization enforcement, permission policy matrix, and user/role/workspace mutations are absent.
-- Parser: product-card, review/reply, search-rank, and manual refresh pipeline output contracts exist; backend raw/staging ingestion code, reviewed migration, and Market Analytics read UI/API exist; fresh home-goods DB staging, rank snapshot DB ingestion/API, public review pagination/full-history research, reviewed domain upsert mapping, and scheduler execution are absent.
+- Parser: product-card, review/reply, search-rank, and manual refresh pipeline output contracts exist; backend raw/staging ingestion code, reviewed migrations, fresh home-goods product/review/rank staging, and Market Analytics read UI/API exist; rank API/UI exposure, public review pagination/full-history research, reviewed domain upsert mapping, and scheduler execution are absent.
 - Products heat/signal presentation exists, but it is not real business intelligence.
 
 Still missing:
@@ -102,23 +102,23 @@ Next approved DB-backed task should:
 
 Before any domain review ingestion, research the public WB review payload cap/pagination behavior: current root payloads can report more feedback rows than the endpoint returns, and the interrupted run is only a partial snapshot. Keep scheduler, broad domain parsing, ML enrichment, and all-category traversal out of this stage.
 
-### 2. Search Rank DB Ingestion And Read Model
+### 2. Search Rank Read Model And Market Analytics Position Column
 
 Priority: critical
 Scope: medium-to-large
-Layers: parser, backend, frontend later
+Layers: backend, frontend
 
-The parser can now write search-rank artifacts, but rank is not yet persisted in PostgreSQL or exposed through the backend. Rank must stay context-scoped and must not be inferred from `products.jsonl`.
+Stage 1 rank DB ingestion is implemented. `validate-ranks` and `stage-ranks` ingest real `product_rank_snapshots.jsonl` and `rank_page_fetches.jsonl` artifacts into `ParserRankSnapshotRows` and `ParserRankPageFetches` with parser run/file lineage, import audit, and idempotency. Rank must stay context-scoped and must not be inferred from `products.jsonl`.
 
-Next reviewed rank stage should:
+Next reviewed rank stages should:
 
-- design rank staging tables for `product_rank_snapshots.jsonl` and `rank_page_fetches.jsonl`;
-- preserve rank context fields such as query, source category/subcategory, region/dest, sort, filters, observed timestamp, page, position, and request fingerprint;
-- ingest page fetch gaps explicitly instead of creating fake positions;
-- expose read endpoints only after staging semantics are reviewed;
-- add Market Analytics columns for rank, context, and observation date only after real staged rank data exists.
+- extend the parser products read model with a route-stable nullable rank summary derived only from staged rank snapshots;
+- add the Market Analytics `Позиция` column with query/category/page/observed timestamp context and `—` where no real snapshot exists;
+- keep page fetch gaps explicit through `ParserRankPageFetches` instead of creating fake positions;
+- add opt-in local/demo `market_refresh_runner.py` auto-staging through the existing ingestion CLI after the read model is stable;
+- add rank trend semantics only after repeated snapshots are staged and reviewed.
 
-Do not add fake hot-product badges or rank trends until repeated snapshots exist.
+Do not add fake hot-product badges, fake positions, inferred rank, rank trends, demand/growth/risk language, or universal rank claims.
 
 ### 3. Overview Dashboard On Real Existing Data
 
@@ -243,7 +243,7 @@ Priority: high
 Scope: large
 Layers: parser, backend, infra, docs
 
-`Parser/` now has safe manual WB product-card, review/reply, search-rank, and Market Analytics refresh pipeline runners with canonical output contracts. Backend ingestion code covers raw/staging entities, manual import orchestration, source lineage, audit/error capture, product staging, review root-fetch cap evidence, review/reply staging, a dedicated reviewed migration, parser staging read API/UI, and constrained product promotion boundaries. The next parser/backend stages are fresh home-goods PostgreSQL staging verification and a reviewed rank snapshot ingestion/read model, while public review payload cap/pagination and root-level attribution remain blockers for domain review import or scheduled execution.
+`Parser/` now has safe manual WB product-card, review/reply, search-rank, and Market Analytics refresh pipeline runners with canonical output contracts. Backend ingestion code covers raw/staging entities, manual import orchestration, source lineage, audit/error capture, product staging, review root-fetch cap evidence, review/reply staging, rank snapshot/page-fetch staging, dedicated reviewed migrations, parser staging read API/UI for products/reviews, and constrained product promotion boundaries. The next parser/backend stages are the rank parser product read model, Market Analytics `Позиция` column, and opt-in refresh pipeline auto-staging, while public review payload cap/pagination and root-level attribution remain blockers for domain review import or scheduled execution.
 
 ### ML/Recommendation Runtime
 
@@ -317,10 +317,11 @@ Local dev scripts must not auto-apply migrations, auto-enable seed, delete volum
 
 ## Recommended Next Stages
 
-1. Apply the reviewed parser raw/staging ingestion migration after explicit approval, then verify bounded product and review staging plus parser observability UI on PostgreSQL from existing WB artifacts.
-2. Keep review/reply data raw/staging-only while validating cap/pagination/full-history behavior and locking review attribution assumptions before domain import.
-3. Build Overview over truthful persisted real data after parser/backend pipeline contracts settle.
-4. Add catalog/reference selectors and name hydration for high-friction UUID filters.
-5. Specify reviewed analytics aggregation endpoints and real signal semantics.
-6. Harden authorization after read-only access surface and policy matrix are clear.
-7. Plan ML runtime as a separate reviewed stage.
+1. Expose staged rank through the parser product read model and add the Market Analytics `Позиция` column with truthful context.
+2. Add opt-in local/demo refresh pipeline auto-staging through the existing ingestion CLI; do not add a scheduler/background worker.
+3. Keep review/reply data raw/staging-only while validating cap/pagination/full-history behavior and locking review attribution assumptions before domain import.
+4. Build Overview over truthful persisted real data after parser/backend pipeline contracts settle.
+5. Add catalog/reference selectors and name hydration for high-friction UUID filters.
+6. Specify reviewed analytics aggregation endpoints and real signal semantics.
+7. Harden authorization after read-only access surface and policy matrix are clear.
+8. Plan ML runtime as a separate reviewed stage.
