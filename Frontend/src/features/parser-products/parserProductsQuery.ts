@@ -1,6 +1,10 @@
 import type { LocationQuery, LocationQueryRaw } from 'vue-router';
 
-import type { ParserProductListParams, ParserProductQueryState } from './parserProducts.types';
+import type {
+  ParserProductFilterOptionsParams,
+  ParserProductListParams,
+  ParserProductQueryState
+} from './parserProducts.types';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 50;
@@ -11,6 +15,10 @@ const ALLOWED_SORT_VALUES = new Set([
   '-parsedAtUtc',
   'wbProductId',
   '-wbProductId',
+  'position',
+  '-position',
+  'price',
+  '-price',
   'priceDiscounted',
   '-priceDiscounted',
   'reviewRating',
@@ -76,6 +84,19 @@ export function toParserProductsApiParams(state: ParserProductQueryState): Parse
     ...numberParam('reviewRatingTo', state.reviewRatingTo),
     ...numberParam('feedbackCountFrom', state.feedbackCountFrom),
     ...numberParam('feedbackCountTo', state.feedbackCountTo)
+  };
+}
+
+export function toParserProductFilterOptionsParams(
+  state: ParserProductQueryState
+): ParserProductFilterOptionsParams {
+  return {
+    ...(state.search ? { search: state.search } : {}),
+    ...(state.parserRunId ? { parserRunId: state.parserRunId } : {}),
+    ...(state.sourceCategory ? { sourceCategory: state.sourceCategory } : {}),
+    ...(state.sourceSubcategory ? { sourceSubcategory: state.sourceSubcategory } : {}),
+    ...(state.brandName ? { brandName: state.brandName } : {}),
+    ...(state.sellerName ? { sellerName: state.sellerName } : {})
   };
 }
 

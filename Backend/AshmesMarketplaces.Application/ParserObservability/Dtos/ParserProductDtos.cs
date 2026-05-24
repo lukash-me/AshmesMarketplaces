@@ -13,6 +13,7 @@ public sealed record ParserProductListItemDto(
     decimal? PriceDiscounted,
     decimal? PriceWbWallet,
     int? DiscountPercent,
+    int? TotalQuantity,
     int? RatingRounded,
     decimal? ReviewRating,
     int? FeedbackCount,
@@ -21,6 +22,7 @@ public sealed record ParserProductListItemDto(
     string? SourceQuery,
     string? ThumbnailUrl,
     ParserProductRankSummaryDto? Rank,
+    ParserProductPositionDto? Position,
     ParserProductReviewEvidenceDto ParsedReviewEvidence);
 
 public sealed record ParserProductDetailDto(
@@ -59,6 +61,7 @@ public sealed record ParserProductDetailDto(
     long SourceLineNumber,
     string RowHash,
     ParserProductRankSummaryDto? Rank,
+    ParserProductPositionDto? Position,
     ParserProductReviewEvidenceDto ParsedReviewEvidence);
 
 public sealed record ParserProductRankSummaryDto(
@@ -75,6 +78,15 @@ public sealed record ParserProductRankSummaryDto(
     string RankContextId,
     int ContextsCount);
 
+public sealed record ParserProductPositionDto(
+    string State,
+    int? AbsolutePosition,
+    int? ObservedRangeLimit,
+    string? Query,
+    string? SourceCategory,
+    string? SourceSubcategory,
+    DateTime? ObservedAtUtc);
+
 public sealed record ParserProductReviewEvidenceDto(
     int RootFetchCount,
     int ParsedReviewCount,
@@ -84,6 +96,22 @@ public sealed record ParserProductReviewEvidenceDto(
     bool IsRootScoped,
     bool IsFullHistoryUnknown,
     bool HasCappedRootPayload);
+
+public sealed record ParserProductFilterOptionsDto(
+    IReadOnlyList<string> Categories,
+    IReadOnlyList<string> Subcategories,
+    IReadOnlyList<string> Brands,
+    IReadOnlyList<string> Sellers);
+
+public sealed class ParserProductFilterOptionsQuery
+{
+    public string? ParserRunId { get; init; }
+    public string? Search { get; init; }
+    public string? SourceCategory { get; init; }
+    public string? SourceSubcategory { get; init; }
+    public string? BrandName { get; init; }
+    public string? SellerName { get; init; }
+}
 
 public sealed class ParserProductListQuery
 {

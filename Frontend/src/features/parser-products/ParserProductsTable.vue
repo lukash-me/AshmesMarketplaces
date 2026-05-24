@@ -9,17 +9,18 @@ import DataTable, { type DataTableColumn } from '@/shared/ui/DataTable.vue';
 import MarketProductImage from './MarketProductImage.vue';
 import type {
   ParserProductListItem,
-  ParserProductReviewEvidence
+  ParserProductPosition
 } from './parserProducts.types';
 
 type MarketProductColumnId =
   | 'thumbnailUrl'
   | 'product'
-  | 'rank'
+  | 'position'
   | 'brandSeller'
   | 'price'
+  | 'stock'
   | 'reviewRating'
-  | 'parsedReviewEvidence'
+  | 'feedbackCount'
   | 'wbProductId'
   | 'brandName'
   | 'sellerName'
@@ -27,8 +28,7 @@ type MarketProductColumnId =
   | 'sourceSubcategory'
   | 'priceRegular'
   | 'priceWbWallet'
-  | 'discountPercent'
-  | 'feedbackCount';
+  | 'discountPercent';
 
 type MarketProductColumn = DataTableColumn<ParserProductListItem> & {
   key: MarketProductColumnId;
@@ -56,30 +56,22 @@ const mandatoryColumns: MarketProductColumnId[] = ['product'];
 const defaultColumnIds: MarketProductColumnId[] = [
   'thumbnailUrl',
   'product',
-  'rank',
+  'position',
   'brandSeller',
   'price',
+  'stock',
   'reviewRating',
-  'parsedReviewEvidence'
+  'feedbackCount'
 ];
-const emptyReviewEvidence: ParserProductReviewEvidence = {
-  rootFetchCount: 0,
-  parsedReviewCount: 0,
-  parsedReplyCount: 0,
-  latestReviewRunId: null,
-  attributionMode: 'root_payload',
-  isRootScoped: true,
-  isFullHistoryUnknown: true,
-  hasCappedRootPayload: false
-};
 const columns: MarketProductColumn[] = [
   { key: 'thumbnailUrl', label: 'Фото', optionLabel: 'Фото', group: 'default', className: 'table__cell--image' },
   { key: 'product', label: 'Товар', optionLabel: 'Товар', group: 'default', className: 'table__cell--product' },
-  { key: 'rank', label: 'Позиция', optionLabel: 'Позиция', group: 'default' },
-  { key: 'brandSeller', label: 'Бренд и продавец', optionLabel: 'Бренд и продавец', group: 'default' },
-  { key: 'price', label: 'Цена', optionLabel: 'Цена', group: 'default', align: 'right' },
-  { key: 'reviewRating', label: 'WB карточка', optionLabel: 'WB карточка', group: 'default', sortable: true, align: 'right' },
-  { key: 'parsedReviewEvidence', label: 'Спаршенные отзывы', optionLabel: 'Спаршенные отзывы', group: 'default' },
+  { key: 'position', label: 'Позиция', optionLabel: 'Позиция', group: 'default', sortable: true },
+  { key: 'brandSeller', label: 'Бренд / продавец', optionLabel: 'Бренд / продавец', group: 'default' },
+  { key: 'price', label: 'Цена', optionLabel: 'Цена', group: 'default', sortable: true, align: 'right' },
+  { key: 'stock', label: 'Остаток', optionLabel: 'Остаток', group: 'default', align: 'right' },
+  { key: 'reviewRating', label: 'Рейтинг WB', optionLabel: 'Рейтинг WB', group: 'default', sortable: true, align: 'right' },
+  { key: 'feedbackCount', label: 'Отзывы WB', optionLabel: 'Отзывы WB', group: 'default', sortable: true, align: 'right' },
   { key: 'wbProductId', label: 'WB id', optionLabel: 'WB id', group: 'optional', sortable: true },
   { key: 'brandName', label: 'Бренд', optionLabel: 'Бренд', group: 'optional' },
   { key: 'sellerName', label: 'Продавец', optionLabel: 'Продавец', group: 'optional' },
@@ -88,7 +80,6 @@ const columns: MarketProductColumn[] = [
   { key: 'priceRegular', label: 'Цена без скидки', optionLabel: 'Цена без скидки', group: 'optional', align: 'right' },
   { key: 'priceWbWallet', label: 'WB кошелек', optionLabel: 'Цена с WB кошельком', group: 'optional', align: 'right' },
   { key: 'discountPercent', label: 'Скидка', optionLabel: 'Скидка', group: 'optional', align: 'right' },
-  { key: 'feedbackCount', label: 'Отзывы WB', optionLabel: 'Количество отзывов WB', group: 'optional', sortable: true, align: 'right' }
 ];
 const columnIdSet = new Set(columns.map((column) => column.key));
 
@@ -96,12 +87,23 @@ const columnMenuOpen = ref(false);
 const visibleColumnIds = ref<MarketProductColumnId[]>([...defaultColumnIds]);
 
 const visibleColumns = computed(() =>
-  columns.filter((column) => visibleColumnIds.value.includes(column.key))
+  columns
+    .filter((column) => visibleColumnIds.value.includes(column.key))
+    .map((column) => ({
+      ...column,
+      label: column.label.toLocaleUpperCase('ru-RU'),
+      className: [
+        column.className,
+        column.sortable ? 'table__cell--sortable' : '',
+        sortedColumnKey(props.sort) === column.key ? 'table__cell--sorted' : ''
+      ].filter(Boolean).join(' ')
+    }))
 );
 const optionColumns = computed(() => columns);
 const pageCount = computed(() => Math.max(1, Math.ceil(props.totalCount / props.pageSize)));
 const pageStart = computed(() => (props.totalCount === 0 ? 0 : (props.page - 1) * props.pageSize + 1));
 const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pageSize));
+const paginationItems = computed(() => buildPaginationItems(props.page, pageCount.value));
 
 onMounted(() => {
   const stored = readStoredColumns();
@@ -156,58 +158,136 @@ function isMandatory(column: MarketProductColumn): boolean {
   return mandatoryColumns.includes(column.key);
 }
 
+function sortedColumnKey(sort: string): string {
+  return sort.startsWith('-') ? sort.slice(1) : sort;
+}
+
+function buildPaginationItems(currentPage: number, totalPages: number): Array<number | string> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, 'end-ellipsis', totalPages];
+  }
+
+  if (currentPage >= totalPages - 3) {
+    return [1, 'start-ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [
+    1,
+    'start-ellipsis',
+    currentPage - 2,
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    currentPage + 2,
+    'end-ellipsis',
+    totalPages
+  ];
+}
+
 function fieldValue(value: string | number | null | undefined): string {
-  return value === null || value === undefined || value === '' ? '-' : String(value);
+  return value === null || value === undefined || value === '' ? 'Нет данных' : String(value);
 }
 
 function formatMoney(value: number | null): string {
   return value === null
-    ? '-'
+    ? 'Нет данных'
     : `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)} ₽`;
 }
 
 function formatPercent(value: number | null): string {
-  return value === null ? '-' : `${new Intl.NumberFormat('ru-RU').format(value)}%`;
+  return value === null ? 'Нет данных' : `${new Intl.NumberFormat('ru-RU').format(value)}%`;
 }
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('ru-RU').format(value);
 }
 
-function rankTitle(row: ParserProductListItem): string {
-  if (!row.rank) {
-    return 'Позиция не найдена в последнем staged rank run.';
+function stockLabel(value: number | null): string {
+  if (value === null) {
+    return 'Нет данных';
   }
 
-  const observed = formatDateTime(row.rank.observedAtUtc);
-  const source = [row.rank.sourceSubcategory, row.rank.sourceCategory].filter(Boolean).join(' · ');
+  return value === 40 ? '≥40' : formatNumber(value);
+}
+
+function identityValue(value: string | null | undefined): string {
+  return value?.trim() ? value : '—';
+}
+
+function positionFor(row: ParserProductListItem): ParserProductPosition {
+  return row.position ?? {
+    state: 'unknown',
+    absolutePosition: null,
+    observedRangeLimit: null,
+    query: null,
+    sourceCategory: row.sourceCategory,
+    sourceSubcategory: row.sourceSubcategory,
+    observedAtUtc: null
+  };
+}
+
+function positionLabel(row: ParserProductListItem): string {
+  const position = positionFor(row);
+
+  if (position.state === 'observed' && position.absolutePosition !== null) {
+    return `#${formatNumber(position.absolutePosition)}`;
+  }
+
+  if (position.state === 'beyondObservedRange' && position.observedRangeLimit !== null) {
+    return `>${formatNumber(position.observedRangeLimit)}`;
+  }
+
+  return 'Нет данных';
+}
+
+function positionTone(row: ParserProductListItem): string {
+  return positionFor(row).state;
+}
+
+function positionTitle(row: ParserProductListItem): string {
+  const position = positionFor(row);
+
+  if (position.state === 'unknown') {
+    return 'Позиция пока не определена для этой карточки.';
+  }
+
+  const observed = formatDateTime(position.observedAtUtc);
+  const source = [position.sourceSubcategory, position.sourceCategory].filter(Boolean).join(' · ');
   return [
-    'Лучшая наблюдаемая позиция в последнем staged rank run. Не универсальный рейтинг маркетплейса.',
-    `Запрос: ${row.rank.query}`,
+    position.state === 'observed'
+      ? 'Место карточки в этой подкатегории.'
+      : 'Карточка не найдена в пределах проверенного диапазона.',
+    position.query ? `Запрос: ${position.query}` : null,
     source ? `Источник: ${source}` : null,
-    observed !== '-' ? `Наблюдение: ${observed}` : null,
-    `Rank context: ${row.rank.rankContextId}`
+    observed !== 'Нет данных' ? `Обновлено: ${observed}` : null
   ]
     .filter(Boolean)
     .join('\n');
 }
 
-function reviewEvidenceFor(row: ParserProductListItem): ParserProductReviewEvidence {
-  return row.parsedReviewEvidence ?? emptyReviewEvidence;
-}
+function ratingTone(value: number | null): string {
+  if (value === null || value <= 0) {
+    return 'neutral';
+  }
 
-function hasParsedEvidence(row: ParserProductListItem): boolean {
-  const evidence = reviewEvidenceFor(row);
-  return evidence.rootFetchCount > 0 || evidence.parsedReviewCount > 0 || evidence.parsedReplyCount > 0;
-}
+  if (value >= 4.7) {
+    return 'positive';
+  }
 
-function evidenceScopeLabel(evidence: ParserProductReviewEvidence): string {
-  return evidence.isRootScoped ? 'root-scoped' : 'product-scoped';
+  if (value >= 4.2) {
+    return 'warning';
+  }
+
+  return 'negative';
 }
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) {
-    return '-';
+    return 'Нет данных';
   }
 
   const date = new Date(value);
@@ -219,7 +299,7 @@ function formatDateTime(value: string | null | undefined): string {
         hour: '2-digit',
         minute: '2-digit'
       }).format(date)
-    : '-';
+    : 'Нет данных';
 }
 </script>
 
@@ -228,7 +308,7 @@ function formatDateTime(value: string | null | undefined): string {
     <header class="table-toolbar">
       <p>Исследуйте товары конкурентов, цены, рейтинги и отзывы, чтобы находить перспективные ниши.</p>
       <div class="column-picker">
-        <Button variant="secondary" @click="columnMenuOpen = !columnMenuOpen">
+        <Button class="column-picker__button" variant="secondary" @click="columnMenuOpen = !columnMenuOpen">
           <Columns3 :size="16" />
           Столбцы
         </Button>
@@ -279,46 +359,38 @@ function formatDateTime(value: string | null | undefined): string {
         <code class="code-cell">WB {{ row.wbProductId }}</code>
       </template>
 
-      <template #cell-rank="{ row }">
-        <div v-if="row.rank" class="rank-cell" :title="rankTitle(row)">
-          <strong>#{{ formatNumber(row.rank.absolutePosition) }}</strong>
-          <span>{{ row.rank.query }} · стр. {{ row.rank.page }}</span>
+      <template #cell-position="{ row }">
+        <div class="position-cell" :class="`position-cell--${positionTone(row)}`" :title="positionTitle(row)">
+          <strong>{{ positionLabel(row) }}</strong>
         </div>
-        <span v-else class="empty-cell" :title="rankTitle(row)">—</span>
       </template>
 
       <template #cell-brandSeller="{ row }">
         <div class="brand-seller">
-          <strong>{{ fieldValue(row.brandName) }}</strong>
-          <span>{{ fieldValue(row.sellerName) }}</span>
+          <strong>{{ identityValue(row.brandName) }}</strong>
+          <span>{{ identityValue(row.sellerName) }}</span>
         </div>
       </template>
 
       <template #cell-price="{ row }">
         <div class="price-cell numeric">
           <strong>{{ formatMoney(row.priceDiscounted) }}</strong>
-          <span>без скидки {{ formatMoney(row.priceRegular) }}</span>
-          <span>WB кошелек {{ formatMoney(row.priceWbWallet) }} · скидка {{ formatPercent(row.discountPercent) }}</span>
+          <span v-if="row.priceRegular !== null">без скидки {{ formatMoney(row.priceRegular) }}</span>
+          <span v-if="row.priceWbWallet !== null">WB кошелек {{ formatMoney(row.priceWbWallet) }}</span>
+          <span v-if="row.discountPercent !== null">скидка {{ formatPercent(row.discountPercent) }}</span>
+        </div>
+      </template>
+
+      <template #cell-stock="{ row }">
+        <div class="stock-cell numeric">
+          <strong>{{ stockLabel(row.totalQuantity) }}</strong>
         </div>
       </template>
 
       <template #cell-reviewRating="{ row }">
-        <div class="rating-cell numeric">
+        <div class="rating-cell numeric" :class="`rating-cell--${ratingTone(row.reviewRating)}`">
           <strong>{{ fieldValue(row.reviewRating) }}</strong>
-          <span>{{ fieldValue(row.feedbackCount) }} отзывов WB</span>
-          <small>WB карточка</small>
-        </div>
-      </template>
-
-      <template #cell-parsedReviewEvidence="{ row }">
-        <div v-if="hasParsedEvidence(row)" class="evidence-cell">
-          <strong>{{ formatNumber(reviewEvidenceFor(row).parsedReviewCount) }} отзывов</strong>
-          <span>{{ formatNumber(reviewEvidenceFor(row).parsedReplyCount) }} ответов</span>
-          <small>{{ evidenceScopeLabel(reviewEvidenceFor(row)) }}</small>
-        </div>
-        <div v-else class="evidence-cell evidence-cell--empty">
-          <strong>—</strong>
-          <span>Нет staged review rows</span>
+          <span>Рейтинг карточки WB</span>
         </div>
       </template>
 
@@ -327,11 +399,11 @@ function formatDateTime(value: string | null | undefined): string {
       </template>
 
       <template #cell-brandName="{ value }">
-        {{ fieldValue(value as string | null) }}
+        {{ identityValue(value as string | null) }}
       </template>
 
       <template #cell-sellerName="{ value }">
-        {{ fieldValue(value as string | null) }}
+        {{ identityValue(value as string | null) }}
       </template>
 
       <template #cell-sourceCategory="{ value }">
@@ -355,7 +427,10 @@ function formatDateTime(value: string | null | undefined): string {
       </template>
 
       <template #cell-feedbackCount="{ value }">
-        <span class="numeric">{{ fieldValue(value as number | null) }}</span>
+        <div class="feedback-cell numeric">
+          <strong>{{ fieldValue(value as number | null) }}</strong>
+          <span>Отзывы покупателей</span>
+        </div>
       </template>
 
     </DataTable>
@@ -363,9 +438,23 @@ function formatDateTime(value: string | null | undefined): string {
     <footer class="table-footer">
       <span class="numeric">Показаны {{ pageStart }}-{{ pageEnd }} из {{ totalCount }}</span>
       <div class="pager">
-        <Button variant="secondary" :disabled="page <= 1" @click="emit('page', page - 1)">Назад</Button>
-        <span class="numeric">Страница {{ page }} / {{ pageCount }}</span>
-        <Button variant="secondary" :disabled="page >= pageCount" @click="emit('page', page + 1)">Далее</Button>
+        <Button class="pager__nav" variant="secondary" :disabled="page <= 1" @click="emit('page', page - 1)">Назад</Button>
+        <div class="pager__pages" aria-label="Страницы товаров маркетплейса">
+          <template v-for="item in paginationItems" :key="item">
+            <span v-if="typeof item === 'string'" class="pager__ellipsis" aria-hidden="true">…</span>
+            <button
+              v-else
+              class="pager__page"
+              :class="{ 'pager__page--active': item === page }"
+              type="button"
+              :aria-current="item === page ? 'page' : undefined"
+              @click="emit('page', item)"
+            >
+              {{ item }}
+            </button>
+          </template>
+        </div>
+        <Button class="pager__nav" variant="secondary" :disabled="page >= pageCount" @click="emit('page', page + 1)">Далее</Button>
       </div>
     </footer>
   </div>
@@ -373,7 +462,25 @@ function formatDateTime(value: string | null | undefined): string {
 
 <style scoped>
 .market-products-table {
+  position: relative;
   overflow: visible;
+  border-color: rgb(249 115 22 / 0.2);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.035), transparent 10rem),
+    var(--surface-panel);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.035),
+    inset 0 0 0 1px rgb(249 115 22 / 0.035),
+    var(--shadow-panel);
+}
+
+.market-products-table::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgb(249 115 22 / 0.42), transparent);
+  content: '';
+  pointer-events: none;
 }
 
 .table-toolbar,
@@ -388,7 +495,7 @@ function formatDateTime(value: string | null | undefined): string {
   position: relative;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid rgb(249 115 22 / 0.18);
   color: var(--color-text-muted);
   padding: var(--space-3);
   font-size: 0.8125rem;
@@ -402,18 +509,45 @@ function formatDateTime(value: string | null | undefined): string {
   position: relative;
 }
 
+.column-picker__button {
+  min-height: 2.35rem;
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.2), rgb(249 115 22 / 0.07)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 10px 24px rgb(249 115 22 / 0.07);
+  font-weight: 760;
+}
+
+.column-picker__button:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.24), rgb(249 115 22 / 0.09)),
+    var(--color-surface-hover);
+}
+
+.column-picker__button:focus-visible {
+  box-shadow: var(--focus-ring), 0 10px 24px rgb(249 115 22 / 0.1);
+}
+
 .column-picker__menu {
   position: absolute;
-  z-index: 4;
+  z-index: 35;
   top: calc(100% + var(--space-2));
   right: 0;
   display: grid;
   width: min(21rem, calc(100vw - 2rem));
+  max-height: min(32rem, calc(100vh - 8rem));
+  overflow-y: auto;
   gap: var(--space-3);
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--accent-ember-border);
   border-radius: var(--radius-md);
-  background: var(--background-panel-highlight);
-  box-shadow: var(--shadow-lg);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.075), transparent 40%),
+    rgb(8 11 18 / 0.985);
+  box-shadow: 0 20px 56px rgb(0 0 0 / 0.52), 0 0 0 1px rgb(255 255 255 / 0.025);
+  backdrop-filter: blur(18px);
   padding: var(--space-3);
 }
 
@@ -456,6 +590,18 @@ function formatDateTime(value: string | null | undefined): string {
   font-size: 0.8125rem;
 }
 
+.column-picker__menu input[type='checkbox'] {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent-ember);
+}
+
+.column-picker__menu input[type='checkbox']:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .thumb {
   display: grid;
   width: 5.75rem;
@@ -474,8 +620,9 @@ function formatDateTime(value: string | null | undefined): string {
 .brand-seller,
 .price-cell,
 .rating-cell,
-.rank-cell,
-.evidence-cell {
+.position-cell,
+.feedback-cell,
+.stock-cell {
   display: block;
 }
 
@@ -494,8 +641,9 @@ function formatDateTime(value: string | null | undefined): string {
 .brand-seller,
 .price-cell,
 .rating-cell,
-.rank-cell,
-.evidence-cell {
+.position-cell,
+.feedback-cell,
+.stock-cell {
   display: grid;
   gap: var(--space-1);
 }
@@ -504,8 +652,9 @@ function formatDateTime(value: string | null | undefined): string {
 .meta-line,
 .price-cell,
 .rating-cell,
-.rank-cell,
-.evidence-cell {
+.position-cell,
+.feedback-cell,
+.stock-cell {
   color: var(--color-text-muted);
   font-size: 0.75rem;
 }
@@ -513,8 +662,9 @@ function formatDateTime(value: string | null | undefined): string {
 .brand-seller strong,
 .price-cell strong,
 .rating-cell strong,
-.rank-cell strong,
-.evidence-cell strong {
+.position-cell strong,
+.feedback-cell strong,
+.stock-cell strong {
   color: var(--color-text);
   font-size: 0.9375rem;
 }
@@ -524,34 +674,57 @@ function formatDateTime(value: string | null | undefined): string {
   justify-items: end;
 }
 
-.rating-cell small,
-.evidence-cell small {
-  color: var(--color-text-subtle);
-  font-size: 0.6875rem;
-  text-transform: uppercase;
+.stock-cell {
+  justify-items: end;
+  min-width: 5.5rem;
 }
 
-.rank-cell {
+.rating-cell--positive strong {
+  color: var(--state-success);
+}
+
+.rating-cell--warning strong {
+  color: var(--state-warning);
+}
+
+.rating-cell--negative strong {
+  color: var(--state-danger);
+}
+
+.rating-cell--neutral strong {
+  color: var(--color-text-muted);
+}
+
+.position-cell {
+  position: relative;
   max-width: 11rem;
+  border-left: 2px solid var(--color-border-strong);
+  padding-left: var(--space-2);
 }
 
-.rank-cell strong {
+.position-cell--observed {
+  border-color: var(--accent-ember-border);
+}
+
+.position-cell--beyondObservedRange {
+  border-color: var(--state-warning-border);
+}
+
+.position-cell--unknown {
+  border-color: var(--color-border);
+}
+
+.position-cell strong {
   font-size: 1rem;
 }
 
-.rank-cell span,
-.evidence-cell span {
+.position-cell span,
+.feedback-cell span {
   overflow-wrap: anywhere;
 }
 
-.evidence-cell {
-  max-width: 12rem;
-  justify-items: start;
-}
-
-.evidence-cell--empty strong,
-.empty-cell {
-  color: var(--color-text-muted);
+.feedback-cell {
+  justify-items: end;
 }
 
 .code-cell {
@@ -566,6 +739,62 @@ function formatDateTime(value: string | null | undefined): string {
   min-width: 1180px;
 }
 
+:deep(th) {
+  border-bottom: 1px solid rgb(249 115 22 / 0.2);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.055), rgb(12 15 22 / 0.98)),
+    var(--surface-table-header);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 840;
+  letter-spacing: 0.035em;
+  line-height: 1.1;
+  text-transform: uppercase;
+  box-shadow: inset 0 -1px 0 rgb(249 115 22 / 0.08);
+}
+
+:deep(th.table__cell--sortable) {
+  color: var(--accent-ember-text-strong);
+}
+
+:deep(.table__sort) {
+  min-height: 1.35rem;
+  align-items: center;
+  color: inherit;
+  line-height: 1.1;
+  transition: color 120ms ease, filter 120ms ease;
+}
+
+:deep(.table__sort svg) {
+  flex: 0 0 auto;
+  color: rgb(253 186 116 / 0.72);
+  opacity: 0.95;
+  filter: drop-shadow(0 0 4px rgb(249 115 22 / 0.12));
+  transition: color 120ms ease, opacity 120ms ease, filter 120ms ease;
+}
+
+:deep(.table__sort:hover) {
+  color: var(--accent-ember-text-strong);
+}
+
+:deep(.table__sort:hover svg) {
+  color: var(--accent-primary-hover-border);
+  filter: drop-shadow(0 0 6px rgb(249 115 22 / 0.28));
+}
+
+:deep(th.table__cell--sorted) {
+  color: var(--accent-ember-text-strong);
+  box-shadow:
+    inset 0 -1px 0 var(--accent-ember-border),
+    inset 0 -4px 8px rgb(249 115 22 / 0.08);
+}
+
+:deep(th.table__cell--sorted .table__sort svg) {
+  color: var(--accent-fire-hover);
+  opacity: 1;
+  filter: drop-shadow(0 0 8px rgb(249 115 22 / 0.42));
+}
+
 :deep(tbody tr) {
   height: 7.75rem;
 }
@@ -576,6 +805,23 @@ function formatDateTime(value: string | null | undefined): string {
 
 :deep(td.table__cell--image) {
   padding: 0.25rem;
+}
+
+:deep(tbody tr:hover) {
+  background:
+    linear-gradient(90deg, rgb(249 115 22 / 0.1), transparent 38%),
+    var(--color-surface-hover);
+  box-shadow: inset 2px 0 0 rgb(249 115 22 / 0.44);
+}
+
+:deep(tbody tr.table__row--selected td:first-child) {
+  box-shadow: inset 3px 0 0 var(--accent-ember), inset 0 0 0 1px rgb(249 115 22 / 0.08);
+}
+
+:deep(tbody tr.table__row--selected) {
+  background:
+    linear-gradient(90deg, rgb(249 115 22 / 0.12), transparent 42%),
+    var(--surface-active-overlay);
 }
 
 .table-footer {
@@ -590,5 +836,80 @@ function formatDateTime(value: string | null | undefined): string {
 
 .pager {
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.pager__pages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pager__page,
+.pager__ellipsis {
+  display: inline-flex;
+  min-width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.pager__page {
+  border: 1px solid rgb(249 115 22 / 0.18);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.pager__page:hover {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.09), transparent),
+    var(--color-surface-hover);
+  color: var(--accent-ember-text-strong);
+}
+
+.pager__page--active {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.22), rgb(249 115 22 / 0.08)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 8px 20px rgb(249 115 22 / 0.08);
+}
+
+.pager__page:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.pager__ellipsis {
+  color: var(--color-text-muted);
+}
+
+.pager__nav {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.14), rgb(249 115 22 / 0.05)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  font-weight: 720;
+}
+
+.pager__nav:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.2), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.pager__nav:disabled {
+  border-color: var(--color-border);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  opacity: 0.58;
 }
 </style>

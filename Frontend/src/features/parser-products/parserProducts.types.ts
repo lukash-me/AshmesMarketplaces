@@ -11,6 +11,7 @@ export interface ParserProductListItem {
   priceDiscounted: number | null;
   priceWbWallet: number | null;
   discountPercent: number | null;
+  totalQuantity: number | null;
   ratingRounded: number | null;
   reviewRating: number | null;
   feedbackCount: number | null;
@@ -19,6 +20,7 @@ export interface ParserProductListItem {
   sourceQuery: string | null;
   thumbnailUrl: string | null;
   rank?: ParserProductRankSummary | null;
+  position?: ParserProductPosition | null;
   parsedReviewEvidence?: ParserProductReviewEvidence;
 }
 
@@ -28,7 +30,6 @@ export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbn
   entity: string | null;
   brandIdOnMp: number | null;
   sellerIdOnMp: number | null;
-  totalQuantity: number | null;
   feedbackCountSource: string | null;
   imageUrls: string[];
   imageCount: number | null;
@@ -54,6 +55,18 @@ export interface ParserProductRankSummary {
   parserRunId: string;
   rankContextId: string;
   contextsCount: number;
+}
+
+export type ParserProductPositionState = 'observed' | 'beyondObservedRange' | 'unknown';
+
+export interface ParserProductPosition {
+  state: ParserProductPositionState;
+  absolutePosition: number | null;
+  observedRangeLimit: number | null;
+  query: string | null;
+  sourceCategory: string | null;
+  sourceSubcategory: string | null;
+  observedAtUtc: string | null;
 }
 
 export interface ParserProductReviewEvidence {
@@ -84,6 +97,22 @@ export interface ParserProductListParams {
   reviewRatingTo?: number;
   feedbackCountFrom?: number;
   feedbackCountTo?: number;
+}
+
+export interface ParserProductFilterOptions {
+  categories: string[];
+  subcategories: string[];
+  brands: string[];
+  sellers: string[];
+}
+
+export interface ParserProductFilterOptionsParams {
+  parserRunId?: string;
+  search?: string;
+  sourceCategory?: string;
+  sourceSubcategory?: string;
+  brandName?: string;
+  sellerName?: string;
 }
 
 export type ParserProductQueryState = {

@@ -7,11 +7,13 @@ import Input from '@/shared/ui/Input.vue';
 
 import MarketFilterSelect from './MarketFilterSelect.vue';
 import type { ParserProductQueryFilterKey } from './parserProductsQuery';
-import type { ParserProductListItem, ParserProductQueryState } from './parserProducts.types';
+import type { ParserProductFilterOptions, ParserProductQueryState } from './parserProducts.types';
 
 const props = defineProps<{
   state: ParserProductQueryState;
-  rows: ParserProductListItem[];
+  filterOptions: ParserProductFilterOptions;
+  filterOptionsLoading: boolean;
+  filterOptionsError: string;
 }>();
 
 const emit = defineEmits<{
@@ -52,10 +54,18 @@ watch(
   { deep: true }
 );
 
-const categoryOptions = computed(() => getOptions('sourceCategory'));
-const subcategoryOptions = computed(() => getOptions('sourceSubcategory'));
-const brandOptions = computed(() => getOptions('brandName'));
-const sellerOptions = computed(() => getOptions('sellerName'));
+const categoryOptions = computed(() => props.filterOptions.categories);
+const subcategoryOptions = computed(() => props.filterOptions.subcategories);
+const brandOptions = computed(() => props.filterOptions.brands);
+const sellerOptions = computed(() => props.filterOptions.sellers);
+const rangeKeys = [
+  'priceDiscountedFrom',
+  'priceDiscountedTo',
+  'reviewRatingFrom',
+  'reviewRatingTo',
+  'feedbackCountFrom',
+  'feedbackCountTo'
+] as const;
 
 const chips = computed(() =>
   (Object.keys(form) as Array<keyof typeof form>)
@@ -67,21 +77,24 @@ const chips = computed(() =>
     }))
     .concat(
       props.state.sort
-        ? [{ key: 'sort' as ParserProductQueryFilterKey, label: 'Сортировка', value: props.state.sort }]
+        ? [{ key: 'sort' as ParserProductQueryFilterKey, label: 'Сортировка', value: getSortLabel(props.state.sort) }]
         : []
     )
 );
-
-function getOptions(key: 'sourceCategory' | 'sourceSubcategory' | 'brandName' | 'sellerName') {
-  return [...new Set(props.rows.map((row) => row[key]).filter((value): value is string => Boolean(value?.trim())))]
-    .sort((left, right) => left.localeCompare(right, 'ru-RU'));
-}
 
 function apply() {
   emit('apply', {
     page: 1,
     ...Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]))
   });
+}
+
+function isActive(value: string): boolean {
+  return value.trim() !== '';
+}
+
+function hasActiveRanges(): boolean {
+  return rangeKeys.some((key) => isActive(form[key]));
 }
 
 function getLabel(key: string): string {
@@ -101,37 +114,101 @@ function getLabel(key: string): string {
 
   return labels[key] ?? key;
 }
+
+function getSortLabel(value: string): string {
+  const labels: Record<string, string> = {
+    position: 'Позиция: сначала лучшие',
+    '-position': 'Позиция: обратный порядок',
+    reviewRating: 'Рейтинг: по возрастанию',
+    '-reviewRating': 'Рейтинг: по убыванию',
+    feedbackCount: 'Отзывы: по возрастанию',
+    '-feedbackCount': 'Отзывы: по убыванию',
+    price: 'Цена: по возрастанию',
+    '-price': 'Цена: по убыванию',
+    priceDiscounted: 'Цена: по возрастанию',
+    '-priceDiscounted': 'Цена: по убыванию',
+    name: 'Товар: А-Я',
+    '-name': 'Товар: Я-А',
+    wbProductId: 'WB id: по возрастанию',
+    '-wbProductId': 'WB id: по убыванию',
+    parsedAtUtc: 'Обновление: сначала старые',
+    '-parsedAtUtc': 'Обновление: сначала новые'
+  };
+
+  return labels[value] ?? value;
+}
 </script>
 
 <template>
   <form class="filters app-surface" @submit.prevent="apply">
     <div class="filters__search">
-      <Input v-model="form.search" label="Поиск" placeholder="Название или WB id" />
+      <Input
+        v-model="form.search"
+        class="filter-control"
+        :class="{ 'filter-control--active': isActive(form.search) }"
+        label="Поиск"
+        placeholder="Название или WB id"
+      />
       <div class="filters__actions">
-        <Button type="submit">Применить</Button>
+        <Button class="filters__apply" type="submit">Применить</Button>
         <Button v-if="chips.length" type="button" variant="ghost" @click="$emit('reset')">Сбросить</Button>
       </div>
     </div>
 
     <div class="filters__selects">
-      <MarketFilterSelect v-model="form.sourceCategory" label="Категория" placeholder="Все категории" :options="categoryOptions" />
-      <MarketFilterSelect v-model="form.sourceSubcategory" label="Подкатегория" placeholder="Все подкатегории" :options="subcategoryOptions" />
-      <MarketFilterSelect v-model="form.brandName" label="Бренд" placeholder="Все бренды" :options="brandOptions" />
-      <MarketFilterSelect v-model="form.sellerName" label="Продавец" placeholder="Все продавцы" :options="sellerOptions" />
+      <MarketFilterSelect
+        v-model="form.sourceCategory"
+        class="filter-control"
+        :class="{ 'filter-control--active': isActive(form.sourceCategory) }"
+        label="Категория"
+        placeholder="Все категории"
+        search-placeholder="Найти категорию"
+        :options="categoryOptions"
+      />
+      <MarketFilterSelect
+        v-model="form.sourceSubcategory"
+        class="filter-control"
+        :class="{ 'filter-control--active': isActive(form.sourceSubcategory) }"
+        label="Подкатегория"
+        placeholder="Все подкатегории"
+        search-placeholder="Найти подкатегорию"
+        :options="subcategoryOptions"
+      />
+      <MarketFilterSelect
+        v-model="form.brandName"
+        class="filter-control"
+        :class="{ 'filter-control--active': isActive(form.brandName) }"
+        label="Бренд"
+        placeholder="Все бренды"
+        search-placeholder="Найти бренд"
+        :options="brandOptions"
+      />
+      <MarketFilterSelect
+        v-model="form.sellerName"
+        class="filter-control"
+        :class="{ 'filter-control--active': isActive(form.sellerName) }"
+        label="Продавец"
+        placeholder="Все продавцы"
+        search-placeholder="Найти продавца"
+        :options="sellerOptions"
+      />
     </div>
 
-    <details class="filters__ranges">
+    <p v-if="filterOptionsError" class="filters__notice">{{ filterOptionsError }}</p>
+    <p v-else-if="filterOptionsLoading" class="filters__notice">Загружаем варианты фильтров…</p>
+
+    <details class="filters__ranges" :class="{ 'filters__ranges--active': hasActiveRanges() }">
       <summary>
         <SlidersHorizontal :size="15" />
         Диапазоны
       </summary>
       <div class="filters__range-grid">
-        <Input v-model="form.priceDiscountedFrom" label="Цена от" type="number" />
-        <Input v-model="form.priceDiscountedTo" label="Цена до" type="number" />
-        <Input v-model="form.reviewRatingFrom" label="Рейтинг от" type="number" />
-        <Input v-model="form.reviewRatingTo" label="Рейтинг до" type="number" />
-        <Input v-model="form.feedbackCountFrom" label="Отзывы от" type="number" />
-        <Input v-model="form.feedbackCountTo" label="Отзывы до" type="number" />
+        <Input v-model="form.priceDiscountedFrom" class="filter-control" :class="{ 'filter-control--active': isActive(form.priceDiscountedFrom) }" label="Цена от" type="number" />
+        <Input v-model="form.priceDiscountedTo" class="filter-control" :class="{ 'filter-control--active': isActive(form.priceDiscountedTo) }" label="Цена до" type="number" />
+        <Input v-model="form.reviewRatingFrom" class="filter-control" :class="{ 'filter-control--active': isActive(form.reviewRatingFrom) }" label="Рейтинг от" type="number" />
+        <Input v-model="form.reviewRatingTo" class="filter-control" :class="{ 'filter-control--active': isActive(form.reviewRatingTo) }" label="Рейтинг до" type="number" />
+        <Input v-model="form.feedbackCountFrom" class="filter-control" :class="{ 'filter-control--active': isActive(form.feedbackCountFrom) }" label="Отзывы от" type="number" />
+        <Input v-model="form.feedbackCountTo" class="filter-control" :class="{ 'filter-control--active': isActive(form.feedbackCountTo) }" label="Отзывы до" type="number" />
       </div>
     </details>
 
@@ -140,6 +217,7 @@ function getLabel(key: string): string {
         v-for="chip in chips"
         :key="chip.key"
         class="filters__chip"
+        :class="{ 'filters__chip--sort': chip.key === 'sort' }"
         type="button"
         :title="`Убрать ${chip.label}`"
         @click="emit('remove', chip.key)"
@@ -158,6 +236,10 @@ function getLabel(key: string): string {
   z-index: 3;
   display: grid;
   gap: var(--space-3);
+  border-color: rgb(249 115 22 / 0.18);
+  background:
+    linear-gradient(90deg, rgb(249 115 22 / 0.035), transparent 42%),
+    var(--surface-panel);
   overflow: visible;
   padding: var(--space-3);
 }
@@ -175,11 +257,59 @@ function getLabel(key: string): string {
   gap: var(--space-2);
 }
 
+.filters__apply {
+  min-height: 2.35rem;
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.24), rgb(249 115 22 / 0.08)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 10px 24px rgb(249 115 22 / 0.08);
+  font-weight: 760;
+}
+
+.filters__apply:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.28), rgb(249 115 22 / 0.1)),
+    var(--color-surface-hover);
+}
+
+.filters__apply:focus-visible {
+  box-shadow: var(--focus-ring), 0 10px 24px rgb(249 115 22 / 0.12);
+}
+
 .filters__ranges {
-  border: 1px solid var(--color-border);
+  border: 1px solid rgb(249 115 22 / 0.16);
   border-radius: var(--radius-md);
   background: var(--surface-control);
   padding: var(--space-2) var(--space-3);
+}
+
+.filters__ranges--active {
+  border-color: var(--accent-ember-border);
+  box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.08), 0 0 0 1px rgb(249 115 22 / 0.06);
+}
+
+.filter-control--active :deep(.field__control),
+.filter-control--active :deep(.filter-select__trigger) {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
+    var(--surface-control-focus);
+  box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.07), 0 0 0 1px rgb(249 115 22 / 0.04);
+}
+
+.filter-control--active :deep(.field__label),
+.filter-control--active :deep(.filter-select__label),
+.filter-control--active :deep(.filter-select__chevrons) {
+  color: var(--accent-ember-text);
+}
+
+.filters__notice {
+  margin: calc(var(--space-2) * -1) 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
 }
 
 .filters__ranges summary {
@@ -207,12 +337,22 @@ function getLabel(key: string): string {
   max-width: 100%;
   align-items: center;
   gap: var(--space-1);
-  border: 1px solid var(--color-border);
+  border: 1px solid rgb(249 115 22 / 0.22);
   border-radius: var(--radius-sm);
-  background: var(--surface-control-raised);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.07), transparent),
+    var(--surface-control-raised);
   color: var(--color-text-muted);
   padding: 0.35rem var(--space-2);
   font-size: 0.75rem;
+}
+
+.filters__chip--sort {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.12), transparent),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text);
 }
 
 .filters__chip strong {

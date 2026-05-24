@@ -36,6 +36,17 @@ public sealed class ParserController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("products/filter-options")]
+    [ProducesResponseType(typeof(ParserProductFilterOptionsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserProductFilterOptionsDto>> GetProductFilterOptions(
+        [FromQuery] ParserProductFilterOptionsQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetFilterOptionsAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("products/{id:guid}")]
     [ProducesResponseType(typeof(ParserProductDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

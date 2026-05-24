@@ -2,7 +2,7 @@
 
 - AshmesMarketplaces is a marketplace analytics and sales-management platform for sellers.
 - Target product: marketplace intelligence workstation for product cards, orders, reviews, logistics, ads, finance, teams, parser data, and recommendations.
-- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; Market Analytics now reads parser staging rows through a seller-facing UX; safe manual WB product/review/rank parser paths exist; a manual Market Analytics refresh pipeline can orchestrate rank, product, and review artifact runs. Parser rank staging persistence/CLI ingestion, parser product rank/review evidence read model, Market Analytics position/evidence UX, and opt-in refresh auto-staging are implemented.
+- Current stage: backend/API/auth/seed/frontend foundation is complete; main read-only frontend vertical slices are implemented; Market Analytics now reads parser staging rows through a seller-facing UX; safe manual WB product/review/rank parser paths exist; a manual Market Analytics refresh pipeline can orchestrate rank, product, and review artifact runs. Parser rank staging persistence/CLI ingestion, parser product rank/review evidence read model, Market Analytics position/review UX, DB-backed filter options, position/price sorting, stock display, numeric pagination, branded dropdowns/controls/tooltips, image lightbox, and opt-in refresh auto-staging are implemented.
 - Positioning: premium market intelligence/operator workstation, not generic AI SaaS.
 - Backend maturity: broad CRUD/auth foundation over PostgreSQL.
 - Frontend maturity: auth shell and Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, and Access Settings are real read-only slices; Overview dashboard remains the main placeholder.
@@ -61,7 +61,7 @@
 - Real read-only slices exist for Products, Orders, Reviews, Campaigns, Logistics, Expenses, Recommendations, Access Settings, and Market Analytics over parser staging data.
 - Implemented slice patterns: dense tables, compact filters, pagination, URL query sync where useful, loading/error/empty states, row selection, keyboard row opening, and detail drawers with truthful linked context where backend data exists.
 - Products detail drawer uses existing product detail endpoint; Products heat remains presentation-only from `status` and `dateUpdated`.
-- Market Analytics is the primary seller-facing parser staging UX under `/market/products`; `/parser/products` is a compatibility redirect and `/parser/reviews` remains a hidden internal/debug observability route. Product rows show staged rank as a nullable observed position and keep WB card feedback metadata separate from parsed review evidence. Competitor reviews are shown in product context, not as a primary navigation area.
+- Market Analytics is the primary seller-facing parser staging UX under `/market/products`; `/parser/products` is a compatibility redirect and `/parser/reviews` remains a hidden internal/debug observability route. Product rows show staged rank as a seller-facing nullable observed position and keep WB card feedback metadata separate from review rows. Product table supports seller-safe position states, position/price sorting, stock display with `40 => ≥40` display cap handling, DB-backed filter options, numeric pagination with ellipsis, branded dropdowns, active filter highlighting, and review sorting/filtering in the drawer. Competitor reviews are shown in product context, not as a primary navigation area.
 - Access Settings shows persisted users/workspaces/roles/memberships/role-permission records read-only; it does not enforce permissions or provide IAM mutation workflows.
 - Main frontend placeholder remaining: `Frontend/src/pages/OverviewPage.vue`.
 
@@ -79,7 +79,7 @@
 - Real WB validation exists on footwear product data and review runs. The public review endpoint often returns a capped payload slice where reported feedback count exceeds returned rows; pagination/full-history research is still pending.
 - Backend parser ingestion stage now has raw run/file registration, import audit/error entities, product/review/reply staging entities, rank snapshot/page-fetch staging entities, review root-fetch completeness metadata, reviewed raw/staging migrations, and a manual CLI/service path that reads existing parser output offline.
 - Rank staging is implemented with `validate-ranks` and `stage-ranks`, persisted `ParserRankSnapshotRows` and `ParserRankPageFetches`, idempotent file-line staging, and parser run/file lineage. Parser product list/detail read models expose nullable best observed rank from the latest staged rank run only; no parser products are promoted and no fake positions are generated.
-- Parser staging observability now has staging-only backend API routes and Market Analytics frontend UX. Seller-facing Market Analytics shows position, WB card metadata, and parsed review evidence separately; hidden debug routes keep deeper observability where needed.
+- Parser staging observability now has staging-only backend API routes and Market Analytics frontend UX. Seller-facing Market Analytics shows position, WB card metadata, stock-like quantity, and buyer reviews with business language only; hidden debug routes keep deeper observability where needed.
 - Current review ingestion decision is staging-only: review/reply data remains partial/capped/root-attributed evidence until pagination/full-history and domain attribution semantics are proven.
 - Full-category traversal expansion, scheduler/background execution, browser/token review research, and domain review import remain out of scope until explicitly approved.
 - Latest auto-staging smoke: `market_refresh_20260523_205752_8d2e72d` staged rank `wb_rank_20260523_205753_8d2e72d`, products `wb_products_20260523_205913_8d2e72d`, and reviews `wb_reviews_20260523_210833_8d2e72d`; API default `/api/v1/parser/products` resolved to the new smoke product run. Built-in `--mode smoke` still has a caveat: review `smoke_only` artifacts are not stageable, so an actual review-staging smoke used a minimal temporary config with one reviewed product.
@@ -92,9 +92,17 @@
 - Transparent layered surfaces.
 - Restrained ember/fire accents as signal semantics only, not decoration.
 - Primary feel: premium fintech / market intelligence / operator console.
+- Current Ashmes brand style for Market Analytics:
+  - obsidian surfaces with thin borders, tight spacing, dense data hierarchy, and compact seller workflows;
+  - ember/orange accents used for borders, active states, focus rings, hover edges, selected rows, CTA outlines, sort state, checkbox checked state, and scrollbar thumbs;
+  - metric cards may use subtle ember border/corner/inner glow, but info blocks should use quiet branded borders with neutral dark fill;
+  - action buttons use restrained ember border/background and stronger text, not loud gradients;
+  - dropdowns use readable near-opaque obsidian panels, subtle ember edge, outside/Escape/select/pointer-leave close behavior, and correct Russian placeholders;
+  - tooltips are small, seller-friendly, clamped inside the drawer/viewport, and must not expose source field names;
+  - product images in drawer open a dark obsidian/ember lightbox that keeps images within viewport bounds.
 - References: TradingView, Coinglass, CoinMarketCap, CoinGecko, MPStats, Moneyplace, MarketGuru, Mayak, TrueStats.
 - Use references for workflow density, hierarchy, tables, filtering, dashboards, and signal systems.
-- Avoid generic AI SaaS look, giant rounded cards, excessive gradients, gaming/casino aesthetics, decorative flames, and fake analytics.
+- Avoid generic AI SaaS look, giant rounded cards, excessive gradients, gaming/casino aesthetics, decorative flames, decorative corner overload on quiet info blocks, and fake analytics.
 
 # 9. Dev Workflow
 

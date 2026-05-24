@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
@@ -14,6 +15,9 @@ public sealed class ParserProductReadService : IParserProductReadService
     private const string RanksKind = "ranks";
     private const string SucceededStatus = "succeeded";
     private const string DefaultAttributionMode = "root_payload";
+    private const string PositionStateObserved = "observed";
+    private const string PositionStateBeyondObservedRange = "beyondObservedRange";
+    private const string PositionStateUnknown = "unknown";
 
     private static readonly ParserProductReviewEvidenceDto EmptyReviewEvidence = new(
         RootFetchCount: 0,
@@ -38,32 +42,35 @@ public sealed class ParserProductReadService : IParserProductReadService
     {
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
-        var rows = _dbContext.ParserProductRows.AsNoTracking();
-
-        if (!string.IsNullOrWhiteSpace(query.ParserRunId))
+        var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, cancellationToken);
+        if (rows is null)
         {
-            rows = rows.Where(x => x.ParserRunId == query.ParserRunId.Trim());
-        }
-        else
-        {
-            var latestProductRunId = await ResolveLatestParserRunIdAsync(ProductsKind, cancellationToken);
-            if (latestProductRunId is null)
-            {
-                return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
-                    new PagedResponse<ParserProductListItemDto>([], page, pageSize, 0));
-            }
-
-            rows = rows.Where(x => x.ParserRunId == latestProductRunId);
+            return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
+                new PagedResponse<ParserProductListItemDto>([], page, pageSize, 0));
         }
 
         rows = ApplyFilters(rows, query);
-        rows = ApplySort(rows, query.Sort);
 
-        var totalCount = await rows.CountAsync(cancellationToken);
-        var pageRows = await rows
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(cancellationToken);
+        int totalCount;
+        List<ParserProductRow> pageRows;
+        if (IsPositionSort(query.Sort))
+        {
+            (totalCount, pageRows) = await LoadPositionSortedRowsAsync(
+                rows,
+                page,
+                pageSize,
+                query.Sort!.Trim().StartsWith("-", StringComparison.Ordinal),
+                cancellationToken);
+        }
+        else
+        {
+            rows = ApplySort(rows, query.Sort);
+            totalCount = await rows.CountAsync(cancellationToken);
+            pageRows = await rows
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync(cancellationToken);
+        }
 
         var evidence = await LoadEvidenceAsync(pageRows, cancellationToken);
         var items = pageRows
@@ -72,6 +79,37 @@ public sealed class ParserProductReadService : IParserProductReadService
 
         return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
             new PagedResponse<ParserProductListItemDto>(items, page, pageSize, totalCount));
+    }
+
+    public async Task<ServiceResult<ParserProductFilterOptionsDto>> GetFilterOptionsAsync(
+        ParserProductFilterOptionsQuery query,
+        CancellationToken cancellationToken)
+    {
+        var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, cancellationToken);
+        if (rows is null)
+            return ServiceResult<ParserProductFilterOptionsDto>.Success(EmptyFilterOptions());
+
+        var searchedRows = ApplySearch(rows, query.Search);
+        var categoryRows = searchedRows;
+        var subcategoryRows = ApplyFilterOptionValue(searchedRows, nameof(ParserProductRow.SourceCategory), query.SourceCategory);
+        var brandRows = ApplyFilterOptionValue(subcategoryRows, nameof(ParserProductRow.SourceSubcategory), query.SourceSubcategory);
+        var sellerRows = ApplyFilterOptionValue(brandRows, nameof(ParserProductRow.BrandName), query.BrandName);
+
+        var categories = await LoadDistinctOptionValuesAsync(
+            categoryRows.Select(x => x.SourceCategory),
+            cancellationToken);
+        var subcategories = await LoadDistinctOptionValuesAsync(
+            subcategoryRows.Select(x => x.SourceSubcategory),
+            cancellationToken);
+        var brands = await LoadDistinctOptionValuesAsync(
+            brandRows.Select(x => x.BrandName),
+            cancellationToken);
+        var sellers = await LoadDistinctOptionValuesAsync(
+            sellerRows.Select(x => x.SellerName),
+            cancellationToken);
+
+        return ServiceResult<ParserProductFilterOptionsDto>.Success(
+            new ParserProductFilterOptionsDto(categories, subcategories, brands, sellers));
     }
 
     public async Task<ServiceResult<ParserProductDetailDto>> GetByIdAsync(
@@ -96,6 +134,81 @@ public sealed class ParserProductReadService : IParserProductReadService
         return ServiceResult<ParserProductDetailDto>.Success(MapToDetail(row, sourceFile, evidence));
     }
 
+    private async Task<IQueryable<ParserProductRow>?> BuildEffectiveProductRowsAsync(
+        string? parserRunId,
+        CancellationToken cancellationToken)
+    {
+        var rows = _dbContext.ParserProductRows.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(parserRunId))
+            return rows.Where(x => x.ParserRunId == parserRunId.Trim());
+
+        var latestProductRunId = await ResolveLatestParserRunIdAsync(ProductsKind, cancellationToken);
+        return latestProductRunId is null
+            ? null
+            : rows.Where(x => x.ParserRunId == latestProductRunId);
+    }
+
+    private static ParserProductFilterOptionsDto EmptyFilterOptions()
+    {
+        return new ParserProductFilterOptionsDto([], [], [], []);
+    }
+
+    private static IQueryable<ParserProductRow> ApplySearch(
+        IQueryable<ParserProductRow> rows,
+        string? searchText)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+            return rows;
+
+        var search = searchText.Trim();
+        return rows.Where(x =>
+            EF.Functions.ILike(x.Name, $"%{search}%")
+            || EF.Functions.ILike(x.WbProductId, $"%{search}%")
+            || (x.BrandName != null && EF.Functions.ILike(x.BrandName, $"%{search}%"))
+            || (x.SellerName != null && EF.Functions.ILike(x.SellerName, $"%{search}%")));
+    }
+
+    private static IQueryable<ParserProductRow> ApplyFilterOptionValue(
+        IQueryable<ParserProductRow> rows,
+        string fieldName,
+        string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return rows;
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return fieldName switch
+        {
+            nameof(ParserProductRow.SourceCategory) => rows.Where(x =>
+                x.SourceCategory != null && x.SourceCategory.Trim().ToLower() == normalized),
+            nameof(ParserProductRow.SourceSubcategory) => rows.Where(x =>
+                x.SourceSubcategory != null && x.SourceSubcategory.Trim().ToLower() == normalized),
+            nameof(ParserProductRow.BrandName) => rows.Where(x =>
+                x.BrandName != null && x.BrandName.Trim().ToLower() == normalized),
+            nameof(ParserProductRow.SellerName) => rows.Where(x =>
+                x.SellerName != null && x.SellerName.Trim().ToLower() == normalized),
+            _ => rows
+        };
+    }
+
+    private static async Task<IReadOnlyList<string>> LoadDistinctOptionValuesAsync(
+        IQueryable<string?> values,
+        CancellationToken cancellationToken)
+    {
+        var rawValues = await values
+            .Where(x => x != null)
+            .Select(x => x!)
+            .ToListAsync(cancellationToken);
+
+        return rawValues
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
+            .GroupBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First())
+            .OrderBy(x => x, StringComparer.Create(CultureInfo.GetCultureInfo("ru-RU"), ignoreCase: true))
+            .ToList();
+    }
+
     private async Task<string?> ResolveLatestParserRunIdAsync(
         string kind,
         CancellationToken cancellationToken)
@@ -118,43 +231,49 @@ public sealed class ParserProductReadService : IParserProductReadService
         if (products.Count == 0)
             return ProductEvidenceLookup.Empty;
 
-        var ranks = await LoadRankSummariesAsync(products, cancellationToken);
+        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, cancellationToken);
+        var ranks = latestRankRunId is null
+            ? new Dictionary<Guid, ParserProductRankSummaryDto>()
+            : await LoadRankSummariesAsync(products, latestRankRunId, cancellationToken);
+        var positions = latestRankRunId is null
+            ? BuildUnknownPositions(products)
+            : await LoadPositionSummariesAsync(products, latestRankRunId, ranks, cancellationToken);
         var reviews = await LoadReviewEvidenceAsync(products, cancellationToken);
-        return new ProductEvidenceLookup(ranks, reviews);
+        return new ProductEvidenceLookup(ranks, positions, reviews);
     }
 
     private async Task<IReadOnlyDictionary<Guid, ParserProductRankSummaryDto>> LoadRankSummariesAsync(
         IReadOnlyList<ParserProductRow> products,
+        string latestRankRunId,
         CancellationToken cancellationToken)
     {
-        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, cancellationToken);
-        if (latestRankRunId is null)
-            return new Dictionary<Guid, ParserProductRankSummaryDto>();
-
+        var productIds = products
+            .Select(x => x.WbProductId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
         var rootIds = products
             .Select(x => x.WbRootId)
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Cast<string>()
             .Distinct()
             .ToList();
-        var fallbackProductIds = products
-            .Where(x => string.IsNullOrWhiteSpace(x.WbRootId))
-            .Select(x => x.WbProductId)
-            .Distinct()
-            .ToList();
+        var rootProductCounts = products
+            .Where(x => !string.IsNullOrWhiteSpace(x.WbRootId))
+            .GroupBy(x => x.WbRootId!)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal);
 
         var candidates = new List<RankCandidate>();
-        if (rootIds.Count > 0)
+        if (productIds.Count > 0)
         {
             candidates.AddRange(await _dbContext.ParserRankSnapshotRows
                 .AsNoTracking()
                 .Where(x =>
                     x.ParserRunId == latestRankRunId
-                    && x.WbRootId != null
-                    && rootIds.Contains(x.WbRootId))
+                    && productIds.Contains(x.WbProductId))
                 .Select(x => new RankCandidate(
-                    true,
-                    x.WbRootId!,
+                    false,
+                    x.WbProductId,
                     x.AbsolutePosition,
                     x.Page,
                     x.PositionOnPage,
@@ -169,16 +288,17 @@ public sealed class ParserProductReadService : IParserProductReadService
                 .ToListAsync(cancellationToken));
         }
 
-        if (fallbackProductIds.Count > 0)
+        if (rootIds.Count > 0)
         {
             candidates.AddRange(await _dbContext.ParserRankSnapshotRows
                 .AsNoTracking()
                 .Where(x =>
                     x.ParserRunId == latestRankRunId
-                    && fallbackProductIds.Contains(x.WbProductId))
+                    && x.WbRootId != null
+                    && rootIds.Contains(x.WbRootId))
                 .Select(x => new RankCandidate(
-                    false,
-                    x.WbProductId,
+                    true,
+                    x.WbRootId!,
                     x.AbsolutePosition,
                     x.Page,
                     x.PositionOnPage,
@@ -222,15 +342,145 @@ public sealed class ParserProductReadService : IParserProductReadService
         var result = new Dictionary<Guid, ParserProductRankSummaryDto>();
         foreach (var product in products)
         {
-            var matchKey = !string.IsNullOrWhiteSpace(product.WbRootId)
-                ? new RankMatchKey(true, product.WbRootId)
-                : new RankMatchKey(false, product.WbProductId);
+            if (summariesByMatchKey.TryGetValue(new RankMatchKey(false, product.WbProductId), out var exactSummary))
+            {
+                result[product.Id] = exactSummary;
+                continue;
+            }
 
-            if (summariesByMatchKey.TryGetValue(matchKey, out var summary))
+            if (!string.IsNullOrWhiteSpace(product.WbRootId)
+                && rootProductCounts.GetValueOrDefault(product.WbRootId) == 1
+                && summariesByMatchKey.TryGetValue(new RankMatchKey(true, product.WbRootId), out var rootSummary))
+            {
+                result[product.Id] = rootSummary;
+            }
+            else if (string.IsNullOrWhiteSpace(product.WbRootId)
+                && summariesByMatchKey.TryGetValue(new RankMatchKey(false, product.WbProductId), out var summary))
+            {
                 result[product.Id] = summary;
+            }
         }
 
         return result;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, ParserProductPositionDto>> LoadPositionSummariesAsync(
+        IReadOnlyList<ParserProductRow> products,
+        string latestRankRunId,
+        IReadOnlyDictionary<Guid, ParserProductRankSummaryDto> ranks,
+        CancellationToken cancellationToken)
+    {
+        var coverageRows = await _dbContext.ParserRankSnapshotRows
+            .AsNoTracking()
+            .Where(x => x.ParserRunId == latestRankRunId)
+            .Select(x => new PositionCoverageCandidate(
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.SourceRegionDest,
+                x.WbRootId,
+                x.WbProductId,
+                x.Query,
+                x.AbsolutePosition,
+                x.ObservedAtUtc))
+            .ToListAsync(cancellationToken);
+        var rankedRootIds = coverageRows
+            .Select(x => x.WbRootId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .ToHashSet(StringComparer.Ordinal);
+        var exactRankedProductIds = coverageRows
+            .Select(x => x.WbProductId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.Ordinal);
+        var duplicateRootIds = products
+            .Where(x => !string.IsNullOrWhiteSpace(x.WbRootId))
+            .GroupBy(x => x.WbRootId!)
+            .Where(x => x.Count() > 1)
+            .Select(x => x.Key)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var coverageByKey = coverageRows
+            .GroupBy(x => new PositionCoverageKey(x.SourceCategory, x.SourceSubcategory, x.SourceRegionDest))
+            .ToDictionary(
+                x => x.Key,
+                x =>
+                {
+                    var queries = x
+                        .Select(candidate => candidate.Query)
+                        .Where(query => !string.IsNullOrWhiteSpace(query))
+                        .Distinct(StringComparer.Ordinal)
+                        .Take(2)
+                        .ToList();
+
+                    return new PositionCoverage(
+                        ObservedRangeLimit: x.Max(candidate => candidate.AbsolutePosition),
+                        Query: queries.Count == 1 ? queries[0] : null,
+                        ObservedAtUtc: x.Max(candidate => candidate.ObservedAtUtc));
+                });
+
+        var result = new Dictionary<Guid, ParserProductPositionDto>();
+        foreach (var product in products)
+        {
+            if (ranks.TryGetValue(product.Id, out var rank))
+            {
+                result[product.Id] = new ParserProductPositionDto(
+                    PositionStateObserved,
+                    rank.AbsolutePosition,
+                    null,
+                    rank.Query,
+                    rank.SourceCategory,
+                    rank.SourceSubcategory,
+                    rank.ObservedAtUtc);
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(product.WbRootId)
+                && duplicateRootIds.Contains(product.WbRootId)
+                && rankedRootIds.Contains(product.WbRootId)
+                && !exactRankedProductIds.Contains(product.WbProductId))
+            {
+                result[product.Id] = UnknownPosition(product);
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(product.SourceSubcategory)
+                && coverageByKey.TryGetValue(
+                    new PositionCoverageKey(product.SourceCategory, product.SourceSubcategory, product.SourceRegionDest),
+                    out var coverage))
+            {
+                result[product.Id] = new ParserProductPositionDto(
+                    PositionStateBeyondObservedRange,
+                    null,
+                    coverage.ObservedRangeLimit,
+                    coverage.Query,
+                    product.SourceCategory,
+                    product.SourceSubcategory,
+                    coverage.ObservedAtUtc);
+                continue;
+            }
+
+            result[product.Id] = UnknownPosition(product);
+        }
+
+        return result;
+    }
+
+    private static IReadOnlyDictionary<Guid, ParserProductPositionDto> BuildUnknownPositions(
+        IReadOnlyList<ParserProductRow> products)
+    {
+        return products.ToDictionary(product => product.Id, UnknownPosition);
+    }
+
+    private static ParserProductPositionDto UnknownPosition(ParserProductRow product)
+    {
+        return new ParserProductPositionDto(
+            PositionStateUnknown,
+            null,
+            null,
+            null,
+            product.SourceCategory,
+            product.SourceSubcategory,
+            null);
     }
 
     private async Task<IReadOnlyDictionary<Guid, ParserProductReviewEvidenceDto>> LoadReviewEvidenceAsync(
@@ -616,6 +866,68 @@ public sealed class ParserProductReadService : IParserProductReadService
         return rows;
     }
 
+    private async Task<(int TotalCount, List<ParserProductRow> Rows)> LoadPositionSortedRowsAsync(
+        IQueryable<ParserProductRow> rows,
+        int page,
+        int pageSize,
+        bool descending,
+        CancellationToken cancellationToken)
+    {
+        var totalCount = await rows.CountAsync(cancellationToken);
+        if (totalCount == 0)
+            return (0, []);
+
+        var allRows = await rows.ToListAsync(cancellationToken);
+        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, cancellationToken);
+        var ranks = latestRankRunId is null
+            ? new Dictionary<Guid, ParserProductRankSummaryDto>()
+            : await LoadRankSummariesAsync(allRows, latestRankRunId, cancellationToken);
+        var positions = latestRankRunId is null
+            ? BuildUnknownPositions(allRows)
+            : await LoadPositionSummariesAsync(allRows, latestRankRunId, ranks, cancellationToken);
+
+        var orderedRows = descending
+            ? allRows
+                .OrderBy(row => PositionStateOrder(positions.GetValueOrDefault(row.Id), descending: true))
+                .ThenByDescending(row => PositionNumericOrder(positions.GetValueOrDefault(row.Id)))
+                .ThenByDescending(row => row.SourceLineNumber)
+                .ThenByDescending(row => row.Id)
+            : allRows
+                .OrderBy(row => PositionStateOrder(positions.GetValueOrDefault(row.Id), descending: false))
+                .ThenBy(row => PositionNumericOrder(positions.GetValueOrDefault(row.Id)))
+                .ThenBy(row => row.SourceLineNumber)
+                .ThenBy(row => row.Id);
+
+        return (totalCount, orderedRows
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToList());
+    }
+
+    private static bool IsPositionSort(string? sort)
+    {
+        var value = sort?.Trim();
+        return string.Equals(value, "position", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(value, "-position", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int PositionStateOrder(ParserProductPositionDto? position, bool descending)
+    {
+        return position?.State switch
+        {
+            PositionStateObserved => descending ? 2 : 0,
+            PositionStateBeyondObservedRange => 1,
+            _ => descending ? 0 : 2
+        };
+    }
+
+    private static int PositionNumericOrder(ParserProductPositionDto? position)
+    {
+        return position?.AbsolutePosition
+            ?? position?.ObservedRangeLimit
+            ?? 0;
+    }
+
     private static IOrderedQueryable<ParserProductRow> ApplySort(
         IQueryable<ParserProductRow> rows,
         string? sort)
@@ -627,8 +939,8 @@ public sealed class ParserProductReadService : IParserProductReadService
             "parsedAtUtc" => rows.OrderBy(x => x.ParsedAtUtc).ThenBy(x => x.SourceLineNumber).ThenBy(x => x.Id),
             "wbProductId" => rows.OrderBy(x => x.WbProductId).ThenBy(x => x.SourceLineNumber).ThenBy(x => x.Id),
             "-wbProductId" => rows.OrderByDescending(x => x.WbProductId).ThenByDescending(x => x.SourceLineNumber).ThenByDescending(x => x.Id),
-            "priceDiscounted" => rows.OrderBy(x => x.PriceDiscounted).ThenBy(x => x.SourceLineNumber).ThenBy(x => x.Id),
-            "-priceDiscounted" => rows.OrderByDescending(x => x.PriceDiscounted).ThenByDescending(x => x.SourceLineNumber).ThenByDescending(x => x.Id),
+            "price" or "priceDiscounted" => rows.OrderBy(x => x.PriceDiscounted == null).ThenBy(x => x.PriceDiscounted).ThenBy(x => x.SourceLineNumber).ThenBy(x => x.Id),
+            "-price" or "-priceDiscounted" => rows.OrderBy(x => x.PriceDiscounted == null).ThenByDescending(x => x.PriceDiscounted).ThenByDescending(x => x.SourceLineNumber).ThenByDescending(x => x.Id),
             "reviewRating" => rows.OrderBy(x => x.ReviewRating).ThenBy(x => x.SourceLineNumber).ThenBy(x => x.Id),
             "-reviewRating" => rows.OrderByDescending(x => x.ReviewRating).ThenByDescending(x => x.SourceLineNumber).ThenByDescending(x => x.Id),
             "feedbackCount" => rows.OrderBy(x => x.FeedbackCount).ThenBy(x => x.SourceLineNumber).ThenBy(x => x.Id),
@@ -654,6 +966,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             row.PriceDiscounted,
             row.PriceWbWallet,
             row.DiscountPercent,
+            row.TotalQuantity,
             row.RatingRounded,
             row.ReviewRating,
             row.FeedbackCount,
@@ -662,6 +975,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             row.SourceQuery,
             GetImageUrls(row.ImageUrls).FirstOrDefault(),
             evidence.GetRank(row.Id),
+            evidence.GetPosition(row.Id),
             evidence.GetReviewEvidence(row.Id));
     }
 
@@ -706,6 +1020,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             row.SourceLineNumber,
             row.RowHash,
             evidence.GetRank(row.Id),
+            evidence.GetPosition(row.Id),
             evidence.GetReviewEvidence(row.Id));
     }
 
@@ -725,15 +1040,22 @@ public sealed class ParserProductReadService : IParserProductReadService
 
     private sealed record ProductEvidenceLookup(
         IReadOnlyDictionary<Guid, ParserProductRankSummaryDto> Ranks,
+        IReadOnlyDictionary<Guid, ParserProductPositionDto> Positions,
         IReadOnlyDictionary<Guid, ParserProductReviewEvidenceDto> Reviews)
     {
         public static ProductEvidenceLookup Empty { get; } = new(
             new Dictionary<Guid, ParserProductRankSummaryDto>(),
+            new Dictionary<Guid, ParserProductPositionDto>(),
             new Dictionary<Guid, ParserProductReviewEvidenceDto>());
 
         public ParserProductRankSummaryDto? GetRank(Guid productId)
         {
             return Ranks.TryGetValue(productId, out var rank) ? rank : null;
+        }
+
+        public ParserProductPositionDto? GetPosition(Guid productId)
+        {
+            return Positions.TryGetValue(productId, out var position) ? position : null;
         }
 
         public ParserProductReviewEvidenceDto GetReviewEvidence(Guid productId)
@@ -758,6 +1080,26 @@ public sealed class ParserProductReadService : IParserProductReadService
         string RankContextId);
 
     private readonly record struct RankMatchKey(bool IsRootKey, string Key);
+
+    private sealed record PositionCoverageCandidate(
+        string? SourceCategory,
+        string? SourceSubcategory,
+        string? SourceRegionDest,
+        string? WbRootId,
+        string WbProductId,
+        string Query,
+        int AbsolutePosition,
+        DateTime ObservedAtUtc);
+
+    private sealed record PositionCoverage(
+        int ObservedRangeLimit,
+        string? Query,
+        DateTime ObservedAtUtc);
+
+    private readonly record struct PositionCoverageKey(
+        string? SourceCategory,
+        string? SourceSubcategory,
+        string? SourceRegionDest);
 
     private sealed record RootFetchAggregate(
         string Key,

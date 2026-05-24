@@ -7,19 +7,21 @@ import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
-import ParserProductDetailDrawer from './ParserProductDetailDrawer.vue';
-import { getParserProducts } from './parserProducts.api';
-import ParserProductsFilters from './ParserProductsFilters.vue';
+import MarketProductDetailDrawer from './ParserProductDetailDrawer.vue';
+import { getParserProductFilterOptions, getParserProducts } from './parserProducts.api';
+import MarketProductsFilters from './ParserProductsFilters.vue';
 import {
   parseParserProductsQuery,
   removeParserProductQueryFilter,
   resetParserProductQueryFilters,
+  toParserProductFilterOptionsParams,
   toParserProductsApiParams,
   toParserProductsRouteQuery,
   type ParserProductQueryFilterKey
 } from './parserProductsQuery';
-import ParserProductsTable from './ParserProductsTable.vue';
+import MarketProductsTable from './ParserProductsTable.vue';
 import type {
+  ParserProductFilterOptions,
   ParserProductListItem,
   ParserProductQueryState
 } from './parserProducts.types';
@@ -29,15 +31,25 @@ const router = useRouter();
 const queryState = ref<ParserProductQueryState>(parseParserProductsQuery(route.query));
 const rows = ref<ParserProductListItem[]>([]);
 const totalCount = ref(0);
+const emptyFilterOptions: ParserProductFilterOptions = {
+  categories: [],
+  subcategories: [],
+  brands: [],
+  sellers: []
+};
+const filterOptions = ref<ParserProductFilterOptions>(emptyFilterOptions);
+const filterOptionsLoading = ref(false);
+const filterOptionsError = ref('');
 const loading = ref(false);
 const error = ref('');
 const selected = ref<ParserProductListItem | null>(null);
+let filterOptionsVersion = 0;
 
 watch(
   () => route.query,
   async (query) => {
     queryState.value = parseParserProductsQuery(query);
-    await loadRows();
+    await Promise.all([loadRows(), loadFilterOptions()]);
   },
   { immediate: true }
 );
@@ -56,6 +68,36 @@ async function loadRows() {
     error.value = getProblemMessage(err, 'Не удалось загрузить товары маркетплейса.');
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadFilterOptions() {
+  const version = ++filterOptionsVersion;
+  filterOptionsLoading.value = true;
+  filterOptionsError.value = '';
+
+  try {
+    const response = await getParserProductFilterOptions(
+      toParserProductFilterOptionsParams(queryState.value)
+    );
+    if (version !== filterOptionsVersion) {
+      return;
+    }
+
+    filterOptions.value = response;
+  } catch (err) {
+    if (version !== filterOptionsVersion) {
+      return;
+    }
+
+    filterOptionsError.value = getProblemMessage(
+      err,
+      'Не удалось загрузить варианты фильтров. Таблица доступна.'
+    );
+  } finally {
+    if (version === filterOptionsVersion) {
+      filterOptionsLoading.value = false;
+    }
   }
 }
 
@@ -79,15 +121,17 @@ function removeFilter(key: ParserProductQueryFilterKey) {
 </script>
 
 <template>
-  <div class="parser-products-page">
+  <div class="market-products-page">
     <PageHeader
       title="Товары маркетплейса"
-      description="Наблюдаемые товары маркетплейса для анализа рынка. Это не каталог раздела «Мои товары»."
+      description="Следите за товарами в выбранных категориях: позиции, цены, рейтинг и отзывы WB в одном экране."
     />
 
-    <ParserProductsFilters
+    <MarketProductsFilters
       :state="queryState"
-      :rows="rows"
+      :filter-options="filterOptions"
+      :filter-options-loading="filterOptionsLoading"
+      :filter-options-error="filterOptionsError"
       @apply="updateQuery"
       @reset="resetFilters"
       @remove="removeFilter"
@@ -104,9 +148,9 @@ function removeFilter(key: ParserProductQueryFilterKey) {
       v-else-if="rows.length === 0"
       class="app-surface"
       title="Товары маркетплейса не найдены"
-      description="Измените фильтры или загрузите данные о товарах маркетплейса."
+      description="Измените фильтры или обновите данные по выбранным категориям."
     />
-    <ParserProductsTable
+    <MarketProductsTable
       v-else
       :rows="rows"
       :page="queryState.page"
@@ -119,13 +163,26 @@ function removeFilter(key: ParserProductQueryFilterKey) {
       @open="selected = $event"
     />
 
-    <ParserProductDetailDrawer :open="Boolean(selected)" :product="selected" @close="selected = null" />
+    <MarketProductDetailDrawer :open="Boolean(selected)" :product="selected" @close="selected = null" />
   </div>
 </template>
 
 <style scoped>
-.parser-products-page {
+.market-products-page {
+  position: relative;
   display: grid;
   gap: var(--space-4);
+}
+
+.market-products-page::before {
+  position: absolute;
+  z-index: -1;
+  inset: -1.5rem -1rem auto;
+  height: 18rem;
+  background:
+    radial-gradient(circle at 78% 0%, rgb(249 115 22 / 0.09), transparent 18rem),
+    linear-gradient(180deg, rgb(249 115 22 / 0.025), transparent);
+  content: '';
+  pointer-events: none;
 }
 </style>

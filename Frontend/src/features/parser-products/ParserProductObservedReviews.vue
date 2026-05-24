@@ -25,6 +25,8 @@ const pageSize = 10;
 const rows = ref<ParserReviewListItem[]>([]);
 const totalCount = ref(0);
 const page = ref(1);
+const sort = ref('-createdAtOnMp');
+const ratingFilter = ref('');
 const selected = ref<ParserReviewListItem | null>(null);
 const detail = ref<ParserReviewDetail | null>(null);
 const replies = ref<ParserReviewReply[]>([]);
@@ -64,6 +66,14 @@ watch(
 );
 
 watch(
+  () => [sort.value, ratingFilter.value] as const,
+  async () => {
+    page.value = 1;
+    await loadRows();
+  }
+);
+
+watch(
   () => selected.value?.id,
   async (id) => {
     if (!id) {
@@ -84,7 +94,8 @@ async function loadRows() {
     const response = await getParserReviews({
       page: page.value,
       pageSize,
-      sort: '-createdAtOnMp',
+      sort: sort.value,
+      ...(ratingFilter.value ? { rating: Number(ratingFilter.value) } : {}),
       ...(rootScoped.value
         ? { sourceWbRootId: props.product.wbRootId ?? undefined }
         : { wbProductId: props.product.wbProductId })
@@ -169,13 +180,25 @@ function changePage(value: number) {
   page.value = value;
 }
 
+function updateSort(event: Event) {
+  sort.value = (event.target as HTMLSelectElement).value;
+}
+
+function updateRatingFilter(event: Event) {
+  ratingFilter.value = (event.target as HTMLSelectElement).value;
+}
+
 function fieldValue(value: string | number | null | undefined): string {
-  return value === null || value === undefined || value === '' ? '-' : String(value);
+  return value === null || value === undefined || value === '' ? 'Нет данных' : String(value);
+}
+
+function reviewTextValue(value: string | null | undefined): string {
+  return value === null || value === undefined || value.trim() === '' ? '—' : value;
 }
 
 function formatDate(value: string | null | undefined): string {
   if (!value) {
-    return '-';
+    return 'Нет данных';
   }
 
   const date = new Date(value);
@@ -187,7 +210,7 @@ function formatDate(value: string | null | undefined): string {
         hour: '2-digit',
         minute: '2-digit'
       }).format(date)
-    : '-';
+    : 'Нет данных';
 }
 
 function ratingTone(value: number | null): string {
@@ -207,8 +230,30 @@ function ratingTone(value: number | null): string {
   <section class="reviews">
     <header class="reviews__header">
       <div>
-        <h3>Parser evidence</h3>
-        <p>Staged review rows, root-scoped; не гарантируют точную variant-level принадлежность.</p>
+        <h3>Отзывы покупателей</h3>
+        <p>Читайте отзывы и ответы продавца по карточке.</p>
+      </div>
+      <div class="review-controls" aria-label="Настройки отзывов">
+        <label :class="{ 'review-controls__field--active': sort !== '-createdAtOnMp' }">
+          <span>Сортировка</span>
+          <select :value="sort" @change="updateSort">
+            <option value="-createdAtOnMp">Сначала новые</option>
+            <option value="createdAtOnMp">Сначала старые</option>
+            <option value="-rating">С высокой оценкой</option>
+            <option value="rating">С низкой оценкой</option>
+          </select>
+        </label>
+        <label :class="{ 'review-controls__field--active': ratingFilter !== '' }">
+          <span>Оценка</span>
+          <select :value="ratingFilter" @change="updateRatingFilter">
+            <option value="">Все оценки</option>
+            <option value="5">5 звёзд</option>
+            <option value="4">4 звезды</option>
+            <option value="3">3 звезды</option>
+            <option value="2">2 звезды</option>
+            <option value="1">1 звезда</option>
+          </select>
+        </label>
       </div>
     </header>
 
@@ -216,14 +261,14 @@ function ratingTone(value: number | null): string {
     <EmptyState
       v-else-if="listError"
       class="review-state"
-      title="Не удалось загрузить staged review rows"
+      title="Не удалось загрузить отзывы"
       :description="listError"
     />
     <EmptyState
       v-else-if="rows.length === 0"
       class="review-state"
-      title="Staged review rows не найдены"
-      description="Для этого root/product нет спаршенных отзывов в staging. Число отзывов WB относится к metadata карточки."
+      title="Отзывы не найдены"
+      description="Отзывы для этой карточки пока не найдены."
     />
     <div v-else class="review-list">
       <button
@@ -239,7 +284,7 @@ function ratingTone(value: number | null): string {
           {{ fieldValue(row.rating) }}
         </span>
         <span class="review-card__body">
-          <strong>{{ fieldValue(row.textPreview) }}</strong>
+          <strong>{{ reviewTextValue(row.textPreview) }}</strong>
           <small>{{ formatDate(row.createdAtOnMp) }}</small>
         </span>
         <Badge :tone="row.hasObservedReply ? 'success' : 'neutral'">
@@ -280,10 +325,10 @@ function ratingTone(value: number | null): string {
 
       <section class="detail__section">
         <h4>Отзыв</h4>
-        <p class="body-text">{{ fieldValue(detail?.text ?? displayReview.textPreview) }}</p>
+        <p class="body-text">{{ reviewTextValue(detail?.text ?? displayReview.textPreview) }}</p>
         <dl class="review-fields">
-          <div><dt>Плюсы</dt><dd class="body-text">{{ fieldValue(detail?.pros) }}</dd></div>
-          <div><dt>Минусы</dt><dd class="body-text">{{ fieldValue(detail?.cons) }}</dd></div>
+          <div><dt>Плюсы</dt><dd class="body-text">{{ reviewTextValue(detail?.pros) }}</dd></div>
+          <div><dt>Минусы</dt><dd class="body-text">{{ reviewTextValue(detail?.cons) }}</dd></div>
         </dl>
       </section>
 
@@ -294,7 +339,7 @@ function ratingTone(value: number | null): string {
         <p v-else-if="replies.length === 0" class="placeholder">Ответ продавца не найден.</p>
         <div v-else class="reply-list">
           <article v-for="reply in replies" :key="reply.id" class="reply">
-            <p class="body-text">{{ fieldValue(reply.text) }}</p>
+            <p class="body-text">{{ reviewTextValue(reply.text) }}</p>
             <small>{{ formatDate(reply.createdAtOnMp) }}</small>
           </article>
         </div>
@@ -325,10 +370,28 @@ function ratingTone(value: number | null): string {
 .review-list,
 .detail,
 .detail__section {
+  position: relative;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-panel-muted);
   padding: var(--space-3);
+}
+
+.reviews__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.reviews__header::before,
+.detail::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: linear-gradient(180deg, var(--accent-ember-border), transparent 70%);
+  content: '';
 }
 
 .reviews__header h3,
@@ -352,6 +415,54 @@ function ratingTone(value: number | null): string {
 .pager {
   color: var(--color-text-muted);
   font-size: 0.8125rem;
+}
+
+.review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.review-controls label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.review-controls span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.review-controls select {
+  min-height: 2.125rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control-raised);
+  color: var(--color-text);
+  padding: 0 var(--space-3);
+  font: inherit;
+}
+
+.review-controls select:focus {
+  outline: none;
+  border-color: var(--accent-primary-border);
+  box-shadow: var(--focus-ring);
+}
+
+.review-controls__field--active span {
+  color: var(--accent-ember-text);
+}
+
+.review-controls__field--active select {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
+    var(--surface-control-focus);
+  box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.07), 0 0 0 1px rgb(249 115 22 / 0.04);
 }
 
 .review-card {
@@ -380,8 +491,9 @@ function ratingTone(value: number | null): string {
 
 .review-card:hover,
 .review-card--selected {
-  border-color: var(--color-border-strong);
+  border-color: var(--accent-primary-border);
   background: var(--color-surface-hover);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 10px 26px rgb(249 115 22 / 0.07);
 }
 
 .review-card--negative::before {
@@ -538,10 +650,13 @@ function ratingTone(value: number | null): string {
   width: fit-content;
   min-height: 2.125rem;
   align-items: center;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--accent-primary-border);
   border-radius: var(--radius-md);
-  background: var(--surface-control-raised);
-  color: var(--color-text);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.18), rgb(249 115 22 / 0.06)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 10px 26px rgb(249 115 22 / 0.08);
   padding: 0 var(--space-3);
   font-size: 0.8125rem;
   font-weight: 680;
@@ -549,8 +664,15 @@ function ratingTone(value: number | null): string {
 }
 
 .detail__actions a:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-surface-hover);
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.22), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.detail__actions a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), 0 10px 26px rgb(249 115 22 / 0.1);
 }
 
 @media (min-width: 680px) {
@@ -560,6 +682,14 @@ function ratingTone(value: number | null): string {
 }
 
 @media (max-width: 679px) {
+  .reviews__header {
+    grid-template-columns: 1fr;
+  }
+
+  .review-controls {
+    justify-content: flex-start;
+  }
+
   .review-card {
     grid-template-columns: auto minmax(0, 1fr);
   }

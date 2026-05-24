@@ -25,6 +25,14 @@ Hard constraints:
 - Keep frontend feature-oriented; do not mirror every backend entity as top-level navigation by default.
 - Use `Frontend/src/styles/tokens.css` as the visual theme source of truth.
 
+Brand/style guardrails:
+
+- Ashmes should feel like a premium seller market-intelligence workstation: dark obsidian, dense tables, modular panels, thin borders, and clear data hierarchy.
+- Ember/fire identity is expressed through restrained borders, hover/focus states, active filters, selected rows, CTA outlines, sort state, checkboxes, and scrollbars.
+- Metric cards can carry a little more ember emphasis through subtle border/corner/inner glow; informational blocks should stay quieter with neutral dark fill and branded border only.
+- Avoid decorative flames, casino/game styling, loud gradients, excessive corner ornaments, and generic AI SaaS hero/card language.
+- Seller-facing Market Analytics copy must use business language and must not expose parser/staging/root/payload/evidence/run/internal wording.
+
 ## Critical Current Assessment
 
 Strongest parts:
@@ -38,7 +46,7 @@ Weakest parts:
 - The product still lacks a real operator landing screen: `Overview` remains a placeholder.
 - Backend APIs are mostly CRUD/storage. Analytical aggregation, dashboards, comparisons, exports, workflow commands, and real signal systems are absent.
 - CRUD endpoints are still anonymous for compatibility. Workspace authorization and permission enforcement are not implemented.
-- Parser backend ingestion has a raw/staging code path, dedicated parser ingestion migrations, product/review/rank staging CLI support, and a read-only parser staging observability API/UI slice. Market Analytics now presents parser staging products as a seller-facing market research area with staged rank and parsed review evidence separated from WB card metadata. Intelligence is not integrated with backend/API/frontend.
+- Parser backend ingestion has a raw/staging code path, dedicated parser ingestion migrations, product/review/rank staging CLI support, and a read-only parser staging observability API/UI slice. Market Analytics now presents parser staging products as a seller-facing market research area with observed position, stock-like quantity, WB card metadata, and buyer reviews in business language. Intelligence is not integrated with backend/API/frontend.
 - Testing, observability, performance strategy, export strategy, and production deployment are not mature.
 
 Implemented:
@@ -54,6 +62,7 @@ Implemented:
 - Parser orchestration slice: manual Market Analytics refresh runner executes rank -> products -> reviews, writes a pipeline manifest/log, streams progress to console, supports smoke/bounded/full modes, resume, skips, force-step, and dry-run, and performs no DB writes by default.
 - Backend parser ingestion foundation: ingestion entities/configurations, reviewed migrations, and a manual CLI/application service for parser run validation, raw file/run registration, product/review/reply staging, rank snapshot/page-fetch staging, review root fetch completeness metadata, import audit/errors, and selective existing-product promotion rules without scheduler coupling.
 - Parser staging observability slice: staging-only `/api/v1/parser/*` read endpoints plus `/parser/products` and `/parser/reviews` frontend routes with lineage, observed review replies, and honest partial/capped/root-attribution review warnings.
+- Seller-facing Market Analytics UX under `/market/products`: business-language product table and detail drawer, truthful position states, position/price sorting, stock column with `40 => ≥40` display handling, DB-backed filter option endpoint, searchable dropdowns with natural close behavior, numeric pagination, review sort/rating filters, image lightbox, clamped price/position tooltips, branded action buttons, branded checkboxes/scrollbars, and obsidian/ember visual treatment.
 
 Partially implemented:
 
@@ -65,7 +74,7 @@ Partially implemented:
 - Expenses: backend CRUD and read-only frontend list/detail with category context exist; profitability, ABC analysis, reporting, and accounting workflows are absent.
 - Recommendations: backend CRUD/storage and read-only frontend list/detail exist; ML generation, score interpretation, apply/accept/reject workflows, and target name hydration are absent.
 - Access: backend access CRUD and read-only membership surface exist; authorization enforcement, permission policy matrix, and user/role/workspace mutations are absent.
-- Parser: product-card, review/reply, search-rank, and manual refresh pipeline output contracts exist; backend raw/staging ingestion code, reviewed migrations, fresh home-goods product/review/rank staging, Market Analytics read UI/API, staged rank API/UI exposure, parsed review evidence UX, and opt-in refresh auto-staging exist; public review pagination/full-history research, reviewed domain upsert mapping, and scheduler execution are absent.
+- Parser: product-card, review/reply, search-rank, and manual refresh pipeline output contracts exist; backend raw/staging ingestion code, reviewed migrations, fresh home-goods product/review/rank staging, Market Analytics read UI/API, seller-facing position/review/table/detail UX, DB-backed filter options, and opt-in refresh auto-staging exist; public review pagination/full-history research, reviewed domain upsert mapping, and scheduler execution are absent.
 - Products heat/signal presentation exists, but it is not real business intelligence.
 
 Still missing:
@@ -184,9 +193,10 @@ Layers: frontend, UX
 
 `DataTable` already supports sortable headers, sticky header, row click, selected row, keyboard row opening, horizontal overflow, and scoped cell slots.
 
+Market Analytics now has a strong local implementation of seller-facing dense UX: column picker, numeric pagination, DB-backed filter options, active filter styling, branded dropdowns, branded checkbox/scrollbar styling, row hover/selection accents, clamped tooltips, and image lightbox. Before extracting shared primitives, verify the same needs in at least one more slice.
+
 Next useful improvements:
 
-- column visibility;
 - density modes and stable row heights;
 - reusable numeric/date/currency cell helpers;
 - persistent table preferences;
@@ -200,7 +210,7 @@ Priority: high
 Scope: medium-to-large
 Layers: docs, backend, frontend, parser, ML
 
-Current product heat is presentation-only. Before using fire/ember language as business intelligence, define:
+Current product heat is presentation-only. Ashmes ember/fire styling is a brand/interaction language, not a business signal by itself. Before using fire/ember language as business intelligence, define:
 
 - signal taxonomy;
 - score ranges;
