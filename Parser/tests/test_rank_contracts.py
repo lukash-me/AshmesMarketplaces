@@ -37,11 +37,42 @@ class RankContractTests(unittest.TestCase):
         ])
         self.assertEqual({context.type for context in config.contexts}, {"search_query"})
 
+    def test_home_goods_search_rank_preset_queries_match_subcategories(self) -> None:
+        config = RankParserConfig.load(PARSER_DIR / "presets" / "home_goods_search_rank_demo.json")
+
+        expected = {
+            "home_storage_organizers": "Органайзеры для хранения вещей",
+            "home_bath_mats": "Коврики для ванной",
+            "home_wall_sconces": "Светильники бра",
+        }
+
+        for context in config.contexts:
+            with self.subTest(context=context.id):
+                self.assertEqual(context.query.strip(), context.source_subcategory.strip())
+                self.assertEqual(context.query, expected[context.id])
+
+        wall_sconces = next(context for context in config.contexts if context.id == "home_wall_sconces")
+        self.assertNotEqual(wall_sconces.query, "бра настенное")
+
+    def test_home_goods_search_rank_preset_sends_subcategory_as_search_query(self) -> None:
+        config = RankParserConfig.load(PARSER_DIR / "presets" / "home_goods_search_rank_demo.json")
+
+        for context in config.contexts:
+            with self.subTest(context=context.id):
+                params = build_search_params(
+                    context=context,
+                    page=1,
+                    dest=config.dest_for(context),
+                )
+
+                self.assertEqual(params["query"], context.source_subcategory)
+                self.assertEqual(params["query"], context.query)
+
     def test_builds_ordered_rows_with_absolute_positions(self) -> None:
         context = RankContextConfig(
             id="storage",
             type="search_query",
-            query="органайзер для хранения",
+            query="Органайзеры для хранения вещей",
             source_category="Товары для дома",
             source_subcategory="Органайзеры для хранения вещей",
         )
@@ -65,7 +96,7 @@ class RankContractTests(unittest.TestCase):
         self.assertEqual([row["absolute_position"] for row in rows], [101, 102])
 
     def test_top_n_cutoff_does_not_emit_extra_rows(self) -> None:
-        context = RankContextConfig(id="bath", type="search_query", query="коврик для ванной")
+        context = RankContextConfig(id="bath", type="search_query", query="Коврики для ванной")
 
         rows = build_rank_rows(
             products=[{"id": 1}, {"id": 2}, {"id": 3}],
@@ -87,14 +118,14 @@ class RankContractTests(unittest.TestCase):
         context = RankContextConfig(
             id="lighting",
             type="search_query",
-            query="бра настенное",
+            query="Светильники бра",
             sort="popular",
             filters={"xsubject": 130194},
         )
 
         params = build_search_params(context=context, page=1, dest="12354108")
 
-        self.assertEqual(params["query"], "бра настенное")
+        self.assertEqual(params["query"], "Светильники бра")
         self.assertEqual(params["resultset"], "catalog")
         self.assertEqual(params["sort"], "popular")
         self.assertNotIn("priceU", params)
@@ -152,7 +183,13 @@ class RankRunnerTests(unittest.TestCase):
         rank_runner._make_run_id = self.original_make_run_id  # type: ignore[assignment]
 
     def test_runner_writes_rank_rows_page_audit_and_duplicate_count(self) -> None:
-        context = RankContextConfig(id="storage", type="search_query", query="органайзер")
+        context = RankContextConfig(
+            id="storage",
+            type="search_query",
+            query="Органайзеры для хранения вещей",
+            source_category="Товары для дома",
+            source_subcategory="Органайзеры для хранения вещей",
+        )
         FakeRankFetcher.pages = {
             1: RankPageFetchResult(
                 status="succeeded",
@@ -195,6 +232,21 @@ class RankRunnerTests(unittest.TestCase):
 
         self.assertEqual([row["absolute_position"] for row in rows], [1, 2, 3, 4])
         self.assertEqual(len(page_events), 2)
+        self.assertEqual({row["query"] for row in rows}, {"Органайзеры для хранения вещей"})
+        self.assertEqual({row["source_category"] for row in rows}, {"Товары для дома"})
+        self.assertEqual({row["source_subcategory"] for row in rows}, {"Органайзеры для хранения вещей"})
+        self.assertEqual({event["query"] for event in page_events}, {"Органайзеры для хранения вещей"})
+        self.assertEqual({event["source_category"] for event in page_events}, {"Товары для дома"})
+        self.assertEqual({event["source_subcategory"] for event in page_events}, {"Органайзеры для хранения вещей"})
+        self.assertEqual(manifest["requested_scope"]["contexts"][0]["query"], "Органайзеры для хранения вещей")
+        self.assertEqual(manifest["requested_scope"]["contexts"][0]["source_category"], "Товары для дома")
+        self.assertEqual(
+            manifest["requested_scope"]["contexts"][0]["source_subcategory"],
+            "Органайзеры для хранения вещей",
+        )
+        self.assertEqual(manifest["context_results"][0]["query"], "Органайзеры для хранения вещей")
+        self.assertEqual(manifest["context_results"][0]["source_category"], "Товары для дома")
+        self.assertEqual(manifest["context_results"][0]["source_subcategory"], "Органайзеры для хранения вещей")
         self.assertEqual(manifest["status"], "succeeded")
         self.assertEqual(manifest["row_counts"]["rank_rows_written"], 4)
         self.assertEqual(manifest["row_counts"]["duplicate_product_ids_within_context"], 1)

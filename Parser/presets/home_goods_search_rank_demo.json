@@ -19,7 +19,7 @@
       "type": "search_query",
       "source_category": "Товары для дома",
       "source_subcategory": "Органайзеры для хранения вещей",
-      "query": "органайзер для хранения",
+      "query": "Органайзеры для хранения вещей",
       "filters": {}
     },
     {
@@ -27,7 +27,7 @@
       "type": "search_query",
       "source_category": "Товары для дома",
       "source_subcategory": "Коврики для ванной",
-      "query": "коврик для ванной",
+      "query": "Коврики для ванной",
       "filters": {}
     },
     {
@@ -35,7 +35,7 @@
       "type": "search_query",
       "source_category": "Товары для дома",
       "source_subcategory": "Светильники бра",
-      "query": "бра настенное",
+      "query": "Светильники бра",
       "filters": {}
     }
   ]
