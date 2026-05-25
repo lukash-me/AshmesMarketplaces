@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, type ComponentPublicInstance } from 'vue';
 
 import MarketProductImage from './MarketProductImage.vue';
 import type {
@@ -19,9 +19,105 @@ const emit = defineEmits<{
 }>();
 
 const displayLimit = 5;
+const fireStepMs = 100;
 const expandedId = ref<string | null>(null);
+const activeFireId = ref<string | null>(null);
+const activeFireText = ref('');
+const activeFireDiagnostics = ref<FireDiagnostics | null>(null);
 const items = computed(() => pickVisibleItems(props.response?.items ?? []));
 const hasItems = computed(() => items.value.length > 0);
+
+const cardSizes = new Map<string, { width: number; height: number }>();
+const observedCards = new Map<string, HTMLElement>();
+const observedCardIds = new WeakMap<Element, string>();
+const reducedMotionQuery =
+  typeof window === 'undefined' ? null : window.matchMedia('(prefers-reduced-motion: reduce)');
+const fireDebugEnabled = isFireDebugEnabled();
+
+let resizeObserver: ResizeObserver | null = null;
+let fireAnimationFrameId: number | null = null;
+let fireLastTime = 0;
+let fireAccumulator = 0;
+let fireSimulation: FireSimulation | null = null;
+
+type FireTierParams = {
+  bottomHeat: number;
+  bottomRows: number;
+  sourceCountBonus: number;
+  decay: number;
+  sparkRate: number;
+  maxOccupancy: number;
+  spread: number;
+};
+
+type FireSpark = {
+  x: number;
+  y: number;
+  ttl: number;
+  speed: number;
+};
+
+type FireTierName = 'priority' | 'strong' | 'steady';
+
+type FireSimulation = {
+  id: string;
+  wbProductId: string | null;
+  score: number;
+  tier: FireTierName;
+  columns: number;
+  rows: number;
+  heat: Float32Array;
+  nextHeat: Float32Array;
+  sourceCenters: number[];
+  sparks: FireSpark[];
+  heatCenterHistory: number[];
+  lastDiagnosticAt: number;
+  frame: number;
+  seed: number;
+  params: FireTierParams;
+};
+
+type FireRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type FireFrameStats = {
+  density: number;
+  bottomDensity: number;
+  middleDensity: number;
+  topDensity: number;
+  emptyRowCount: number;
+  maxFrameWidth: number;
+  topSparkCount: number;
+  heatCenterY: number | null;
+  charCounts: {
+    X: number;
+    x: number;
+    dash: number;
+    dot: number;
+    plus: number;
+  };
+};
+
+type FireDiagnostics = FireFrameStats & {
+  cardId: string;
+  wbProductId: string | null;
+  score: number;
+  tier: FireTierName;
+  columns: number;
+  rows: number;
+  frameRows: number;
+  sparkCount: number;
+  mainRect: FireRect;
+  layerRect: FireRect;
+  layerInsideMain: boolean;
+  layerCoversMain: boolean;
+  heatCenterHistory: number[];
+  isMovingUp: boolean;
+};
 
 function pickVisibleItems(allItems: HotProductRecommendationItem[]): HotProductRecommendationItem[] {
   if (allItems.length <= displayLimit) {
@@ -60,6 +156,676 @@ function pickVisibleItems(allItems: HotProductRecommendationItem[]): HotProductR
 
 function toggleExplanation(item: HotProductRecommendationItem) {
   expandedId.value = expandedId.value === item.id ? null : item.id;
+}
+
+function isFireDebugEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('debugFire') === '1' || window.localStorage.getItem('ashmesDebugFire') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setCardMainRef(id: string, element: Element | ComponentPublicInstance | null) {
+  const htmlElement = element instanceof HTMLElement ? element : null;
+  const previous = observedCards.get(id);
+
+  if (previous && previous !== htmlElement) {
+    resizeObserver?.unobserve(previous);
+    observedCardIds.delete(previous);
+    observedCards.delete(id);
+  }
+
+  if (!htmlElement) {
+    cardSizes.delete(id);
+    return;
+  }
+
+  observedCards.set(id, htmlElement);
+  observedCardIds.set(htmlElement, id);
+  cardSizes.set(id, { width: htmlElement.clientWidth, height: htmlElement.clientHeight });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    if (!resizeObserver) {
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const entryId = observedCardIds.get(entry.target);
+          if (!entryId) {
+            continue;
+          }
+
+          cardSizes.set(entryId, {
+            width: entry.contentRect.width,
+            height: entry.contentRect.height
+          });
+        }
+      });
+    }
+
+    resizeObserver.observe(htmlElement);
+  }
+}
+
+function startFire(item: HotProductRecommendationItem) {
+  if (activeFireId.value === item.id && fireSimulation?.id === item.id) {
+    return;
+  }
+
+  stopFireAnimation();
+  activeFireDiagnostics.value = null;
+  activeFireId.value = item.id;
+  fireSimulation = createFireSimulation(item);
+  warmUpFireSimulation(fireSimulation);
+  activeFireText.value = renderFireSimulation(fireSimulation);
+  updateFireDiagnosticsAfterRender(fireSimulation, activeFireText.value);
+
+  if (reducedMotionQuery?.matches) {
+    return;
+  }
+
+  startFireAnimation();
+}
+
+function stopFire(item: HotProductRecommendationItem, event?: FocusEvent | PointerEvent | MouseEvent) {
+  if (event?.currentTarget instanceof HTMLElement && event.relatedTarget instanceof Node) {
+    if (event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+  }
+
+  if (activeFireId.value !== item.id) {
+    return;
+  }
+
+  stopFireAnimation();
+  activeFireId.value = null;
+  activeFireText.value = '';
+  activeFireDiagnostics.value = null;
+  fireSimulation = null;
+}
+
+function startFireAnimation() {
+  if (fireAnimationFrameId !== null || typeof window === 'undefined') {
+    return;
+  }
+
+  fireLastTime = 0;
+  fireAccumulator = 0;
+  fireAnimationFrameId = window.requestAnimationFrame(runFireAnimation);
+}
+
+function stopFireAnimation() {
+  if (fireAnimationFrameId !== null && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(fireAnimationFrameId);
+  }
+
+  fireAnimationFrameId = null;
+  fireLastTime = 0;
+  fireAccumulator = 0;
+}
+
+function runFireAnimation(timestamp: number) {
+  if (!fireSimulation || !activeFireId.value) {
+    stopFireAnimation();
+    return;
+  }
+
+  if (!fireLastTime) {
+    fireLastTime = timestamp;
+  }
+
+  const elapsed = Math.min(250, timestamp - fireLastTime);
+  fireLastTime = timestamp;
+  fireAccumulator += elapsed;
+
+  let shouldRender = false;
+  while (fireAccumulator >= fireStepMs) {
+    stepFireSimulation(fireSimulation, true);
+    fireAccumulator -= fireStepMs;
+    shouldRender = true;
+  }
+
+  if (shouldRender) {
+    const fireText = renderFireSimulation(fireSimulation);
+    activeFireText.value = fireText;
+    updateFireDiagnostics(fireSimulation, fireText);
+  }
+
+  fireAnimationFrameId = window.requestAnimationFrame(runFireAnimation);
+}
+
+function createFireSimulation(item: HotProductRecommendationItem): FireSimulation {
+  const size = cardSizes.get(item.id) ?? { width: 900, height: 124 };
+  const columns = clamp(Math.floor(size.width / 6), 80, 220);
+  const rows = clamp(Math.floor(size.height / 6.5), 10, 28);
+  const params = fireTier(item.score);
+  const tier = scoreTier(item.score);
+  const sourceCount = clamp(Math.round(columns / 42) + params.sourceCountBonus, 3, 7);
+  const seed = hashString(item.id);
+  const sourceCenters = Array.from({ length: sourceCount }, (_, index) => {
+    const slot = (index + 0.6) / sourceCount;
+    const offset = (noise(index * 19, seed, 0) - 0.5) * 0.16;
+    return clamp((slot + offset) * columns, 0, columns - 1);
+  });
+
+  return {
+    id: item.id,
+    wbProductId: item.wbProductId,
+    score: item.score,
+    tier,
+    columns,
+    rows,
+    heat: new Float32Array(columns * rows),
+    nextHeat: new Float32Array(columns * rows),
+    sourceCenters,
+    sparks: [],
+    heatCenterHistory: [],
+    lastDiagnosticAt: 0,
+    frame: 0,
+    seed,
+    params
+  };
+}
+
+function warmUpFireSimulation(simulation: FireSimulation) {
+  const steps = reducedMotionQuery?.matches ? 16 : 12;
+
+  for (let index = 0; index < steps; index += 1) {
+    stepFireSimulation(simulation, false);
+  }
+}
+
+function stepFireSimulation(simulation: FireSimulation, allowSparks: boolean) {
+  seedBottomHeat(simulation);
+  propagateHeat(simulation);
+  updateSparks(simulation, allowSparks);
+  simulation.frame += 1;
+}
+
+function seedBottomHeat(simulation: FireSimulation) {
+  const { columns, rows, params, heat, sourceCenters, frame } = simulation;
+  const bottomRows = params.bottomRows;
+
+  for (let y = rows - bottomRows; y < rows; y += 1) {
+    const fromBottom = (rows - 1 - y) / Math.max(1, bottomRows - 1);
+    for (let x = 0; x < columns; x += 1) {
+      const source = sourceInfluence(simulation, x, y);
+      const wave = 0.92 + Math.sin(x * 0.08 + frame * 0.16) * 0.06;
+      const value = params.bottomHeat * source * wave * (1 - fromBottom * 0.12);
+      const index = fireIndex(simulation, x, y);
+      heat[index] = Math.max(heat[index] * 0.82, value);
+    }
+  }
+}
+
+function sourceInfluence(simulation: FireSimulation, x: number, y: number): number {
+  const { columns, rows, sourceCenters, frame } = simulation;
+  const fromBottom = (rows - 1 - y) / Math.max(1, rows - 1);
+  let strongest = 0;
+
+  for (let index = 0; index < sourceCenters.length; index += 1) {
+    const drift = Math.sin(frame * 0.045 + index * 1.9) * columns * 0.018;
+    const center = sourceCenters[index] + drift;
+    const width = columns * (0.052 + fromBottom * 0.055);
+    const distance = Math.abs(x - center);
+    const influence = Math.max(0, 1 - distance / width);
+    strongest = Math.max(strongest, influence);
+  }
+
+  return strongest;
+}
+
+function propagateHeat(simulation: FireSimulation) {
+  const { columns, rows, heat, nextHeat, params, frame } = simulation;
+  nextHeat.fill(0);
+
+  for (let y = 0; y < rows - 1; y += 1) {
+    const height = y / Math.max(1, rows - 1);
+    const decay = params.decay + (1 - height) * 0.036;
+
+    for (let x = 0; x < columns; x += 1) {
+      const drift = Math.sin(frame * 0.05 + y * 0.4) > 0 ? 1 : -1;
+      const below = sampleHeat(simulation, x, y + 1);
+      const belowLeft = sampleHeat(simulation, x - 1, y + 1);
+      const belowRight = sampleHeat(simulation, x + 1, y + 1);
+      const twoBelow = sampleHeat(simulation, x + drift, y + 2);
+      const turbulence = (noise(x * 0.7, y * 1.3 + simulation.seed, frame * 0.032) - 0.5) * 0.018;
+      const value =
+        below * 0.52 + belowLeft * params.spread + belowRight * params.spread + twoBelow * 0.16 + turbulence - decay;
+      nextHeat[fireIndex(simulation, x, y)] = clamp(value, 0, 1);
+    }
+  }
+
+  for (let x = 0; x < columns; x += 1) {
+    nextHeat[fireIndex(simulation, x, rows - 1)] = heat[fireIndex(simulation, x, rows - 1)] * 0.64;
+  }
+
+  simulation.heat = nextHeat;
+  simulation.nextHeat = heat;
+}
+
+function sampleHeat(simulation: FireSimulation, x: number, y: number): number {
+  if (x < 0 || x >= simulation.columns || y < 0 || y >= simulation.rows) {
+    return 0;
+  }
+
+  return simulation.heat[fireIndex(simulation, x, y)] ?? 0;
+}
+
+function updateSparks(simulation: FireSimulation, allowSpawn: boolean) {
+  const { rows, columns, params, frame, sparks, seed } = simulation;
+
+  for (const spark of sparks) {
+    spark.y -= spark.speed;
+    spark.x += Math.sin((frame + spark.x) * 0.12) * 0.16;
+    spark.ttl -= 1;
+  }
+
+  simulation.sparks = sparks.filter((spark) => spark.ttl > 0 && spark.y >= 0 && spark.y < rows);
+
+  if (!allowSpawn || simulation.sparks.length > 22) {
+    return;
+  }
+
+  const spawnCount = noise(frame * 7, seed, 0) < params.sparkRate ? 2 : 1;
+  for (let index = 0; index < spawnCount; index += 1) {
+    if (noise(index * 17 + frame, seed, frame * 0.03) > params.sparkRate * 2.4) {
+      continue;
+    }
+
+    const source = simulation.sourceCenters[(frame + index) % simulation.sourceCenters.length] ?? columns * 0.5;
+    const offset = (noise(index * 11, seed, frame * 0.09) - 0.5) * columns * 0.06;
+    simulation.sparks.push({
+      x: clamp(source + offset, 0, columns - 1),
+      y: rows - 1,
+      ttl: Math.round(rows * (1 + noise(index, seed, frame * 0.04) * 0.75)),
+      speed: 0.78 + noise(index * 5, seed, frame * 0.07) * 0.54
+    });
+  }
+}
+
+function renderFireSimulation(simulation: FireSimulation): string {
+  const { columns, rows, heat, params, frame, seed } = simulation;
+  const sparkCells = new Set<string>();
+  const renderedRows: string[] = [];
+
+  for (const spark of simulation.sparks) {
+    const x = Math.round(spark.x);
+    const y = Math.round(spark.y);
+    if (x >= 0 && x < columns && y >= 0 && y < rows) {
+      sparkCells.add(`${x}:${y}`);
+    }
+  }
+
+  for (let y = 0; y < rows; y += 1) {
+    let line = '';
+    const fromBottom = (rows - 1 - y) / Math.max(1, rows - 1);
+
+    for (let x = 0; x < columns; x += 1) {
+      if (sparkCells.has(`${x}:${y}`)) {
+        line += '+';
+        continue;
+      }
+
+      const value = heat[fireIndex(simulation, x, y)];
+      const visibilityNoise = noise(x * 3.1, y * 5.7 + seed, frame * 0.018);
+      const threshold = 0.125 + fromBottom * 0.24;
+      if (value < threshold || visibilityNoise > params.maxOccupancy * 1.12 + value * 0.54) {
+        line += ' ';
+        continue;
+      }
+
+      line += fireSymbol(value);
+    }
+
+    renderedRows.push(line);
+  }
+
+  return enforceOccupancy(renderedRows, columns, rows, params.maxOccupancy, seed, frame).join('\n');
+}
+
+function fireSymbol(heat: number): string {
+  if (heat >= 0.78) {
+    return 'X';
+  }
+
+  if (heat >= 0.58) {
+    return 'x';
+  }
+
+  if (heat >= 0.36) {
+    return '-';
+  }
+
+  if (heat >= 0.16) {
+    return '.';
+  }
+
+  return ' ';
+}
+
+function enforceOccupancy(
+  rows: string[],
+  columns: number,
+  rowCount: number,
+  maxOccupancy: number,
+  seed: number,
+  frame: number
+): string[] {
+  const total = columns * rowCount;
+  const occupied = rows.reduce((sum, row) => sum + (row.match(/[^ ]/g)?.length ?? 0), 0);
+
+  if (!total || occupied / total <= maxOccupancy) {
+    return rows;
+  }
+
+  const keepRatio = maxOccupancy / (occupied / total);
+  return rows.map((row, rowIndex) =>
+    Array.from(row)
+      .map((char, column) => {
+        if (char === ' ' || char === '+') {
+          return char;
+        }
+
+        return noise(column * 41, rowIndex * 17 + seed, frame * 0.02) <= keepRatio ? char : ' ';
+      })
+      .join('')
+  );
+}
+
+function fireTier(score: number): FireTierParams {
+  if (score >= 90) {
+    return {
+      bottomHeat: 1,
+      bottomRows: 4,
+      sourceCountBonus: 2,
+      decay: 0.028,
+      sparkRate: 0.12,
+      maxOccupancy: 0.165,
+      spread: 0.17
+    };
+  }
+
+  if (score >= 80) {
+    return {
+      bottomHeat: 0.94,
+      bottomRows: 3,
+      sourceCountBonus: 1,
+      decay: 0.036,
+      sparkRate: 0.085,
+      maxOccupancy: 0.13,
+      spread: 0.14
+    };
+  }
+
+  return {
+    bottomHeat: 0.82,
+    bottomRows: 2,
+    sourceCountBonus: 0,
+    decay: 0.042,
+    sparkRate: 0.055,
+    maxOccupancy: 0.1,
+    spread: 0.14
+  };
+}
+
+function updateFireDiagnosticsAfterRender(simulation: FireSimulation, frameText: string) {
+  if (!fireDebugEnabled) {
+    return;
+  }
+
+  void nextTick(() => {
+    if (fireSimulation?.id !== simulation.id || activeFireText.value !== frameText) {
+      return;
+    }
+
+    updateFireDiagnostics(simulation, frameText);
+  });
+}
+
+function updateFireDiagnostics(simulation: FireSimulation, frameText: string) {
+  if (!fireDebugEnabled) {
+    return;
+  }
+
+  const mainElement = observedCards.get(simulation.id);
+  const layerElement = mainElement?.querySelector<HTMLElement>('.hot-card__ascii-fire') ?? null;
+
+  if (!mainElement || !layerElement) {
+    return;
+  }
+
+  const diagnostics = computeFireDiagnostics(
+    simulation,
+    frameText,
+    rectFromDom(mainElement.getBoundingClientRect()),
+    rectFromDom(layerElement.getBoundingClientRect())
+  );
+
+  activeFireDiagnostics.value = diagnostics;
+
+  const now = Date.now();
+  if (now - simulation.lastDiagnosticAt >= 1000) {
+    simulation.lastDiagnosticAt = now;
+    console.debug('[hot-products-fire]', diagnostics);
+  }
+}
+
+function computeFireDiagnostics(
+  simulation: FireSimulation,
+  frameText: string,
+  mainRect: FireRect,
+  layerRect: FireRect
+): FireDiagnostics {
+  const stats = getFireFrameStats(frameText, simulation.columns, simulation.rows);
+
+  if (stats.heatCenterY !== null) {
+    simulation.heatCenterHistory.push(stats.heatCenterY);
+    if (simulation.heatCenterHistory.length > 5) {
+      simulation.heatCenterHistory.shift();
+    }
+  }
+
+  const heatCenterHistory = [...simulation.heatCenterHistory];
+  const firstCenter = heatCenterHistory[0];
+  const lastCenter = heatCenterHistory[heatCenterHistory.length - 1];
+  const isMovingUp =
+    heatCenterHistory.length >= 3 &&
+    firstCenter !== undefined &&
+    lastCenter !== undefined &&
+    lastCenter < firstCenter - 0.2;
+
+  return {
+    ...stats,
+    cardId: simulation.id,
+    wbProductId: simulation.wbProductId,
+    score: simulation.score,
+    tier: simulation.tier,
+    columns: simulation.columns,
+    rows: simulation.rows,
+    frameRows: frameText.split('\n').length,
+    sparkCount: simulation.sparks.length,
+    mainRect,
+    layerRect,
+    layerInsideMain: rectInside(layerRect, mainRect),
+    layerCoversMain: rectCovers(layerRect, mainRect),
+    heatCenterHistory,
+    isMovingUp
+  };
+}
+
+function getFireFrameStats(frameText: string, expectedColumns: number, expectedRows: number): FireFrameStats {
+  const rows = frameText.split('\n');
+  const safeRows = rows.length > 0 ? rows : [''];
+  const topEnd = Math.max(1, Math.floor(expectedRows / 3));
+  const middleEnd = Math.max(topEnd + 1, Math.floor((expectedRows * 2) / 3));
+  const counts = { X: 0, x: 0, dash: 0, dot: 0, plus: 0 };
+  const zoneTotals = { top: 0, middle: 0, bottom: 0 };
+  const zoneOccupied = { top: 0, middle: 0, bottom: 0 };
+  let occupied = 0;
+  let emptyRowCount = 0;
+  let maxFrameWidth = 0;
+  let topSparkCount = 0;
+  let weightedY = 0;
+  let weightTotal = 0;
+
+  for (let rowIndex = 0; rowIndex < expectedRows; rowIndex += 1) {
+    const row = safeRows[rowIndex] ?? '';
+    maxFrameWidth = Math.max(maxFrameWidth, row.length);
+    const zone = rowIndex < topEnd ? 'top' : rowIndex < middleEnd ? 'middle' : 'bottom';
+    let rowOccupied = 0;
+
+    for (let column = 0; column < expectedColumns; column += 1) {
+      const char = row[column] ?? ' ';
+      zoneTotals[zone] += 1;
+
+      if (char === ' ') {
+        continue;
+      }
+
+      rowOccupied += 1;
+      occupied += 1;
+      zoneOccupied[zone] += 1;
+
+      if (char === 'X') {
+        counts.X += 1;
+      } else if (char === 'x') {
+        counts.x += 1;
+      } else if (char === '-') {
+        counts.dash += 1;
+      } else if (char === '.') {
+        counts.dot += 1;
+      } else if (char === '+') {
+        counts.plus += 1;
+        if (rowIndex < topEnd) {
+          topSparkCount += 1;
+        }
+      }
+
+      const weight = fireCharacterWeight(char);
+      weightedY += rowIndex * weight;
+      weightTotal += weight;
+    }
+
+    if (rowOccupied === 0) {
+      emptyRowCount += 1;
+    }
+  }
+
+  return {
+    density: occupied / Math.max(1, expectedColumns * expectedRows),
+    bottomDensity: zoneOccupied.bottom / Math.max(1, zoneTotals.bottom),
+    middleDensity: zoneOccupied.middle / Math.max(1, zoneTotals.middle),
+    topDensity: zoneOccupied.top / Math.max(1, zoneTotals.top),
+    emptyRowCount,
+    maxFrameWidth,
+    topSparkCount,
+    heatCenterY: weightTotal > 0 ? weightedY / weightTotal : null,
+    charCounts: counts
+  };
+}
+
+function fireCharacterWeight(char: string): number {
+  if (char === 'X') {
+    return 4;
+  }
+
+  if (char === 'x') {
+    return 3;
+  }
+
+  if (char === '-') {
+    return 2;
+  }
+
+  if (char === '.' || char === '+') {
+    return 1;
+  }
+
+  return 0;
+}
+
+function rectFromDom(rect: DOMRect): FireRect {
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height
+  };
+}
+
+function rectInside(inner: FireRect, outer: FireRect): boolean {
+  const tolerance = 1;
+  return (
+    inner.x >= outer.x - tolerance &&
+    inner.y >= outer.y - tolerance &&
+    inner.x + inner.width <= outer.x + outer.width + tolerance &&
+    inner.y + inner.height <= outer.y + outer.height + tolerance
+  );
+}
+
+function rectCovers(layer: FireRect, target: FireRect): boolean {
+  const tolerance = 1;
+  return (
+    Math.abs(layer.x - target.x) <= tolerance &&
+    Math.abs(layer.y - target.y) <= tolerance &&
+    Math.abs(layer.width - target.width) <= tolerance &&
+    Math.abs(layer.height - target.height) <= tolerance
+  );
+}
+
+function fireDebugAttributes(item: HotProductRecommendationItem): Record<string, string> {
+  if (!fireDebugEnabled || activeFireId.value !== item.id || !activeFireDiagnostics.value) {
+    return {};
+  }
+
+  const diagnostics = activeFireDiagnostics.value;
+  return {
+    'data-fire-tier': diagnostics.tier,
+    'data-fire-columns': String(diagnostics.columns),
+    'data-fire-rows': String(diagnostics.rows),
+    'data-fire-density': formatDiagnosticRatio(diagnostics.density),
+    'data-fire-bottom-density': formatDiagnosticRatio(diagnostics.bottomDensity),
+    'data-fire-middle-density': formatDiagnosticRatio(diagnostics.middleDensity),
+    'data-fire-top-density': formatDiagnosticRatio(diagnostics.topDensity),
+    'data-fire-spark-count': String(diagnostics.sparkCount),
+    'data-fire-top-spark-count': String(diagnostics.topSparkCount),
+    'data-fire-is-moving-up': String(diagnostics.isMovingUp),
+    'data-fire-layer-covers-main': String(diagnostics.layerCoversMain)
+  };
+}
+
+function formatDiagnosticRatio(value: number): string {
+  return value.toFixed(4);
+}
+
+function fireIndex(simulation: FireSimulation, x: number, y: number): number {
+  return y * simulation.columns + x;
+}
+
+function noise(x: number, y: number, t: number): number {
+  const value = Math.sin(x * 12.9898 + y * 78.233 + t * 37.719) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return Math.abs(hash);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function locate(item: HotProductRecommendationItem) {
@@ -184,6 +950,14 @@ function factorsByDirection(
 ): HotProductRecommendationFactor[] {
   return item.factors.filter((factor) => factor.direction === direction);
 }
+
+onBeforeUnmount(() => {
+  stopFireAnimation();
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+  observedCards.clear();
+  cardSizes.clear();
+});
 </script>
 
 <template>
@@ -222,6 +996,12 @@ function factorsByDirection(
         class="hot-card"
         :class="[`hot-card--${scoreTier(item.score)}`, { 'hot-card--open': expandedId === item.id }]"
         role="listitem"
+        @pointerenter="startFire(item)"
+        @pointermove="startFire(item)"
+        @pointerleave="stopFire(item)"
+        @focusin="startFire(item)"
+        @mousemove="startFire(item)"
+        @focusout="stopFire(item, $event)"
       >
         <svg class="hot-card__flame" viewBox="0 0 96 150" aria-hidden="true" focusable="false">
           <path
@@ -246,6 +1026,7 @@ function factorsByDirection(
             class="hot-card__main"
             role="button"
             tabindex="0"
+            :ref="(element) => setCardMainRef(item.id, element)"
             :aria-expanded="expandedId === item.id"
             @click="toggleExplanation(item)"
             @keydown.enter.prevent="toggleExplanation(item)"
@@ -307,6 +1088,13 @@ function factorsByDirection(
                 Почему
               </button>
             </aside>
+
+            <pre
+              v-if="activeFireId === item.id"
+              class="hot-card__ascii-fire"
+              aria-hidden="true"
+              v-bind="fireDebugAttributes(item)"
+            >{{ activeFireText }}</pre>
           </div>
 
           <div v-if="expandedId === item.id" class="hot-card__details">
@@ -685,8 +1473,34 @@ function factorsByDirection(
   transition: opacity 140ms ease;
 }
 
+.hot-card__ascii-fire {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  color: rgb(251 146 60 / 0.5);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.54rem;
+  font-weight: 800;
+  line-height: 1.02;
+  opacity: 0;
+  pointer-events: none;
+  text-shadow:
+    0 0 0.08rem rgb(249 115 22 / 0.18),
+    0 0 0.16rem rgb(185 28 28 / 0.08);
+  transition: opacity 140ms ease;
+  user-select: none;
+  white-space: pre;
+}
+
 .hot-card:hover .hot-card__main::before {
   opacity: 1;
+}
+
+.hot-card:hover .hot-card__ascii-fire,
+.hot-card:focus-within .hot-card__ascii-fire {
+  opacity: 0.48;
 }
 
 .hot-card__main:focus-visible {
@@ -1084,6 +1898,11 @@ function factorsByDirection(
     width: 3.95rem;
   }
 
+  .hot-card__ascii-fire {
+    inset: 0;
+    font-size: 0.42rem;
+  }
+
   .hot-card__main,
   .hot-card__side,
   .hot-card__details {
@@ -1103,11 +1922,13 @@ function factorsByDirection(
 
 @media (prefers-reduced-motion: reduce) {
   .hot-card,
+  .hot-card__ascii-fire,
   .hot-products__pulse {
     animation: none;
   }
 
   .hot-card,
+  .hot-card__ascii-fire,
   .hot-card__why-link,
   .hot-card__locate {
     transition: none;
@@ -1136,4 +1957,5 @@ function factorsByDirection(
       0 0 14px rgb(185 28 28 / 0.055);
   }
 }
+
 </style>
