@@ -10,6 +10,7 @@ using AshmesMarketplaces.Application.Categories.Services;
 using AshmesMarketplaces.Application.ExpenseCategories.Services;
 using AshmesMarketplaces.Application.Expenses.Services;
 using AshmesMarketplaces.Application.Logistics.Services;
+using AshmesMarketplaces.Application.MarketIntelligence.Services;
 using AshmesMarketplaces.Application.Marketplaces.Services;
 using AshmesMarketplaces.Application.Marketplaces.Validators;
 using AshmesMarketplaces.Application.Orders.Services;
@@ -49,6 +50,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IParserProductReadService, ParserProductReadService>();
         services.AddScoped<IParserReviewReadService, ParserReviewReadService>();
         services.AddScoped<IParserRunReadService, ParserRunReadService>();
+        services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IReviewReplyService, ReviewReplyService>();

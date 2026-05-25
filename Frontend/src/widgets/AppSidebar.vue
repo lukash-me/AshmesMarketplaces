@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Megaphone,
   PackageSearch,
+  Radar,
   Settings,
   Sparkles,
   Star,
@@ -23,6 +24,7 @@ defineEmits<{
 
 const navItems = [
   { to: '/overview', label: 'Overview', icon: LayoutDashboard },
+  { to: '/market/intelligence', label: 'Маркетинговая разведка', icon: Radar },
   { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 },
   { to: '/products', label: 'Мои товары', icon: PackageSearch },
   { to: '/orders', label: 'Orders', icon: Boxes },

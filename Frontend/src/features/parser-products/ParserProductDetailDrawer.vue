@@ -971,6 +971,13 @@ function positionLabel(position: ParserProductPosition): string {
   width: 100%;
 }
 
+.media__item :deep(.market-image__asset),
+.media__item :deep(.market-image__preview),
+.overview__media :deep(.market-image__asset),
+.overview__media :deep(.market-image__preview) {
+  object-fit: contain;
+}
+
 .image-lightbox {
   position: fixed;
   inset: 0;
