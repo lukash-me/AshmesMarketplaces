@@ -7,6 +7,9 @@ import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
+import { getHotProductsRecommendations } from './hotProductsRecommendations.api';
+import type { HotProductsListResponse } from './hotProductsRecommendations.types';
+import MarketHotProductsBlock from './MarketHotProductsBlock.vue';
 import MarketProductDetailDrawer from './ParserProductDetailDrawer.vue';
 import { getParserProductFilterOptions, getParserProducts } from './parserProducts.api';
 import MarketProductsFilters from './ParserProductsFilters.vue';
@@ -43,13 +46,25 @@ const filterOptionsError = ref('');
 const loading = ref(false);
 const error = ref('');
 const selected = ref<ParserProductListItem | null>(null);
+const hotProducts = ref<HotProductsListResponse | null>(null);
+const hotProductsLoading = ref(false);
+const hotProductsError = ref('');
 let filterOptionsVersion = 0;
+let hotProductsVersion = 0;
 
 watch(
   () => route.query,
   async (query) => {
     queryState.value = parseParserProductsQuery(query);
     await Promise.all([loadRows(), loadFilterOptions()]);
+  },
+  { immediate: true }
+);
+
+watch(
+  [() => queryState.value.sourceCategory, () => queryState.value.sourceSubcategory],
+  () => {
+    void loadHotProducts();
   },
   { immediate: true }
 );
@@ -101,6 +116,42 @@ async function loadFilterOptions() {
   }
 }
 
+async function loadHotProducts() {
+  const version = ++hotProductsVersion;
+  hotProductsLoading.value = true;
+  hotProductsError.value = '';
+
+  try {
+    const hasScopeFilter = Boolean(queryState.value.sourceCategory || queryState.value.sourceSubcategory);
+    const response = await getHotProductsRecommendations({
+      page: 1,
+      pageSize: hasScopeFilter ? 5 : 20,
+      ...(queryState.value.sourceCategory ? { sourceCategory: queryState.value.sourceCategory } : {}),
+      ...(queryState.value.sourceSubcategory ? { sourceSubcategory: queryState.value.sourceSubcategory } : {})
+    });
+
+    if (version !== hotProductsVersion) {
+      return;
+    }
+
+    hotProducts.value = response;
+  } catch (err) {
+    if (version !== hotProductsVersion) {
+      return;
+    }
+
+    hotProducts.value = null;
+    hotProductsError.value = getProblemMessage(
+      err,
+      'Не удалось загрузить рекомендации. Попробуйте обновить страницу.'
+    );
+  } finally {
+    if (version === hotProductsVersion) {
+      hotProductsLoading.value = false;
+    }
+  }
+}
+
 function updateQuery(patch: Partial<ParserProductQueryState>) {
   void router.replace({
     query: toParserProductsRouteQuery({ ...queryState.value, ...patch })
@@ -118,6 +169,14 @@ function removeFilter(key: ParserProductQueryFilterKey) {
     query: toParserProductsRouteQuery(removeParserProductQueryFilter(queryState.value, key))
   });
 }
+
+function locateHotProduct(wbProductId: string) {
+  updateQuery({
+    page: 1,
+    search: wbProductId
+  });
+}
+
 </script>
 
 <template>
@@ -135,6 +194,13 @@ function removeFilter(key: ParserProductQueryFilterKey) {
       @apply="updateQuery"
       @reset="resetFilters"
       @remove="removeFilter"
+    />
+
+    <MarketHotProductsBlock
+      :response="hotProducts"
+      :loading="hotProductsLoading"
+      :error="hotProductsError"
+      @locate="locateHotProduct"
     />
 
     <LoadingState v-if="loading" class="app-surface" />
