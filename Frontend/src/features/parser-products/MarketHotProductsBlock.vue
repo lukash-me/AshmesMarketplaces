@@ -20,6 +20,9 @@ const emit = defineEmits<{
 
 const displayLimit = 5;
 const fireStepMs = 100;
+const fireLogicalRows = 24;
+const fireBaseZoneRatio = 0.34;
+const fireMiddleZoneRatio = 0.67;
 const expandedId = ref<string | null>(null);
 const activeFireId = ref<string | null>(null);
 const activeFireText = ref('');
@@ -43,6 +46,9 @@ let fireSimulation: FireSimulation | null = null;
 type FireTierParams = {
   bottomHeat: number;
   bottomRows: number;
+  baseHeat: number;
+  baseCoverage: number;
+  baseConnectivity: number;
   sourceCountBonus: number;
   decay: number;
   sparkRate: number;
@@ -89,9 +95,12 @@ type FireFrameStats = {
   bottomDensity: number;
   middleDensity: number;
   topDensity: number;
+  bottomCoverageRatio: number;
   emptyRowCount: number;
   maxFrameWidth: number;
   topSparkCount: number;
+  bottomConnectedRun: number;
+  bottomSegments: number;
   heatCenterY: number | null;
   charCounts: {
     X: number;
@@ -117,6 +126,11 @@ type FireDiagnostics = FireFrameStats & {
   layerCoversMain: boolean;
   heatCenterHistory: number[];
   isMovingUp: boolean;
+  seededBottomRows: number;
+  baseCoverage: number;
+  logicalRows: number;
+  logicalColumns: number;
+  tierColor: string;
 };
 
 function pickVisibleItems(allItems: HotProductRecommendationItem[]): HotProductRecommendationItem[] {
@@ -302,7 +316,7 @@ function runFireAnimation(timestamp: number) {
 function createFireSimulation(item: HotProductRecommendationItem): FireSimulation {
   const size = cardSizes.get(item.id) ?? { width: 900, height: 124 };
   const columns = clamp(Math.floor(size.width / 6), 80, 220);
-  const rows = clamp(Math.floor(size.height / 6.5), 10, 28);
+  const rows = fireLogicalRows;
   const params = fireTier(item.score);
   const tier = scoreTier(item.score);
   const sourceCount = clamp(Math.round(columns / 42) + params.sourceCountBonus, 3, 7);
@@ -348,19 +362,69 @@ function stepFireSimulation(simulation: FireSimulation, allowSparks: boolean) {
 }
 
 function seedBottomHeat(simulation: FireSimulation) {
-  const { columns, rows, params, heat, sourceCenters, frame } = simulation;
+  const { columns, rows, params, heat, frame } = simulation;
   const bottomRows = params.bottomRows;
 
   for (let y = rows - bottomRows; y < rows; y += 1) {
     const fromBottom = (rows - 1 - y) / Math.max(1, bottomRows - 1);
     for (let x = 0; x < columns; x += 1) {
       const source = sourceInfluence(simulation, x, y);
+      const baseValue = baseLayerValue(simulation, x, y);
       const wave = 0.92 + Math.sin(x * 0.08 + frame * 0.16) * 0.06;
-      const value = params.bottomHeat * source * wave * (1 - fromBottom * 0.12);
+      const plumeValue = params.bottomHeat * source * wave * (1 - fromBottom * 0.12);
+      const value = Math.max(plumeValue, baseValue * wave);
       const index = fireIndex(simulation, x, y);
       heat[index] = Math.max(heat[index] * 0.82, value);
     }
   }
+}
+
+function baseLayerValue(simulation: FireSimulation, x: number, y: number): number {
+  const { columns, params, frame, seed } = simulation;
+  const fromBottom = (simulation.rows - 1 - y) / Math.max(1, simulation.rows - 1);
+
+  if (fromBottom > fireBaseZoneRatio) {
+    return 0;
+  }
+
+  const source = sourceInfluence(simulation, x, y);
+  const edgeMargin = (columns * (1 - params.baseCoverage)) / 2;
+  const leftFade = clamp((x - edgeMargin) / Math.max(1, columns * 0.08), 0, 1);
+  const rightFade = clamp((columns - edgeMargin - x) / Math.max(1, columns * 0.08), 0, 1);
+  const edgeFade = Math.min(leftFade, rightFade);
+  const baseProgress = fromBottom / fireBaseZoneRatio;
+  const broadWave =
+    0.7 +
+    Math.sin(x * 0.032 + seed * 0.0009 + frame * 0.028) * 0.16 +
+    Math.sin(x * 0.083 - seed * 0.0004 - frame * 0.019) * 0.08;
+  const detailWave = 0.9 + Math.sin(x * 0.14 + y * 0.19 - frame * 0.024) * 0.07;
+  const gapNoise = noise(Math.floor(x / 7), seed * 0.017 + y * 5, Math.floor(frame / 10) * 0.08);
+  const gap = gapNoise < (1 - params.baseConnectivity) * 0.1 ? 0.52 : 1;
+  const localHeight = clamp(0.42 + broadWave * 0.28 + source * 0.3, 0.28, 0.94);
+  const heightMask =
+    baseProgress <= localHeight ? 1 : clamp(1 - (baseProgress - localHeight) / 0.22, 0.24, 1);
+  const plumeBoost = 0.74 + source * 0.36;
+  const rowFalloff = 1 - baseProgress * 0.48;
+
+  return clamp(params.baseHeat * edgeFade * broadWave * detailWave * gap * heightMask * plumeBoost * rowFalloff, 0, 1);
+}
+
+function tongueLayerValue(simulation: FireSimulation, x: number, y: number): number {
+  const { params, frame, seed } = simulation;
+  const fromBottom = (simulation.rows - 1 - y) / Math.max(1, simulation.rows - 1);
+
+  if (fromBottom <= fireBaseZoneRatio) {
+    return 0;
+  }
+
+  const source = sourceInfluence(simulation, x, y);
+  const verticalProgress = (fromBottom - fireBaseZoneRatio) / (1 - fireBaseZoneRatio);
+  const verticalFade = clamp(1 - verticalProgress * 0.72, 0.2, 1);
+  const wave = 0.82 + Math.sin(x * 0.075 + y * 0.24 - frame * 0.04 + seed * 0.0006) * 0.13;
+  const gapNoise = noise(Math.floor(x / 4), seed * 0.021 + y * 3, Math.floor(frame / 9) * 0.08);
+  const gap = gapNoise < 0.08 ? 0.45 : 1;
+
+  return clamp(params.bottomHeat * source * verticalFade * wave * gap * 0.72, 0, 1);
 }
 
 function sourceInfluence(simulation: FireSimulation, x: number, y: number): number {
@@ -371,9 +435,10 @@ function sourceInfluence(simulation: FireSimulation, x: number, y: number): numb
   for (let index = 0; index < sourceCenters.length; index += 1) {
     const drift = Math.sin(frame * 0.045 + index * 1.9) * columns * 0.018;
     const center = sourceCenters[index] + drift;
-    const width = columns * (0.052 + fromBottom * 0.055);
+    const width = columns * (0.084 - fromBottom * 0.04);
     const distance = Math.abs(x - center);
-    const influence = Math.max(0, 1 - distance / width);
+    const reach = clamp(1 - Math.max(0, fromBottom - 0.92) / 0.08, 0, 1);
+    const influence = Math.max(0, 1 - distance / Math.max(1, width)) * reach;
     strongest = Math.max(strongest, influence);
   }
 
@@ -386,7 +451,9 @@ function propagateHeat(simulation: FireSimulation) {
 
   for (let y = 0; y < rows - 1; y += 1) {
     const height = y / Math.max(1, rows - 1);
-    const decay = params.decay + (1 - height) * 0.036;
+    const decay = params.decay + (1 - height) * 0.028;
+    const bottomConnectivity = clamp((height - 0.58) / 0.42, 0, 1);
+    const lateralSpread = params.spread + params.baseConnectivity * bottomConnectivity * 0.085;
 
     for (let x = 0; x < columns; x += 1) {
       const drift = Math.sin(frame * 0.05 + y * 0.4) > 0 ? 1 : -1;
@@ -396,7 +463,12 @@ function propagateHeat(simulation: FireSimulation) {
       const twoBelow = sampleHeat(simulation, x + drift, y + 2);
       const turbulence = (noise(x * 0.7, y * 1.3 + simulation.seed, frame * 0.032) - 0.5) * 0.018;
       const value =
-        below * 0.52 + belowLeft * params.spread + belowRight * params.spread + twoBelow * 0.16 + turbulence - decay;
+        below * (0.5 - bottomConnectivity * 0.04) +
+        belowLeft * lateralSpread +
+        belowRight * lateralSpread +
+        twoBelow * 0.15 +
+        turbulence -
+        decay;
       nextHeat[fireIndex(simulation, x, y)] = clamp(value, 0, 1);
     }
   }
@@ -428,7 +500,7 @@ function updateSparks(simulation: FireSimulation, allowSpawn: boolean) {
 
   simulation.sparks = sparks.filter((spark) => spark.ttl > 0 && spark.y >= 0 && spark.y < rows);
 
-  if (!allowSpawn || simulation.sparks.length > 22) {
+  if (!allowSpawn || simulation.sparks.length > 26) {
     return;
   }
 
@@ -443,8 +515,8 @@ function updateSparks(simulation: FireSimulation, allowSpawn: boolean) {
     simulation.sparks.push({
       x: clamp(source + offset, 0, columns - 1),
       y: rows - 1,
-      ttl: Math.round(rows * (1 + noise(index, seed, frame * 0.04) * 0.75)),
-      speed: 0.78 + noise(index * 5, seed, frame * 0.07) * 0.54
+      ttl: Math.round(rows * (1.25 + noise(index, seed, frame * 0.04) * 0.85)),
+      speed: 0.62 + noise(index * 5, seed, frame * 0.07) * 0.42
     });
   }
 }
@@ -472,10 +544,19 @@ function renderFireSimulation(simulation: FireSimulation): string {
         continue;
       }
 
-      const value = heat[fireIndex(simulation, x, y)];
+      const heatValue = heat[fireIndex(simulation, x, y)];
+      const baseValue = baseLayerValue(simulation, x, y);
+      const tongueValue = tongueLayerValue(simulation, x, y);
+      const value = Math.max(heatValue, baseValue, tongueValue);
       const visibilityNoise = noise(x * 3.1, y * 5.7 + seed, frame * 0.018);
-      const threshold = 0.125 + fromBottom * 0.24;
-      if (value < threshold || visibilityNoise > params.maxOccupancy * 1.12 + value * 0.54) {
+      const isBaseZone = fromBottom <= fireBaseZoneRatio;
+      const threshold = isBaseZone ? 0.112 + fromBottom * 0.14 : 0.078 + fromBottom * 0.095;
+      const baseVisibilityBoost = isBaseZone ? params.baseConnectivity * 0.24 + baseValue * 0.16 : 0;
+      const tongueVisibilityBoost = !isBaseZone && fromBottom > fireMiddleZoneRatio ? 0.075 : !isBaseZone ? 0.025 : 0;
+      if (
+        value < threshold ||
+        visibilityNoise > params.maxOccupancy * 1.08 + value * 0.52 + baseVisibilityBoost + tongueVisibilityBoost
+      ) {
         line += ' ';
         continue;
       }
@@ -524,7 +605,29 @@ function enforceOccupancy(
     return rows;
   }
 
-  const keepRatio = maxOccupancy / (occupied / total);
+  const zoneCaps = {
+    top: maxOccupancy * 0.42,
+    middle: maxOccupancy * 0.94,
+    bottom: Math.min(0.4, maxOccupancy * 2.25)
+  };
+  const zoneCounts = {
+    top: { total: 0, occupied: 0 },
+    middle: { total: 0, occupied: 0 },
+    bottom: { total: 0, occupied: 0 }
+  };
+
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const zone = fireRowZone(rowIndex, rowCount);
+    const row = rows[rowIndex] ?? '';
+
+    for (let column = 0; column < columns; column += 1) {
+      zoneCounts[zone].total += 1;
+      if ((row[column] ?? ' ') !== ' ') {
+        zoneCounts[zone].occupied += 1;
+      }
+    }
+  }
+
   return rows.map((row, rowIndex) =>
     Array.from(row)
       .map((char, column) => {
@@ -532,10 +635,29 @@ function enforceOccupancy(
           return char;
         }
 
-        return noise(column * 41, rowIndex * 17 + seed, frame * 0.02) <= keepRatio ? char : ' ';
+        const zone = fireRowZone(rowIndex, rowCount);
+        const zoneDensity = zoneCounts[zone].occupied / Math.max(1, zoneCounts[zone].total);
+        const keepRatio = zoneDensity > zoneCaps[zone] ? zoneCaps[zone] / zoneDensity : 1;
+        const bottomBias = rowIndex / Math.max(1, rowCount - 1);
+        const effectiveKeepRatio = clamp(keepRatio * (0.78 + bottomBias * 0.16), 0, 1);
+        return noise(column * 41, rowIndex * 17 + seed, frame * 0.02) <= effectiveKeepRatio ? char : ' ';
       })
       .join('')
   );
+}
+
+function fireRowZone(rowIndex: number, rowCount: number): 'top' | 'middle' | 'bottom' {
+  const fromBottom = (rowCount - 1 - rowIndex) / Math.max(1, rowCount - 1);
+
+  if (fromBottom <= fireBaseZoneRatio) {
+    return 'bottom';
+  }
+
+  if (fromBottom <= fireMiddleZoneRatio) {
+    return 'middle';
+  }
+
+  return 'top';
 }
 
 function fireTier(score: number): FireTierParams {
@@ -543,9 +665,12 @@ function fireTier(score: number): FireTierParams {
     return {
       bottomHeat: 1,
       bottomRows: 4,
+      baseHeat: 0.58,
+      baseCoverage: 0.94,
+      baseConnectivity: 0.9,
       sourceCountBonus: 2,
-      decay: 0.028,
-      sparkRate: 0.12,
+      decay: 0.026,
+      sparkRate: 0.16,
       maxOccupancy: 0.165,
       spread: 0.17
     };
@@ -554,23 +679,29 @@ function fireTier(score: number): FireTierParams {
   if (score >= 80) {
     return {
       bottomHeat: 0.94,
-      bottomRows: 3,
+      bottomRows: 4,
+      baseHeat: 0.56,
+      baseCoverage: 0.92,
+      baseConnectivity: 0.86,
       sourceCountBonus: 1,
-      decay: 0.036,
-      sparkRate: 0.085,
-      maxOccupancy: 0.13,
-      spread: 0.14
+      decay: 0.03,
+      sparkRate: 0.145,
+      maxOccupancy: 0.135,
+      spread: 0.16
     };
   }
 
   return {
     bottomHeat: 0.82,
-    bottomRows: 2,
+    bottomRows: 4,
+    baseHeat: 0.48,
+    baseCoverage: 0.9,
+    baseConnectivity: 0.78,
     sourceCountBonus: 0,
-    decay: 0.042,
-    sparkRate: 0.055,
-    maxOccupancy: 0.1,
-    spread: 0.14
+    decay: 0.034,
+    sparkRate: 0.095,
+    maxOccupancy: 0.105,
+    spread: 0.15
   };
 }
 
@@ -604,7 +735,8 @@ function updateFireDiagnostics(simulation: FireSimulation, frameText: string) {
     simulation,
     frameText,
     rectFromDom(mainElement.getBoundingClientRect()),
-    rectFromDom(layerElement.getBoundingClientRect())
+    rectFromDom(layerElement.getBoundingClientRect()),
+    getComputedStyle(layerElement).color
   );
 
   activeFireDiagnostics.value = diagnostics;
@@ -620,7 +752,8 @@ function computeFireDiagnostics(
   simulation: FireSimulation,
   frameText: string,
   mainRect: FireRect,
-  layerRect: FireRect
+  layerRect: FireRect,
+  tierColor: string
 ): FireDiagnostics {
   const stats = getFireFrameStats(frameText, simulation.columns, simulation.rows);
 
@@ -634,11 +767,16 @@ function computeFireDiagnostics(
   const heatCenterHistory = [...simulation.heatCenterHistory];
   const firstCenter = heatCenterHistory[0];
   const lastCenter = heatCenterHistory[heatCenterHistory.length - 1];
+  const hasRecentUpwardStep = heatCenterHistory.some((center, index) => {
+    const previous = heatCenterHistory[index - 1];
+    return previous !== undefined && center < previous - 0.08;
+  });
   const isMovingUp =
-    heatCenterHistory.length >= 3 &&
-    firstCenter !== undefined &&
-    lastCenter !== undefined &&
-    lastCenter < firstCenter - 0.2;
+    hasRecentUpwardStep ||
+    (heatCenterHistory.length >= 3 &&
+      firstCenter !== undefined &&
+      lastCenter !== undefined &&
+      lastCenter < firstCenter - 0.2);
 
   return {
     ...stats,
@@ -655,7 +793,12 @@ function computeFireDiagnostics(
     layerInsideMain: rectInside(layerRect, mainRect),
     layerCoversMain: rectCovers(layerRect, mainRect),
     heatCenterHistory,
-    isMovingUp
+    isMovingUp,
+    seededBottomRows: simulation.params.bottomRows,
+    baseCoverage: simulation.params.baseCoverage,
+    logicalRows: simulation.rows,
+    logicalColumns: simulation.columns,
+    tierColor
   };
 }
 
@@ -671,8 +814,11 @@ function getFireFrameStats(frameText: string, expectedColumns: number, expectedR
   let emptyRowCount = 0;
   let maxFrameWidth = 0;
   let topSparkCount = 0;
+  let bottomConnectedRun = 0;
+  let bottomSegments = 0;
   let weightedY = 0;
   let weightTotal = 0;
+  const bottomColumns = new Array<boolean>(expectedColumns).fill(false);
 
   for (let rowIndex = 0; rowIndex < expectedRows; rowIndex += 1) {
     const row = safeRows[rowIndex] ?? '';
@@ -691,6 +837,11 @@ function getFireFrameStats(frameText: string, expectedColumns: number, expectedR
       rowOccupied += 1;
       occupied += 1;
       zoneOccupied[zone] += 1;
+
+      const fromBottom = (expectedRows - 1 - rowIndex) / Math.max(1, expectedRows - 1);
+      if (fromBottom <= fireBaseZoneRatio) {
+        bottomColumns[column] = true;
+      }
 
       if (char === 'X') {
         counts.X += 1;
@@ -717,14 +868,36 @@ function getFireFrameStats(frameText: string, expectedColumns: number, expectedR
     }
   }
 
+  let currentBottomRun = 0;
+  for (const isOccupied of bottomColumns) {
+    if (isOccupied) {
+      currentBottomRun += 1;
+      bottomConnectedRun = Math.max(bottomConnectedRun, currentBottomRun);
+      continue;
+    }
+
+    if (currentBottomRun > 0) {
+      bottomSegments += 1;
+    }
+
+    currentBottomRun = 0;
+  }
+
+  if (currentBottomRun > 0) {
+    bottomSegments += 1;
+  }
+
   return {
     density: occupied / Math.max(1, expectedColumns * expectedRows),
     bottomDensity: zoneOccupied.bottom / Math.max(1, zoneTotals.bottom),
     middleDensity: zoneOccupied.middle / Math.max(1, zoneTotals.middle),
     topDensity: zoneOccupied.top / Math.max(1, zoneTotals.top),
+    bottomCoverageRatio: bottomColumns.filter(Boolean).length / Math.max(1, expectedColumns),
     emptyRowCount,
     maxFrameWidth,
     topSparkCount,
+    bottomConnectedRun,
+    bottomSegments,
     heatCenterY: weightTotal > 0 ? weightedY / weightTotal : null,
     charCounts: counts
   };
@@ -789,12 +962,20 @@ function fireDebugAttributes(item: HotProductRecommendationItem): Record<string,
     'data-fire-tier': diagnostics.tier,
     'data-fire-columns': String(diagnostics.columns),
     'data-fire-rows': String(diagnostics.rows),
+    'data-fire-logical-columns': String(diagnostics.logicalColumns),
+    'data-fire-logical-rows': String(diagnostics.logicalRows),
     'data-fire-density': formatDiagnosticRatio(diagnostics.density),
     'data-fire-bottom-density': formatDiagnosticRatio(diagnostics.bottomDensity),
     'data-fire-middle-density': formatDiagnosticRatio(diagnostics.middleDensity),
     'data-fire-top-density': formatDiagnosticRatio(diagnostics.topDensity),
+    'data-fire-bottom-coverage-ratio': formatDiagnosticRatio(diagnostics.bottomCoverageRatio),
+    'data-fire-base-coverage': formatDiagnosticRatio(diagnostics.baseCoverage),
     'data-fire-spark-count': String(diagnostics.sparkCount),
     'data-fire-top-spark-count': String(diagnostics.topSparkCount),
+    'data-fire-bottom-connected-run': String(diagnostics.bottomConnectedRun),
+    'data-fire-bottom-segments': String(diagnostics.bottomSegments),
+    'data-fire-seeded-bottom-rows': String(diagnostics.seededBottomRows),
+    'data-fire-tier-color': diagnostics.tierColor,
     'data-fire-is-moving-up': String(diagnostics.isMovingUp),
     'data-fire-layer-covers-main': String(diagnostics.layerCoversMain)
   };
@@ -1373,6 +1554,9 @@ onBeforeUnmount(() => {
 }
 
 .hot-card--steady {
+  --ascii-fire-color: rgb(251 146 60 / 0.42);
+  --ascii-fire-shadow-primary: rgb(249 115 22 / 0.14);
+  --ascii-fire-shadow-secondary: rgb(194 65 12 / 0.06);
   --flame-aura: rgb(249 115 22 / 0.12);
   --flame-core: rgb(249 115 22 / 0.24);
   --flame-deep: rgb(127 29 29 / 0.12);
@@ -1393,6 +1577,9 @@ onBeforeUnmount(() => {
 }
 
 .hot-card--strong {
+  --ascii-fire-color: rgb(251 146 60 / 0.52);
+  --ascii-fire-shadow-primary: rgb(249 115 22 / 0.2);
+  --ascii-fire-shadow-secondary: rgb(185 28 28 / 0.08);
   --flame-aura: rgb(249 115 22 / 0.18);
   --flame-core: rgb(249 115 22 / 0.4);
   --flame-deep: rgb(127 29 29 / 0.18);
@@ -1414,6 +1601,9 @@ onBeforeUnmount(() => {
 }
 
 .hot-card--priority {
+  --ascii-fire-color: rgb(248 113 113 / 0.58);
+  --ascii-fire-shadow-primary: rgb(249 115 22 / 0.22);
+  --ascii-fire-shadow-secondary: rgb(127 29 29 / 0.12);
   --flame-aura: rgb(185 28 28 / 0.25);
   --flame-core: rgb(239 68 68 / 0.42);
   --flame-deep: rgb(127 29 29 / 0.28);
@@ -1479,16 +1669,16 @@ onBeforeUnmount(() => {
   inset: 0;
   margin: 0;
   overflow: hidden;
-  color: rgb(251 146 60 / 0.5);
+  color: var(--ascii-fire-color, rgb(251 146 60 / 0.5));
   font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
-  font-size: 0.54rem;
+  font-size: 0.42rem;
   font-weight: 800;
-  line-height: 1.02;
+  line-height: calc(7.75rem / 24);
   opacity: 0;
   pointer-events: none;
   text-shadow:
-    0 0 0.08rem rgb(249 115 22 / 0.18),
-    0 0 0.16rem rgb(185 28 28 / 0.08);
+    0 0 0.08rem var(--ascii-fire-shadow-primary, rgb(249 115 22 / 0.18)),
+    0 0 0.16rem var(--ascii-fire-shadow-secondary, rgb(185 28 28 / 0.08));
   transition: opacity 140ms ease;
   user-select: none;
   white-space: pre;
