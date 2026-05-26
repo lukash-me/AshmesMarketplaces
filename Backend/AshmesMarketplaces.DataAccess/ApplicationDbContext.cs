@@ -34,6 +34,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserReviewReplyRow> ParserReviewReplyRows => Set<ParserReviewReplyRow>();
     public DbSet<ParserRankSnapshotRow> ParserRankSnapshotRows => Set<ParserRankSnapshotRow>();
     public DbSet<ParserRankPageFetch> ParserRankPageFetches => Set<ParserRankPageFetch>();
+    public DbSet<ParserLogisticsSnapshotRow> ParserLogisticsSnapshotRows => Set<ParserLogisticsSnapshotRow>();
+    public DbSet<ParserWarehouseAvailabilityRow> ParserWarehouseAvailabilityRows => Set<ParserWarehouseAvailabilityRow>();
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
     public DbSet<Logistic> Logistics => Set<Logistic>();
@@ -48,6 +50,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<Recommendation> Recommendations => Set<Recommendation>();
     public DbSet<RecommendationProduct> RecommendationProducts => Set<RecommendationProduct>();
     public DbSet<RecommendationCategory> RecommendationCategories => Set<RecommendationCategory>();
+    public DbSet<MarketRecommendationRun> MarketRecommendationRuns => Set<MarketRecommendationRun>();
+    public DbSet<MarketHotProductRecommendation> MarketHotProductRecommendations => Set<MarketHotProductRecommendation>();
 
     public DbSet<Marketplace> Marketplaces => Set<Marketplace>();
     public DbSet<Brand> Brands => Set<Brand>();

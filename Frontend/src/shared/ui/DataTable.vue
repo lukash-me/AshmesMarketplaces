@@ -10,13 +10,15 @@ export type DataTableColumn<T> = {
   value?: (row: T) => string | number | null | undefined;
 };
 
+type RowInteractive<T> = boolean | ((row: T) => boolean);
+
 const props = defineProps<{
   rows: T[];
   columns: DataTableColumn<T>[];
   sort?: string | null;
   rowKey: (row: T) => string;
   rowClass?: (row: T) => string;
-  rowInteractive?: boolean;
+  rowInteractive?: RowInteractive<T>;
   rowAriaLabel?: (row: T) => string;
   selectedRowKey?: string | null;
 }>();
@@ -51,9 +53,15 @@ function rowClasses(row: T): Array<string | undefined> {
 
   return [
     props.rowClass?.(row),
-    props.rowInteractive ? 'table__row--interactive' : undefined,
+    isRowInteractive(row) ? 'table__row--interactive' : undefined,
     props.selectedRowKey === key ? 'table__row--selected' : undefined
   ];
+}
+
+function isRowInteractive(row: T): boolean {
+  return typeof props.rowInteractive === 'function'
+    ? props.rowInteractive(row)
+    : Boolean(props.rowInteractive);
 }
 </script>
 
@@ -87,12 +95,12 @@ function rowClasses(row: T): Array<string | undefined> {
           v-for="row in rows"
           :key="rowKey(row)"
           :class="rowClasses(row)"
-          :tabindex="rowInteractive ? 0 : undefined"
-          :role="rowInteractive ? 'button' : undefined"
-          :aria-label="rowInteractive ? rowAriaLabel?.(row) : undefined"
-          @click="rowInteractive && emit('rowClick', row)"
-          @keydown.enter.prevent="rowInteractive && emit('rowClick', row)"
-          @keydown.space.prevent="rowInteractive && emit('rowClick', row)"
+          :tabindex="isRowInteractive(row) ? 0 : undefined"
+          :role="isRowInteractive(row) ? 'button' : undefined"
+          :aria-label="isRowInteractive(row) ? rowAriaLabel?.(row) : undefined"
+          @click="isRowInteractive(row) && emit('rowClick', row)"
+          @keydown.enter.prevent="isRowInteractive(row) && emit('rowClick', row)"
+          @keydown.space.prevent="isRowInteractive(row) && emit('rowClick', row)"
         >
           <td
             v-for="column in columns"

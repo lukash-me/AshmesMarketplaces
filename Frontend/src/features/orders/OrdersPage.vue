@@ -1,106 +1,247 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { getProblemMessage } from '@/shared/api/problemDetails';
+import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
+import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
+import SectionSelector from '@/shared/ui/SectionSelector.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
-import OrderDetailDrawer from './OrderDetailDrawer.vue';
-import { getOrders } from './orders.api';
-import OrdersFilters from './OrdersFilters.vue';
+import { getObservedMarketEvents } from './orders.api';
+import ObservedMarketEventFilters from './ObservedMarketEventFilters.vue';
+import ObservedMarketEventTable from './ObservedMarketEventTable.vue';
+import { formatObservedNumber } from './orderDisplay';
 import {
-  parseOrdersQuery,
-  removeOrderQueryFilter,
-  resetOrderQueryFilters,
-  toOrdersApiParams,
-  toOrdersRouteQuery,
-  type OrderQueryFilterKey
+  parseObservedMarketEventQuery,
+  removeObservedMarketEventQueryFilter,
+  resetObservedMarketEventQueryFilters,
+  toObservedMarketEventApiParams,
+  toObservedMarketEventRouteQuery,
+  toObservedMarketEventSummaryApiParams,
+  type ObservedMarketEventQueryFilterKey
 } from './ordersQuery';
-import OrdersTable from './OrdersTable.vue';
-import type { OrderListItem, OrderQueryState } from './orders.types';
+import type {
+  ObservedMarketEventItem,
+  ObservedMarketEventQueryState,
+  ObservedMarketEventResponse,
+  ObservedMarketEventSummary,
+  ObservedMarketEventTab,
+  ObservedMarketEventType
+} from './orders.types';
 
 const route = useRoute();
 const router = useRouter();
 
-const queryState = ref<OrderQueryState>(parseOrdersQuery(route.query));
-const orders = ref<OrderListItem[]>([]);
+const queryState = ref<ObservedMarketEventQueryState>(parseObservedMarketEventQuery(route.query));
+const observedMarketEvents = ref<ObservedMarketEventItem[]>([]);
+const response = ref<ObservedMarketEventResponse | null>(null);
+const summaryResponse = ref<ObservedMarketEventResponse | null>(null);
 const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
-const selectedOrder = ref<OrderListItem | null>(null);
+const selectedProduct = ref<ParserProductListItem | null>(null);
+
+const tabs: Array<{ key: ObservedMarketEventTab; label: string }> = [
+  { key: 'all', label: 'Все события' },
+  { key: 'assumed-orders', label: 'Предполагаемые заказы' },
+  { key: 'new-products', label: 'Новые товары' },
+  { key: 'restocks', label: 'Пополнения товаров' }
+];
+
+const hasNotEnoughRunsWarning = computed(() =>
+  response.value?.warnings.includes('not_enough_logistics_runs')
+  || summaryResponse.value?.warnings.includes('not_enough_logistics_runs')
+  || false
+);
+
+const summary = computed<ObservedMarketEventSummary | null>(() => summaryResponse.value?.summary ?? response.value?.summary ?? null);
+const emptyState = computed(() => getEmptyState(queryState.value.tab));
 
 watch(
   () => route.query,
   async (query) => {
-    queryState.value = parseOrdersQuery(query);
-    await loadOrders();
+    queryState.value = parseObservedMarketEventQuery(query);
+    await loadObservedMarketEvents();
   },
   { immediate: true }
 );
 
-async function loadOrders() {
+async function loadObservedMarketEvents() {
   loading.value = true;
   error.value = '';
 
   try {
-    const response = await getOrders(toOrdersApiParams(queryState.value));
-    orders.value = response.items;
-    totalCount.value = response.totalCount;
+    const [summaryResult, listResult] = await Promise.all([
+      getObservedMarketEvents(toObservedMarketEventSummaryApiParams(queryState.value)),
+      loadTabResponse(queryState.value)
+    ]);
+
+    summaryResponse.value = summaryResult;
+    response.value = listResult.response;
+    observedMarketEvents.value = listResult.items;
+    totalCount.value = listResult.totalCount;
   } catch (err) {
-    orders.value = [];
+    response.value = null;
+    summaryResponse.value = null;
+    observedMarketEvents.value = [];
     totalCount.value = 0;
-    error.value = getProblemMessage(err, 'Unable to load orders.');
+    error.value = getProblemMessage(err, 'Не удалось загрузить события рынка.');
   } finally {
     loading.value = false;
   }
 }
 
-async function updateQuery(patch: Partial<OrderQueryState>) {
+async function loadTabResponse(state: ObservedMarketEventQueryState): Promise<{
+  response: ObservedMarketEventResponse;
+  items: ObservedMarketEventItem[];
+  totalCount: number;
+}> {
+  const eventType = tabEventType(state.tab);
+  const nextResponse = await getObservedMarketEvents(toObservedMarketEventApiParams(state, eventType));
+
+  return {
+    response: nextResponse,
+    items: nextResponse.items,
+    totalCount: nextResponse.totalCount
+  };
+}
+
+async function updateQuery(patch: Partial<ObservedMarketEventQueryState>) {
   const nextState = {
     ...queryState.value,
     ...patch
   };
 
   await router.replace({
-    query: toOrdersRouteQuery(nextState)
+    query: toObservedMarketEventRouteQuery(nextState)
   });
 }
 
 function resetFilters() {
   void router.replace({
-    query: toOrdersRouteQuery(resetOrderQueryFilters(queryState.value))
+    query: toObservedMarketEventRouteQuery(
+      resetObservedMarketEventQueryFilters(queryState.value)
+    )
   });
 }
 
-function removeFilter(key: OrderQueryFilterKey) {
+function removeFilter(key: ObservedMarketEventQueryFilterKey) {
   void router.replace({
-    query: toOrdersRouteQuery(removeOrderQueryFilter(queryState.value, key))
+    query: toObservedMarketEventRouteQuery(
+      removeObservedMarketEventQueryFilter(queryState.value, key)
+    )
   });
 }
 
-function openOrder(row: OrderListItem) {
-  selectedOrder.value = row;
+function selectTab(tab: ObservedMarketEventTab) {
+  void updateQuery({ tab, page: 1 });
 }
 
-function closeOrder() {
-  selectedOrder.value = null;
+function selectTabValue(tab: string) {
+  if (tab === 'all' || tab === 'assumed-orders' || tab === 'new-products' || tab === 'restocks') {
+    selectTab(tab);
+  }
+}
+
+function openProduct(row: ObservedMarketEventItem) {
+  if (!row.parserProductRowId) {
+    return;
+  }
+
+  selectedProduct.value = {
+    id: row.parserProductRowId,
+    parserRunId: '',
+    parsedAtUtc: row.currentObservedAtUtc ?? row.previousObservedAtUtc ?? '',
+    wbProductId: row.wbProductId,
+    wbRootId: row.wbRootId,
+    name: row.name?.trim() || `WB ${row.wbProductId}`,
+    brandName: row.brandName,
+    sellerName: row.sellerName,
+    priceRegular: row.priceRegular,
+    priceDiscounted: row.priceDiscounted,
+    priceWbWallet: row.priceWbWallet,
+    discountPercent: null,
+    totalQuantity: row.currentQuantity,
+    ratingRounded: null,
+    reviewRating: row.rating,
+    feedbackCount: row.feedbackCount,
+    sourceCategory: row.sourceCategory,
+    sourceSubcategory: row.sourceSubcategory,
+    sourceQuery: null,
+    thumbnailUrl: row.imageUrl,
+    rank: null,
+    position: null,
+    logistics: null
+  };
+}
+
+function tabEventType(tab: ObservedMarketEventTab): ObservedMarketEventType | undefined {
+  if (tab === 'assumed-orders') {
+    return 'stock_decreased';
+  }
+
+  if (tab === 'new-products') {
+    return 'new_product_observed';
+  }
+
+  if (tab === 'restocks') {
+    return 'stock_increased';
+  }
+
+  return undefined;
+}
+
+function getEmptyState(tab: ObservedMarketEventTab): { title: string; description: string } {
+  if (tab === 'assumed-orders') {
+    return {
+      title: 'Снижения остатков не найдено',
+      description: 'В последних наблюдениях не найдено товаров, у которых остаток WB уменьшился.'
+    };
+  }
+
+  if (tab === 'new-products') {
+    return {
+      title: 'Новые товары не найдены',
+      description: 'В текущем наблюдении нет товаров, которых не было в предыдущем.'
+    };
+  }
+
+  if (tab === 'restocks') {
+    return {
+      title: 'Пополнения товаров не найдены',
+      description: 'В пересекающихся товарах не найдено положительных изменений наблюдаемого остатка WB.'
+    };
+  }
+
+  return {
+    title: 'События не найдены',
+    description: 'Между последними наблюдениями нет событий для выбранных фильтров.'
+  };
 }
 </script>
 
 <template>
   <div class="orders-page">
     <PageHeader
-      title="Orders"
-      description="Read-only order operations view with fulfillment route, status code, price, quantity and timeline filters."
+      title="События рынка"
+      description="Отслеживаем изменения по товарам между последними наблюдениями: новые карточки, изменения остатков и возможные заказы."
     />
 
-    <OrdersFilters
+    <ObservedMarketEventFilters
       :state="queryState"
       @apply="updateQuery"
       @reset="resetFilters"
       @remove="removeFilter"
+    />
+
+    <SectionSelector
+      :items="tabs"
+      :model-value="queryState.tab"
+      aria-label="Разделы событий рынка"
+      @update:model-value="selectTabValue"
     />
 
     <LoadingState v-if="loading" class="app-surface" />
@@ -108,34 +249,65 @@ function closeOrder() {
     <EmptyState
       v-else-if="error"
       class="app-surface"
-      title="Orders could not be loaded"
+      title="Не удалось загрузить данные"
       :description="error"
     />
 
-    <EmptyState
-      v-else-if="orders.length === 0"
-      class="app-surface"
-      title="No orders found"
-      description="Adjust filters or load orders through the existing backend API."
-    />
+    <template v-else>
+      <section
+        v-if="summary && !hasNotEnoughRunsWarning"
+        class="orders-summary app-surface"
+        aria-label="Сводка по наблюдаемым событиям"
+      >
+        <span>
+          <strong>{{ formatObservedNumber(summary.newProductObservedCount) }}</strong>
+          Новые товары
+        </span>
+        <span>
+          <strong>{{ formatObservedNumber(summary.stockDecreasedCount) }}</strong>
+          Снижение остатков
+        </span>
+        <span>
+          <strong>{{ formatObservedNumber(summary.stockIncreasedCount) }}</strong>
+          Пополнения товаров
+        </span>
+        <span>
+          <strong>{{ formatObservedNumber(summary.comparedPairsCount) }}</strong>
+          Сравнено товаров
+        </span>
+      </section>
 
-    <OrdersTable
-      v-else
-      :rows="orders"
-      :page="queryState.page"
-      :page-size="queryState.pageSize"
-      :total-count="totalCount"
-      :sort="queryState.sort"
-      :selected-id="selectedOrder?.id"
-      @sort="updateQuery({ page: 1, sort: $event })"
-      @page="updateQuery({ page: $event })"
-      @open="openOrder"
-    />
+      <EmptyState
+        v-if="hasNotEnoughRunsWarning"
+        class="app-surface"
+        title="Недостаточно наблюдений"
+        description="Чтобы сравнить изменения, нужно минимум два успешных сбора логистики."
+      />
 
-    <OrderDetailDrawer
-      :open="Boolean(selectedOrder)"
-      :order="selectedOrder"
-      @close="closeOrder"
+      <EmptyState
+        v-else-if="observedMarketEvents.length === 0"
+        class="app-surface"
+        :title="emptyState.title"
+        :description="emptyState.description"
+      />
+
+      <ObservedMarketEventTable
+        v-else
+        :rows="observedMarketEvents"
+        :page="queryState.page"
+        :page-size="queryState.pageSize"
+        :total-count="totalCount"
+        :sort="queryState.sort"
+        @sort="updateQuery({ page: 1, sort: $event })"
+        @page="updateQuery({ page: $event })"
+        @open="openProduct"
+      />
+    </template>
+
+    <ParserProductDetailDrawer
+      :open="Boolean(selectedProduct)"
+      :product="selectedProduct"
+      @close="selectedProduct = null"
     />
   </div>
 </template>
@@ -144,5 +316,46 @@ function closeOrder() {
 .orders-page {
   display: grid;
   gap: var(--space-4);
+}
+
+.orders-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  border-color: rgb(249 115 22 / 0.18);
+  background:
+    linear-gradient(90deg, rgb(249 115 22 / 0.035), transparent 44%),
+    var(--surface-panel);
+  padding: var(--space-3);
+}
+
+.orders-summary span {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  border: 1px solid rgb(249 115 22 / 0.18);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  padding: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.orders-summary strong {
+  color: var(--accent-ember-text-strong);
+  font-size: 1rem;
+  font-weight: 820;
+}
+
+@media (max-width: 860px) {
+  .orders-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .orders-summary {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

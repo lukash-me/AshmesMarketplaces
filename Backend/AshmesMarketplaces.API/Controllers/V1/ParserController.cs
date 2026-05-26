@@ -14,15 +14,21 @@ public sealed class ParserController : ControllerBase
     private readonly IParserProductReadService _productReadService;
     private readonly IParserReviewReadService _reviewReadService;
     private readonly IParserRunReadService _runReadService;
+    private readonly IParserObservedStockDecreaseReadService _observedStockDecreaseReadService;
+    private readonly IParserObservedMarketEventReadService _observedMarketEventReadService;
 
     public ParserController(
         IParserProductReadService productReadService,
         IParserReviewReadService reviewReadService,
-        IParserRunReadService runReadService)
+        IParserRunReadService runReadService,
+        IParserObservedStockDecreaseReadService observedStockDecreaseReadService,
+        IParserObservedMarketEventReadService observedMarketEventReadService)
     {
         _productReadService = productReadService;
         _reviewReadService = reviewReadService;
         _runReadService = runReadService;
+        _observedStockDecreaseReadService = observedStockDecreaseReadService;
+        _observedMarketEventReadService = observedMarketEventReadService;
     }
 
     [HttpGet("products")]
@@ -44,6 +50,39 @@ public sealed class ParserController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _productReadService.GetFilterOptionsAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("products/logistics-summary")]
+    [ProducesResponseType(typeof(ParserProductLogisticsSummaryAggregateDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserProductLogisticsSummaryAggregateDto>> GetProductLogisticsSummary(
+        [FromQuery] ParserProductLogisticsSummaryQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetLogisticsSummaryAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("logistics/observed-stock-decreases")]
+    [ProducesResponseType(typeof(ParserObservedStockDecreaseResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserObservedStockDecreaseResponse>> GetObservedStockDecreases(
+        [FromQuery] ParserObservedStockDecreaseQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _observedStockDecreaseReadService.GetListAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("logistics/observed-events")]
+    [ProducesResponseType(typeof(ParserObservedMarketEventResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserObservedMarketEventResponse>> GetObservedMarketEvents(
+        [FromQuery] ParserObservedMarketEventQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _observedMarketEventReadService.GetListAsync(query, cancellationToken);
         return ToActionResult(result);
     }
 

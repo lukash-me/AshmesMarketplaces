@@ -23,6 +23,7 @@ public sealed record ParserProductListItemDto(
     string? ThumbnailUrl,
     ParserProductRankSummaryDto? Rank,
     ParserProductPositionDto? Position,
+    ParserProductLogisticsSummaryDto? Logistics,
     ParserProductReviewEvidenceDto ParsedReviewEvidence);
 
 public sealed record ParserProductDetailDto(
@@ -62,6 +63,8 @@ public sealed record ParserProductDetailDto(
     string RowHash,
     ParserProductRankSummaryDto? Rank,
     ParserProductPositionDto? Position,
+    ParserProductLogisticsSummaryDto? Logistics,
+    ParserProductLogisticsDetailDto? LogisticsDetail,
     ParserProductReviewEvidenceDto ParsedReviewEvidence);
 
 public sealed record ParserProductRankSummaryDto(
@@ -97,6 +100,82 @@ public sealed record ParserProductReviewEvidenceDto(
     bool IsFullHistoryUnknown,
     bool HasCappedRootPayload);
 
+public sealed record ParserProductLogisticsSummaryDto(
+    int? TotalQuantityObserved,
+    bool? QuantityIsCapped,
+    int? QuantityCapObserved,
+    string TotalQuantityLabel,
+    string? QuantitySemantics,
+    int WarehouseCount,
+    string? Destination,
+    string? LatestLogisticsRunId,
+    DateTime? ObservedAtUtc,
+    bool HasWarehouseRows);
+
+public sealed record ParserProductLogisticsDetailDto(
+    ParserProductLogisticsSummaryDto Summary,
+    string? ProductWhRaw,
+    int? ProductTime1Raw,
+    int? ProductTime2Raw,
+    long? ProductDtypeRaw,
+    int? ProductDistRaw,
+    IReadOnlyList<ParserWarehouseAvailabilityDto> WarehouseRows);
+
+public sealed record ParserWarehouseAvailabilityDto(
+    string? WarehouseIdOnMp,
+    string? OptionId,
+    string? SizeName,
+    string? SizeOrigName,
+    int? QuantityObserved,
+    bool? QuantityIsCapped,
+    int? QuantityCapObserved,
+    string? QuantitySemantics,
+    int? StockPriorityRaw,
+    int? StockTime1Raw,
+    int? StockTime2Raw,
+    long? StockDtypeRaw,
+    int? StockDistRaw,
+    decimal? PriceBasic,
+    decimal? PriceProduct,
+    decimal? PriceLogisticsRaw,
+    decimal? PriceReturnRaw);
+
+public sealed record ParserProductLogisticsSummaryAggregateDto(
+    string? ProductRunId,
+    string? LogisticsRunId,
+    string? SourceCategory,
+    string? SourceSubcategory,
+    int ProductsTotal,
+    int ProductsWithLogistics,
+    int ProductsWithoutLogistics,
+    int ProductsWithQuantity,
+    int ProductsWithoutQuantity,
+    int? QuantityMin,
+    int? QuantityMax,
+    decimal? QuantityAverage,
+    decimal? QuantityMedian,
+    ParserProductQuantityBucketsDto QuantityBuckets,
+    int ProductsWithWarehouseRows,
+    int WarehouseRowsTotal,
+    int DistinctWarehouseIds,
+    decimal AverageWarehousesPerProduct,
+    IReadOnlyList<ParserProductLogisticsDestinationSummaryDto> Destinations,
+    DateTime? LatestObservedAtUtc,
+    IReadOnlyList<string> Warnings);
+
+public sealed record ParserProductQuantityBucketsDto(
+    int Zero,
+    int OneToFive,
+    int SixToTwenty,
+    int TwentyOneToThirtyNine,
+    int FortyPlusOrHigh,
+    int Unknown);
+
+public sealed record ParserProductLogisticsDestinationSummaryDto(
+    string Destination,
+    int ProductsWithLogistics,
+    DateTime? LatestObservedAtUtc);
+
 public sealed record ParserProductFilterOptionsDto(
     IReadOnlyList<string> Categories,
     IReadOnlyList<string> Subcategories,
@@ -111,6 +190,17 @@ public sealed class ParserProductFilterOptionsQuery
     public string? SourceSubcategory { get; init; }
     public string? BrandName { get; init; }
     public string? SellerName { get; init; }
+}
+
+public sealed class ParserProductLogisticsSummaryQuery
+{
+    public string? ParserRunId { get; init; }
+    public string? Search { get; init; }
+    public string? SourceCategory { get; init; }
+    public string? SourceSubcategory { get; init; }
+    public string? BrandName { get; init; }
+    public string? SellerName { get; init; }
+    public string? WbRootId { get; init; }
 }
 
 public sealed class ParserProductListQuery

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import PageHeader from '@/widgets/PageHeader.vue';
@@ -7,6 +7,7 @@ import Badge from '@/shared/ui/Badge.vue';
 import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
+import SectionSelector from '@/shared/ui/SectionSelector.vue';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import MarketProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
@@ -25,7 +26,7 @@ import type {
   RootCluster
 } from './marketIntelligence.types';
 
-type SectionKey = 'events' | 'checks' | 'prices' | 'stock' | 'repeats';
+type SectionKey = 'events' | 'weaknesses' | 'prices' | 'stock' | 'repeats';
 
 type EventGroup = {
   key: string;
@@ -57,6 +58,7 @@ const defaultRegionDest = '12354108';
 const defaultSort = 'popular';
 const collapsedEventCount = 4;
 const topNOptions = [50, 100, 300, 1000];
+const sectionKeys: SectionKey[] = ['events', 'weaknesses', 'prices', 'stock', 'repeats'];
 
 const demoContexts = [
   {
@@ -81,7 +83,7 @@ const demoContexts = [
 
 const sections: Array<{ key: SectionKey; label: string }> = [
   { key: 'events', label: 'События' },
-  { key: 'checks', label: 'Зоны для проверки' },
+  { key: 'weaknesses', label: 'Зоны для проверки' },
   { key: 'prices', label: 'Скидки и цены' },
   { key: 'stock', label: 'Остатки' },
   { key: 'repeats', label: 'Повторы' }
@@ -92,7 +94,7 @@ const router = useRouter();
 
 const selectedSubcategory = ref(readInitialSubcategory());
 const selectedTopN = ref(readInitialTopN());
-const activeSection = ref<SectionKey>('events');
+const activeSection = ref<SectionKey>(readInitialSection());
 const expandedEventGroups = ref<string[]>([]);
 const intelligence = ref<PublicMarketIntelligence | null>(null);
 const loading = ref(false);
@@ -125,20 +127,6 @@ const promoSummaries = computed(() =>
 const priceSummaries = computed(() =>
   (intelligence.value?.pricePressure.summaries ?? []).filter((summary) => !isWalletSummary(summary))
 );
-
-const combinedLimitations = computed(() => {
-  const values = [
-    ...(intelligence.value?.limitations ?? []),
-    ...(intelligence.value?.observationWindow.limitations ?? []),
-    ...(intelligence.value?.promoPressure.limitations ?? []),
-    ...(intelligence.value?.pricePressure.limitations ?? []),
-    ...(intelligence.value?.stockPressure.limitations ?? []),
-    ...(intelligence.value?.concentration.limitations ?? []),
-    'Если карточка не появилась в следующем обновлении, это не считается нулевым остатком без отдельной проверки доступности.'
-  ];
-
-  return [...new Set(values.map(sanitizeText).filter(Boolean))];
-});
 
 const eventGroups = computed<EventGroup[]>(() => {
   const groups = new Map<string, MarketEvent[]>();
@@ -197,6 +185,13 @@ onMounted(() => {
   void refresh();
 });
 
+watch(
+  () => route.query.section,
+  (section) => {
+    activeSection.value = normalizeSection(section);
+  }
+);
+
 async function refresh(): Promise<void> {
   loading.value = true;
   error.value = null;
@@ -212,7 +207,9 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function applySelection(): Promise<void> {
+async function applySubcategorySelection(): Promise<void> {
+  const section = defaultSectionForSubcategory(selectedContext.value.sourceSubcategory);
+
   await router.replace({
     query: {
       sourceCategory: selectedContext.value.sourceCategory,
@@ -220,11 +217,39 @@ async function applySelection(): Promise<void> {
       query: selectedContext.value.query,
       sourceRegionDest: defaultRegionDest,
       sort: defaultSort,
-      topN: String(selectedTopN.value)
+      topN: String(selectedTopN.value),
+      section
+    }
+  });
+
+  activeSection.value = section;
+  await refresh();
+}
+
+async function applyTopNSelection(): Promise<void> {
+  await router.replace({
+    query: {
+      ...route.query,
+      topN: String(selectedTopN.value),
+      section: activeSection.value
     }
   });
 
   await refresh();
+}
+
+function selectSection(section: SectionKey): void {
+  activeSection.value = section;
+  void router.replace({
+    query: {
+      ...route.query,
+      section
+    }
+  });
+}
+
+function selectSectionValue(section: string): void {
+  selectSection(normalizeSection(section));
 }
 
 function toggleEventGroup(key: string): void {
@@ -345,6 +370,27 @@ function readInitialTopN(): number {
   const parsed = raw ? Number(raw) : 100;
 
   return topNOptions.includes(parsed) ? parsed : 100;
+}
+
+function readInitialSection(): SectionKey {
+  return normalizeSection(route.query.section);
+}
+
+function normalizeSection(value: unknown): SectionKey {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === 'string' && sectionKeys.includes(raw as SectionKey)
+    ? raw as SectionKey
+    : 'events';
+}
+
+function defaultSectionForSubcategory(sourceSubcategory: string): SectionKey {
+  const sectionsBySubcategory: Record<string, SectionKey> = {
+    'Светильники бра': 'events',
+    'Коврики для ванной': 'weaknesses',
+    'Органайзеры для хранения вещей': 'prices'
+  };
+
+  return sectionsBySubcategory[sourceSubcategory] ?? 'events';
 }
 
 function readStringQuery(key: string): string | undefined {
@@ -756,7 +802,7 @@ function sanitizeText(value: string | null | undefined): string {
       <div class="mi-controls__fields">
         <label class="mi-field">
           <span>Ниша</span>
-          <select v-model="selectedSubcategory" @change="applySelection">
+          <select v-model="selectedSubcategory" @change="applySubcategorySelection">
             <option v-for="context in demoContexts" :key="context.sourceSubcategory" :value="context.sourceSubcategory">
               {{ context.label }}
             </option>
@@ -765,7 +811,7 @@ function sanitizeText(value: string | null | undefined): string {
 
         <label class="mi-field mi-field--short">
           <span>{{ topLabel }}</span>
-          <select v-model.number="selectedTopN" @change="applySelection">
+          <select v-model.number="selectedTopN" @change="applyTopNSelection">
             <option v-for="option in topNOptions" :key="option" :value="option">Топ-{{ option }}</option>
           </select>
           <small>Количество позиций выдачи, которые сравниваются в этой нише.</small>
@@ -793,19 +839,12 @@ function sanitizeText(value: string | null | undefined): string {
         </article>
       </section>
 
-      <nav class="mi-tabs app-surface" aria-label="Разделы маркетинговой разведки">
-        <div class="mi-tabs__label">Выберите раздел</div>
-        <button
-          v-for="section in sections"
-          :key="section.key"
-          type="button"
-          :class="{ 'mi-tabs__item--active': activeSection === section.key }"
-          class="mi-tabs__item"
-          @click="activeSection = section.key"
-        >
-          {{ section.label }}
-        </button>
-      </nav>
+      <SectionSelector
+        :items="sections"
+        :model-value="activeSection"
+        aria-label="Разделы маркетинговой разведки"
+        @update:model-value="selectSectionValue"
+      />
 
       <section v-if="activeSection === 'events'" class="mi-section app-surface">
         <header class="mi-section__header">
@@ -894,7 +933,7 @@ function sanitizeText(value: string | null | undefined): string {
         </div>
       </section>
 
-      <section v-else-if="activeSection === 'checks'" class="mi-section app-surface">
+      <section v-else-if="activeSection === 'weaknesses'" class="mi-section app-surface">
         <header class="mi-section__header">
           <div>
             <h2>Зоны для проверки</h2>
@@ -944,7 +983,7 @@ function sanitizeText(value: string | null | undefined): string {
                 </div>
                 <span class="metric-compare__reference">{{ weaknessReferenceValue(weakness) }}</span>
               </div>
-              <p class="product-card__note">{{ sanitizeText(weakness.explanation) }}</p>
+              <p class="product-card__note product-card__wide">{{ sanitizeText(weakness.explanation) }}</p>
               <Button
                 v-if="weakness.productRowId"
                 class="product-card__action"
@@ -1158,17 +1197,6 @@ function sanitizeText(value: string | null | undefined): string {
           </div>
         </div>
 
-        <article class="mi-limitations-panel">
-          <h3>Что важно учитывать</h3>
-          <EmptyState
-            v-if="combinedLimitations.length === 0"
-            title="Явных ограничений нет"
-            description="Для выбранной ниши нет дополнительных предупреждений."
-          />
-          <ul v-else class="mi-limitations">
-            <li v-for="limitation in combinedLimitations" :key="limitation">{{ limitation }}</li>
-          </ul>
-        </article>
       </section>
     </template>
 
@@ -1183,7 +1211,6 @@ function sanitizeText(value: string | null | undefined): string {
 }
 
 .mi-controls,
-.mi-tabs,
 .mi-summary,
 .mi-section {
   border-color: rgb(249 115 22 / 0.18);
@@ -1328,57 +1355,6 @@ function sanitizeText(value: string | null | undefined): string {
   line-height: 1.4;
 }
 
-.mi-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-color: rgb(249 115 22 / 0.34);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
-    var(--color-surface);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 12px 34px rgb(0 0 0 / 0.18);
-}
-
-.mi-tabs__label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--accent-ember-text-strong);
-  font-size: 0.78rem;
-  font-weight: 820;
-  text-transform: uppercase;
-}
-
-.mi-tabs__label::before {
-  display: inline-block;
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 999px;
-  background: var(--accent-ember);
-  box-shadow: 0 0 14px rgb(249 115 22 / 0.52);
-  content: '';
-}
-
-.mi-tabs__item {
-  min-height: 2.35rem;
-  border: 1px solid rgb(249 115 22 / 0.14);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-4);
-  font-size: 0.8125rem;
-  font-weight: 820;
-}
-
-.mi-tabs__item:hover,
-.mi-tabs__item--active {
-  border-color: var(--accent-primary-border);
-  background: var(--button-primary-bg);
-  color: var(--text-on-fire);
-}
-
 .mi-section {
   display: grid;
   gap: var(--space-3);
@@ -1425,8 +1401,7 @@ function sanitizeText(value: string | null | undefined): string {
 .compact-product,
 .mi-metric,
 .histogram-panel,
-.bar-row,
-.mi-limitations-panel {
+.bar-row {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
@@ -1748,26 +1723,6 @@ function sanitizeText(value: string | null | undefined): string {
   border-radius: inherit;
   background: var(--accent-ember);
   box-shadow: 0 0 18px rgb(249 115 22 / 0.36);
-}
-
-.mi-limitations-panel {
-  display: grid;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-}
-
-.mi-limitations-panel h3 {
-  margin: 0;
-  font-size: 0.95rem;
-}
-
-.mi-limitations {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0;
-  padding-left: 1rem;
-  color: var(--color-text-muted);
 }
 
 @media (max-width: 1180px) {

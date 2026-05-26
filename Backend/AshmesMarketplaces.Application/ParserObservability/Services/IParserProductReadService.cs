@@ -14,6 +14,10 @@ public interface IParserProductReadService
         ParserProductFilterOptionsQuery query,
         CancellationToken cancellationToken);
 
+    Task<ServiceResult<ParserProductLogisticsSummaryAggregateDto>> GetLogisticsSummaryAsync(
+        ParserProductLogisticsSummaryQuery query,
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<ParserProductDetailDto>> GetByIdAsync(
         Guid id,
         CancellationToken cancellationToken);

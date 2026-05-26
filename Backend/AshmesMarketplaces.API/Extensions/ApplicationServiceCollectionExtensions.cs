@@ -48,6 +48,8 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductHistoryService, ProductHistoryService>();
         services.AddScoped<IParserProductReadService, ParserProductReadService>();
+        services.AddScoped<IParserObservedStockDecreaseReadService, ParserObservedStockDecreaseReadService>();
+        services.AddScoped<IParserObservedMarketEventReadService, ParserObservedMarketEventReadService>();
         services.AddScoped<IParserReviewReadService, ParserReviewReadService>();
         services.AddScoped<IParserRunReadService, ParserRunReadService>();
         services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
