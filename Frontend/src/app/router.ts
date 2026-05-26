@@ -9,13 +9,10 @@ import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vu
 import ParserReviewsPage from '@/features/parser-reviews/ParserReviewsPage.vue';
 import ProductsPage from '@/features/products/ProductsPage.vue';
 import AccessSettingsPage from '@/pages/AccessSettingsPage.vue';
-import CampaignsPage from '@/pages/CampaignsPage.vue';
 import ExpensesPage from '@/pages/ExpensesPage.vue';
 import LogisticsPage from '@/pages/LogisticsPage.vue';
 import OrdersPage from '@/pages/OrdersPage.vue';
 import OverviewPage from '@/pages/OverviewPage.vue';
-import RecommendationsPage from '@/pages/RecommendationsPage.vue';
-import ReviewsPage from '@/pages/ReviewsPage.vue';
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -44,12 +41,9 @@ export const router = createRouter({
         { path: 'products', name: 'products', component: ProductsPage },
         { path: 'parser/products', redirect: { name: 'market-products' } },
         { path: 'orders', name: 'orders', component: OrdersPage },
-        { path: 'reviews', name: 'reviews', component: ReviewsPage },
         { path: 'parser/reviews', name: 'parser-reviews', component: ParserReviewsPage },
         { path: 'logistics', name: 'logistics', component: LogisticsPage },
-        { path: 'campaigns', name: 'campaigns', component: CampaignsPage },
         { path: 'expenses', name: 'expenses', component: ExpensesPage },
-        { path: 'recommendations', name: 'recommendations', component: RecommendationsPage },
         { path: 'settings/access', name: 'settings-access', component: AccessSettingsPage }
       ]
     },

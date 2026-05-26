@@ -2,6 +2,7 @@ import type { LocationQuery, LocationQueryRaw } from 'vue-router';
 
 import type {
   ParserProductFilterOptionsParams,
+  ParserProductLogisticsSummaryParams,
   ParserProductListParams,
   ParserProductQueryState
 } from './parserProducts.types';
@@ -97,6 +98,20 @@ export function toParserProductFilterOptionsParams(
     ...(state.sourceSubcategory ? { sourceSubcategory: state.sourceSubcategory } : {}),
     ...(state.brandName ? { brandName: state.brandName } : {}),
     ...(state.sellerName ? { sellerName: state.sellerName } : {})
+  };
+}
+
+export function toParserProductLogisticsSummaryParams(
+  state: ParserProductQueryState
+): ParserProductLogisticsSummaryParams {
+  return {
+    ...(state.search ? { search: state.search } : {}),
+    ...(state.parserRunId ? { parserRunId: state.parserRunId } : {}),
+    ...(state.sourceCategory ? { sourceCategory: state.sourceCategory } : {}),
+    ...(state.sourceSubcategory ? { sourceSubcategory: state.sourceSubcategory } : {}),
+    ...(state.brandName ? { brandName: state.brandName } : {}),
+    ...(state.sellerName ? { sellerName: state.sellerName } : {}),
+    ...(state.wbRootId ? { wbRootId: state.wbRootId } : {})
   };
 }
 

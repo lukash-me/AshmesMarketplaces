@@ -268,7 +268,7 @@ function stockLabel(value: number | null | undefined): string {
     return 'Нет данных';
   }
 
-  return value === 40 ? '≥40' : new Intl.NumberFormat('ru-RU').format(value);
+  return new Intl.NumberFormat('ru-RU').format(value);
 }
 
 function identityValue(value: string | null | undefined): string {

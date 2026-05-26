@@ -69,7 +69,7 @@ const columns: MarketProductColumn[] = [
   { key: 'position', label: 'Позиция', optionLabel: 'Позиция', group: 'default', sortable: true },
   { key: 'brandSeller', label: 'Бренд / продавец', optionLabel: 'Бренд / продавец', group: 'default' },
   { key: 'price', label: 'Цена', optionLabel: 'Цена', group: 'default', sortable: true, align: 'right' },
-  { key: 'stock', label: 'Остаток', optionLabel: 'Остаток', group: 'default', align: 'right' },
+  { key: 'stock', label: 'Остаток WB', optionLabel: 'Остаток WB', group: 'default', align: 'right' },
   { key: 'reviewRating', label: 'Рейтинг WB', optionLabel: 'Рейтинг WB', group: 'default', sortable: true, align: 'right' },
   { key: 'feedbackCount', label: 'Отзывы WB', optionLabel: 'Отзывы WB', group: 'default', sortable: true, align: 'right' },
   { key: 'wbProductId', label: 'WB id', optionLabel: 'WB id', group: 'optional', sortable: true },
@@ -206,12 +206,16 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat('ru-RU').format(value);
 }
 
-function stockLabel(value: number | null): string {
-  if (value === null) {
-    return 'Нет данных';
+function logisticsStockLabel(row: ParserProductListItem): string {
+  return row.logistics?.totalQuantityLabel?.trim() || 'Нет данных';
+}
+
+function logisticsWarehouseLabel(row: ParserProductListItem): string | null {
+  if (!row.logistics) {
+    return null;
   }
 
-  return value === 40 ? '≥40' : formatNumber(value);
+  return `Складов WB: ${formatNumber(row.logistics.warehouseCount)}`;
 }
 
 function identityValue(value: string | null | undefined): string {
@@ -306,7 +310,10 @@ function formatDateTime(value: string | null | undefined): string {
 <template>
   <div class="market-products-table app-surface">
     <header class="table-toolbar">
-      <p>Исследуйте товары конкурентов, цены, рейтинги и отзывы, чтобы находить перспективные ниши.</p>
+      <div class="table-toolbar__heading">
+        <h2>Аналитика товаров</h2>
+        <p>Исследуйте товары конкурентов, цены, рейтинги и отзывы, чтобы находить перспективные ниши.</p>
+      </div>
       <div class="column-picker">
         <Button class="column-picker__button" variant="secondary" @click="columnMenuOpen = !columnMenuOpen">
           <Columns3 :size="16" />
@@ -383,7 +390,8 @@ function formatDateTime(value: string | null | undefined): string {
 
       <template #cell-stock="{ row }">
         <div class="stock-cell numeric">
-          <strong>{{ stockLabel(row.totalQuantity) }}</strong>
+          <strong>{{ logisticsStockLabel(row) }}</strong>
+          <span v-if="logisticsWarehouseLabel(row)">{{ logisticsWarehouseLabel(row) }}</span>
         </div>
       </template>
 
@@ -499,6 +507,19 @@ function formatDateTime(value: string | null | undefined): string {
   color: var(--color-text-muted);
   padding: var(--space-3);
   font-size: 0.8125rem;
+}
+
+.table-toolbar__heading {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.table-toolbar__heading h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 1rem;
+  font-weight: 820;
+  letter-spacing: 0;
 }
 
 .table-toolbar p {

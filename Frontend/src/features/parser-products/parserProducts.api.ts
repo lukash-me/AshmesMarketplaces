@@ -5,6 +5,8 @@ import type {
   ParserProductDetail,
   ParserProductFilterOptions,
   ParserProductFilterOptionsParams,
+  ParserProductLogisticsSummaryAggregate,
+  ParserProductLogisticsSummaryParams,
   ParserProductListItem,
   ParserProductListParams
 } from './parserProducts.types';
@@ -20,6 +22,16 @@ export async function getParserProductFilterOptions(
   params: ParserProductFilterOptionsParams
 ): Promise<ParserProductFilterOptions> {
   const response = await http.get<ParserProductFilterOptions>('/parser/products/filter-options', { params });
+  return response.data;
+}
+
+export async function getParserProductLogisticsSummary(
+  params: ParserProductLogisticsSummaryParams
+): Promise<ParserProductLogisticsSummaryAggregate> {
+  const response = await http.get<ParserProductLogisticsSummaryAggregate>(
+    '/parser/products/logistics-summary',
+    { params }
+  );
   return response.data;
 }
 

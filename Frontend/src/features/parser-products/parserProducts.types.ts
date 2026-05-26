@@ -22,6 +22,7 @@ export interface ParserProductListItem {
   rank?: ParserProductRankSummary | null;
   position?: ParserProductPosition | null;
   parsedReviewEvidence?: ParserProductReviewEvidence;
+  logistics?: ParserProductLogisticsSummary | null;
 }
 
 export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbnailUrl'> {
@@ -40,6 +41,99 @@ export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbn
   sourceFileSha256: string;
   sourceLineNumber: number;
   rowHash: string;
+  logisticsDetail?: ParserProductLogisticsDetail | null;
+}
+
+export interface ParserProductLogisticsSummary {
+  totalQuantityObserved: number | null;
+  quantityIsCapped: boolean | null;
+  quantityCapObserved: number | null;
+  totalQuantityLabel: string;
+  quantitySemantics: string | null;
+  warehouseCount: number;
+  destination: string | null;
+  latestLogisticsRunId: string | null;
+  observedAtUtc: string | null;
+  hasWarehouseRows: boolean;
+}
+
+export interface ParserProductLogisticsDetail {
+  summary: ParserProductLogisticsSummary | null;
+  productWhRaw: string | null;
+  productTime1Raw: number | null;
+  productTime2Raw: number | null;
+  productDtypeRaw: number | null;
+  productDistRaw: number | null;
+  warehouseRows: ParserWarehouseAvailability[];
+}
+
+export interface ParserWarehouseAvailability {
+  warehouseIdOnMp: string | null;
+  optionId: string | null;
+  sizeName: string | null;
+  sizeOrigName: string | null;
+  quantityObserved: number | null;
+  quantityIsCapped: boolean | null;
+  quantityCapObserved: number | null;
+  quantitySemantics: string | null;
+  stockPriorityRaw: number | null;
+  stockTime1Raw: number | null;
+  stockTime2Raw: number | null;
+  stockDtypeRaw: number | null;
+  stockDistRaw: number | null;
+  priceBasic: number | null;
+  priceProduct: number | null;
+  priceLogisticsRaw: number | null;
+  priceReturnRaw: number | null;
+}
+
+export interface ParserProductLogisticsSummaryParams {
+  parserRunId?: string;
+  search?: string;
+  sourceCategory?: string;
+  sourceSubcategory?: string;
+  brandName?: string;
+  sellerName?: string;
+  wbRootId?: string;
+}
+
+export interface ParserProductQuantityBuckets {
+  zero: number;
+  oneToFive: number;
+  sixToTwenty: number;
+  twentyOneToThirtyNine: number;
+  fortyPlusOrHigh: number;
+  unknown: number;
+}
+
+export interface ParserProductLogisticsDestinationSummary {
+  destination: string | null;
+  productsWithLogistics: number;
+  latestObservedAtUtc: string | null;
+}
+
+export interface ParserProductLogisticsSummaryAggregate {
+  productRunId: string | null;
+  logisticsRunId: string | null;
+  sourceCategory: string | null;
+  sourceSubcategory: string | null;
+  productsTotal: number;
+  productsWithLogistics: number;
+  productsWithoutLogistics: number;
+  productsWithQuantity: number;
+  productsWithoutQuantity: number;
+  quantityMin: number | null;
+  quantityMax: number | null;
+  quantityAverage: number | null;
+  quantityMedian: number | null;
+  quantityBuckets: ParserProductQuantityBuckets;
+  productsWithWarehouseRows: number;
+  warehouseRowsTotal: number;
+  distinctWarehouseIds: number;
+  averageWarehousesPerProduct: number;
+  destinations: ParserProductLogisticsDestinationSummary[];
+  latestObservedAtUtc: string | null;
+  warnings: string[];
 }
 
 export interface ParserProductRankSummary {
