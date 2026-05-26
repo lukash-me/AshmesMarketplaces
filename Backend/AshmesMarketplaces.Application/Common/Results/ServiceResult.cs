@@ -23,6 +23,9 @@ public class ServiceResult
 
     public static ServiceResult Unauthorized(string message) =>
         new(new ServiceError(ServiceErrorType.Unauthorized, message));
+
+    public static ServiceResult Unavailable(string message) =>
+        new(new ServiceError(ServiceErrorType.Unavailable, message));
 }
 
 public sealed class ServiceResult<T> : ServiceResult
@@ -47,4 +50,7 @@ public sealed class ServiceResult<T> : ServiceResult
 
     public new static ServiceResult<T> Unauthorized(string message) =>
         new(default, new ServiceError(ServiceErrorType.Unauthorized, message));
+
+    public new static ServiceResult<T> Unavailable(string message) =>
+        new(default, new ServiceError(ServiceErrorType.Unavailable, message));
 }

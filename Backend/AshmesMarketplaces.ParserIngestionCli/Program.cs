@@ -28,9 +28,11 @@ try
         "validate-products" => await service.ValidateProductsAsync(parsed.Target, options, cancellation.Token),
         "validate-reviews" => await service.ValidateReviewsAsync(parsed.Target, options, cancellation.Token),
         "validate-ranks" => await service.ValidateRanksAsync(parsed.Target, options, cancellation.Token),
+        "validate-logistics" => await service.ValidateLogisticsAsync(parsed.Target, options, cancellation.Token),
         "stage-products" => await service.StageProductsAsync(parsed.Target, options, cancellation.Token),
         "stage-reviews" => await service.StageReviewsAsync(parsed.Target, options, cancellation.Token),
         "stage-ranks" => await service.StageRanksAsync(parsed.Target, options, cancellation.Token),
+        "stage-logistics" => await service.StageLogisticsAsync(parsed.Target, options, cancellation.Token),
         "promote-products" => await service.PromoteProductsAsync(parsed.Target, options, cancellation.Token),
         _ => throw new ArgumentException($"Unsupported command '{parsed.Command}'.")
     };
@@ -80,7 +82,7 @@ internal sealed record CliArguments(
 {
     public bool RequiresDatabase =>
         Command == "promote-products"
-        || (!DryRun && Command is "stage-products" or "stage-reviews" or "stage-ranks");
+        || (!DryRun && Command is "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics");
 
     public static string HelpText =>
         """
@@ -90,15 +92,18 @@ internal sealed record CliArguments(
           validate-products <run-directory> [--limit <rows>]
           validate-reviews <run-directory> [--limit <rows>]
           validate-ranks <run-directory> [--limit <rows>]
+          validate-logistics <run-directory> [--limit <rows>]
           stage-products <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           stage-reviews <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           stage-ranks <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
+          stage-logistics <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           promote-products <parser-run-id> [--dry-run] [--batch-size <rows>] [--limit <rows>]
 
         Write commands need --connection-string or ConnectionStrings__Postgres.
         Stage commands with --dry-run only read parser artifacts and do not need database access.
         Review staging preserves capped/root-level partial snapshot semantics and does not write domain Reviews.
         Rank staging preserves observed rank/page-fetch evidence and does not infer product positions.
+        Logistics staging preserves raw WB availability evidence and does not write domain Logistics or Warehouses.
         """;
 
     public static CliArguments Parse(string[] args)
@@ -110,7 +115,7 @@ internal sealed record CliArguments(
             throw new ArgumentException("A command and target are required. Use --help for syntax.");
 
         var command = args[0].Trim().ToLowerInvariant();
-        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "stage-products" or "stage-reviews" or "stage-ranks" or "promote-products"))
+        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "promote-products"))
             throw new ArgumentException($"Unsupported command '{args[0]}'. Use --help for syntax.");
 
         var batchSize = command == "promote-products" ? 1000 : 5000;

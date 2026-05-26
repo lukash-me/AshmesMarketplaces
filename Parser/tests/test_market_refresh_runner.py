@@ -23,7 +23,7 @@ class FakeExecutor:
         self.output_base_dir = output_base_dir
         self.failures = failures or set()
         self.calls: list[list[str]] = []
-        self.counters = {"rank": 0, "products": 0, "reviews": 0}
+        self.counters = {"rank": 0, "products": 0, "logistics": 0, "reviews": 0}
 
     def __call__(
         self,
@@ -49,7 +49,13 @@ class FakeExecutor:
                     "run_kind": "wb_search_rank" if step == "rank" else None,
                     "status": "succeeded",
                     "row_counts": {"rank_rows_written": 100} if step == "rank" else {"unique_rows": 10},
-                    "counters": {"reviews_written": 1} if step == "reviews" else None,
+                    "counters": (
+                        {"reviews_written": 1}
+                        if step == "reviews"
+                        else {"products_requested": 3, "products_succeeded": 3, "snapshot_rows_written": 3}
+                        if step == "logistics"
+                        else None
+                    ),
                 },
                 ensure_ascii=False,
             ),
@@ -61,6 +67,7 @@ class FakeExecutor:
         marker = {
             "rank": "Rank run directory:",
             "products": "Run directory:",
+            "logistics": "Logistics run directory:",
             "reviews": "Review run directory:",
         }[step]
         output = f"{marker} {run_dir}"
@@ -73,6 +80,8 @@ class FakeExecutor:
         joined = " ".join(command)
         if "rank_runner.py" in joined:
             return "rank"
+        if "logistics_runner.py" in joined:
+            return "logistics"
         if "reviews_runner.py" in joined:
             return "reviews"
         return "products"
@@ -122,6 +131,8 @@ class FakeStagingExecutor:
                 return "ranks"
             if item == "stage-products":
                 return "products"
+            if item == "stage-logistics":
+                return "logistics"
             if item == "stage-reviews":
                 return "reviews"
         return "unknown"
@@ -153,6 +164,14 @@ class MarketRefreshRunnerTests(unittest.TestCase):
                             "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "50",
                         },
                     },
+                    "logistics": {
+                        "enabled": True,
+                        "dest": 12354108,
+                        "limit_products": 3,
+                        "delay_ms": 500,
+                        "timeout_sec": 10,
+                        "retries": 1,
+                    },
                     "reviews": {
                         "config": "Parser/presets/home_goods_demo.env",
                         "limit_products": 10,
@@ -180,12 +199,13 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(fake.calls, [])
         self.assertIn("[market-refresh] DRY-RUN rank", output.getvalue())
         self.assertIn("[market-refresh] PLAN products", output.getvalue())
-        self.assertEqual([step["step_name"] for step in manifest["steps"]], ["rank", "products", "reviews"])
+        self.assertIn("[market-refresh] PLAN logistics", output.getvalue())
+        self.assertEqual([step["step_name"] for step in manifest["steps"]], ["rank", "products", "logistics", "reviews"])
         self.assertEqual({step["status"] for step in manifest["steps"]}, {"skipped"})
         self.assertEqual(manifest["status"], "succeeded")
         self.assertTrue(manifest["dry_run"])
 
-    def test_pipeline_runs_rank_products_reviews_in_order(self) -> None:
+    def test_pipeline_runs_rank_products_logistics_reviews_in_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
             config = self._config(temp_dir)
@@ -194,11 +214,11 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             run_dir = runner.run_pipeline(config=config, mode="smoke", executor=fake)
             manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
 
-        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "reviews"])
+        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "logistics", "reviews"])
         self.assertEqual(manifest["status"], "succeeded")
         self.assertEqual(
             [command[5] for command in manifest["suggested_ingestion_commands"]],
-            ["stage-ranks", "stage-products", "stage-reviews"],
+            ["stage-ranks", "stage-products", "stage-logistics", "stage-reviews"],
         )
         self.assertEqual(manifest["staging"]["status"], "not_requested")
 
@@ -214,10 +234,11 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
         self.assertEqual(statuses["rank"], "succeeded")
         self.assertEqual(statuses["products"], "failed")
+        self.assertEqual(statuses["logistics"], "skipped")
         self.assertEqual(statuses["reviews"], "skipped")
         self.assertEqual(manifest["status"], "partial")
 
-    def test_rank_failure_does_not_block_products_and_reviews(self) -> None:
+    def test_rank_failure_does_not_block_products_logistics_and_reviews(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
             config = self._config(temp_dir)
@@ -229,10 +250,42 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
         self.assertEqual(statuses["rank"], "failed")
         self.assertEqual(statuses["products"], "succeeded")
+        self.assertEqual(statuses["logistics"], "succeeded")
         self.assertEqual(statuses["reviews"], "succeeded")
         self.assertEqual(manifest["status"], "partial")
 
-    def test_stage_to_db_runs_ranks_products_reviews_in_order(self) -> None:
+    def test_logistics_failure_blocks_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir, failures={"logistics"})
+
+            run_dir = runner.run_pipeline(config=config, mode="smoke", executor=fake)
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
+        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "logistics"])
+        self.assertEqual(statuses["products"], "succeeded")
+        self.assertEqual(statuses["logistics"], "failed")
+        self.assertEqual(statuses["reviews"], "skipped")
+        self.assertEqual(manifest["status"], "partial")
+
+    def test_skip_logistics_still_allows_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+
+            run_dir = runner.run_pipeline(config=config, mode="smoke", skip_logistics=True, executor=fake)
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
+        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "reviews"])
+        self.assertEqual(statuses["logistics"], "skipped")
+        self.assertEqual(statuses["reviews"], "succeeded")
+        self.assertEqual(manifest["status"], "succeeded")
+
+    def test_stage_to_db_runs_ranks_products_logistics_reviews_in_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
             config = self._config(temp_dir, review_subcategories=["one", "two"])
@@ -250,7 +303,9 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             )
             manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
 
-        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "products", "reviews", "reviews"])
+        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "products", "logistics", "reviews", "reviews"])
+        self.assertEqual([command[5] for command in manifest["suggested_ingestion_commands"]], ["stage-ranks", "stage-products", "stage-logistics", "stage-reviews", "stage-reviews"])
+        self.assertEqual(manifest["staging"]["unsupported_steps"], [])
         self.assertEqual(manifest["status"], "succeeded")
         self.assertEqual(manifest["staging"]["status"], "succeeded")
         self.assertEqual(manifest["staging"]["connection_string_source"], "argument")
@@ -411,6 +466,26 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(second_fake.calls, [])
         self.assertEqual(manifest["status"], "succeeded")
 
+    def test_resume_skips_completed_logistics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            first_fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            run_dir = runner.run_pipeline(config=config, mode="smoke", executor=first_fake)
+
+            second_fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            resumed_dir = runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                resume_run_dir=run_dir,
+                executor=second_fake,
+            )
+            manifest = json.loads((resumed_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
+        self.assertEqual(second_fake.calls, [])
+        self.assertEqual(statuses["logistics"], "succeeded")
+
     def test_force_step_reruns_only_requested_step(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
@@ -428,6 +503,24 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             )
 
         self.assertEqual([second_fake._step_for(command) for command in second_fake.calls], ["rank"])
+
+    def test_force_step_logistics_reruns_only_logistics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            first_fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            run_dir = runner.run_pipeline(config=config, mode="smoke", executor=first_fake)
+
+            second_fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                resume_run_dir=run_dir,
+                force_step="logistics",
+                executor=second_fake,
+            )
+
+        self.assertEqual([second_fake._step_for(command) for command in second_fake.calls], ["logistics"])
 
     def test_streaming_executor_returns_captured_output(self) -> None:
         captured: list[str] = []

@@ -32,6 +32,15 @@
           "Органайзеры для хранения вещей"
         ],
         "smoke_only": true
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "limit_products": 3,
+        "delay_ms": 500,
+        "timeout_sec": 10,
+        "retries": 1,
+        "timeout_seconds": 120
       }
     },
     "bounded": {
@@ -57,6 +66,15 @@
           "Коврики для ванной",
           "Светильники бра"
         ]
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "limit_products": 100,
+        "delay_ms": 500,
+        "timeout_sec": 10,
+        "retries": 1,
+        "timeout_seconds": 900
       }
     },
     "full": {
@@ -77,6 +95,15 @@
           "Коврики для ванной",
           "Светильники бра"
         ]
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "limit_products": 300,
+        "delay_ms": 500,
+        "timeout_sec": 10,
+        "retries": 1,
+        "timeout_seconds": 2400
       }
     }
   }

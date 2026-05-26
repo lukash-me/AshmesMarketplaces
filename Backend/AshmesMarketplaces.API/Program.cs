@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDatabase(builder.Configuration);
 builder.Services.AddApplicationServices();
+builder.Services.AddIntelligenceIntegration(builder.Configuration);
 builder.Services.AddApiProblemDetails();
 builder.Services.AddAuthSecurity(builder.Configuration);
 builder.Services.AddSwaggerDocumentation();

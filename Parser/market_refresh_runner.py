@@ -18,7 +18,7 @@ from config import BASE_DIR
 from manifest import get_git_commit, utc_now_iso
 
 
-STEP_ORDER = ["rank", "products", "reviews"]
+STEP_ORDER = ["rank", "products", "logistics", "reviews"]
 TERMINAL_SUCCESS = {"succeeded", "skipped"}
 RETRYABLE_STATUSES = {"failed", "interrupted", "skipped"}
 STAGE_ENV_ENABLED_VALUES = {"1", "true", "yes", "on"}
@@ -202,7 +202,7 @@ class PipelineConfig:
 
 
 def _run_dir_from_manifest_text(text: str) -> Path | None:
-    markers = ["Rank run directory:", "Review run directory:", "Run directory:"]
+    markers = ["Rank run directory:", "Logistics run directory:", "Review run directory:", "Run directory:"]
     for line in reversed(text.splitlines()):
         for marker in markers:
             if marker in line:
@@ -300,6 +300,52 @@ def _build_products_plan(mode_config: dict[str, Any], *, repo_root: Path, python
         env_overrides=env_overrides,
         enabled=bool(product),
         timeout_seconds=product.get("timeout_seconds"),
+    )
+
+
+def _build_logistics_plan(
+    mode_config: dict[str, Any],
+    *,
+    repo_root: Path,
+    python_executable: str,
+    product_run_dir: Path | None,
+    output_base_dir: Path,
+) -> PipelineStepPlan:
+    logistics = dict(mode_config.get("logistics") or {})
+    if not logistics:
+        return PipelineStepPlan(step_name="logistics", commands=[], enabled=False)
+    if product_run_dir is None:
+        return PipelineStepPlan(step_name="logistics", commands=[], enabled=True)
+
+    command = [
+        python_executable,
+        str(repo_root / "Parser" / "logistics_runner.py"),
+        "--products-run-dir",
+        str(product_run_dir),
+        "--output-dir",
+        str(output_base_dir),
+        "--marketplace",
+        str(logistics.get("marketplace") or "wb"),
+    ]
+    if logistics.get("dest") is not None:
+        command.extend(["--dest", str(logistics["dest"])])
+    if logistics.get("limit_products") is not None:
+        command.extend(["--limit", str(logistics["limit_products"])])
+    if logistics.get("delay_ms") is not None:
+        command.extend(["--delay-ms", str(logistics["delay_ms"])])
+    if logistics.get("timeout_sec") is not None:
+        command.extend(["--timeout-sec", str(logistics["timeout_sec"])])
+    if logistics.get("retries") is not None:
+        command.extend(["--retries", str(logistics["retries"])])
+
+    for product_id in logistics.get("product_ids") or []:
+        command.extend(["--product-id", str(product_id)])
+
+    return PipelineStepPlan(
+        step_name="logistics",
+        commands=[command],
+        enabled=bool(logistics.get("enabled", True)),
+        timeout_seconds=logistics.get("timeout_seconds"),
     )
 
 
@@ -407,6 +453,19 @@ def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
                     str(INGESTION_CLI_PROJECT),
                     "--",
                     "stage-products",
+                    run_dir,
+                    "--connection-string",
+                    "<connection-string>",
+                ])
+        if step.get("step_name") == "logistics" and step.get("status") == "succeeded":
+            for run_dir in step.get("output_run_dirs") or []:
+                commands.append([
+                    "dotnet",
+                    "run",
+                    "--project",
+                    str(INGESTION_CLI_PROJECT),
+                    "--",
+                    "stage-logistics",
                     run_dir,
                     "--connection-string",
                     "<connection-string>",
@@ -603,6 +662,7 @@ def _initial_staging_manifest(*, requested: bool, connection_string_source: str)
         "started_at_utc": None,
         "finished_at_utc": None,
         "skip_reason": None,
+        "unsupported_steps": [],
         "commands": [],
     }
 
@@ -612,6 +672,7 @@ def _staging_command_specs(manifest: dict[str, Any], connection_string: str) -> 
     command_by_step = {
         "rank": ("ranks", "stage-ranks"),
         "products": ("products", "stage-products"),
+        "logistics": ("logistics", "stage-logistics"),
         "reviews": ("reviews", "stage-reviews"),
     }
 
@@ -800,7 +861,18 @@ def _summary_text(summary: dict[str, Any]) -> str:
     if page_counts:
         parts.extend(f"pages_{key}={value}" for key, value in page_counts.items())
     counters = summary.get("counters") or {}
-    for key in ("products_selected", "products_with_reviews", "reviews_written", "replies_written", "errors"):
+    for key in (
+        "products_requested",
+        "products_succeeded",
+        "products_failed",
+        "snapshot_rows_written",
+        "warehouse_rows_written",
+        "products_selected",
+        "products_with_reviews",
+        "reviews_written",
+        "replies_written",
+        "errors",
+    ):
         if key in counters:
             parts.append(f"{key}={counters[key]}")
     return ", ".join(parts) if parts else "no counters"
@@ -951,6 +1023,7 @@ def run_pipeline(
     mode: str,
     skip_rank: bool = False,
     skip_products: bool = False,
+    skip_logistics: bool = False,
     skip_reviews: bool = False,
     resume_run_dir: Path | None = None,
     force_step: str | None = None,
@@ -1005,6 +1078,7 @@ def run_pipeline(
     python_executable = _python_executable()
     interrupted = False
     product_run_dir: Path | None = None
+    blocked_steps: set[str] = set()
 
     product_record = _record_for(manifest, "products")
     if product_record.get("status") == "succeeded" and product_record.get("output_run_dirs"):
@@ -1021,16 +1095,35 @@ def run_pipeline(
             elif step_name == "products":
                 plan = products_plan
                 skip_requested = skip_products
+            elif step_name == "logistics":
+                plan_product_run_dir = product_run_dir
+                if dry_run and plan_product_run_dir is None and products_plan.enabled:
+                    plan_product_run_dir = Path("<products-run-dir>")
+                plan = _build_logistics_plan(
+                    mode_config,
+                    repo_root=repo_root,
+                    python_executable=python_executable,
+                    product_run_dir=plan_product_run_dir,
+                    output_base_dir=output_base_dir,
+                )
+                skip_requested = skip_logistics
             else:
+                plan_product_run_dir = product_run_dir
+                if dry_run and plan_product_run_dir is None and products_plan.enabled:
+                    plan_product_run_dir = Path("<products-run-dir>")
                 plan = _build_reviews_plan(
                     mode_config,
                     repo_root=repo_root,
                     python_executable=python_executable,
-                    product_run_dir=product_run_dir,
+                    product_run_dir=plan_product_run_dir,
                 )
                 skip_requested = skip_reviews
 
             record = _record_for(manifest, step_name)
+            if step_name in blocked_steps:
+                _write_manifest(pipeline_run_dir, manifest)
+                continue
+
             if skip_requested:
                 record["status"] = "skipped"
                 record["error_summary"] = "Skipped by CLI flag."
@@ -1048,10 +1141,23 @@ def run_pipeline(
                 _emit_pipeline(pipeline_run_dir, f"SKIP {step_name}: force-step={force_step}")
                 continue
 
-            if step_name == "reviews" and product_run_dir is None:
+            if step_name in {"logistics", "reviews"} and product_run_dir is None and not dry_run:
                 record["status"] = "skipped"
                 record["error_summary"] = "Products step did not produce a run directory."
-                _emit_pipeline(pipeline_run_dir, "SKIP reviews: products step did not produce a run directory")
+                _emit_pipeline(pipeline_run_dir, f"SKIP {step_name}: products step did not produce a run directory")
+                _write_manifest(pipeline_run_dir, manifest)
+                continue
+
+            logistics_record = _record_for(manifest, "logistics")
+            if (
+                step_name == "reviews"
+                and not dry_run
+                and not skip_logistics
+                and logistics_record.get("status") not in {"succeeded", "skipped"}
+            ):
+                record["status"] = "skipped"
+                record["error_summary"] = "Skipped because logistics step did not succeed."
+                _emit_pipeline(pipeline_run_dir, "SKIP reviews: logistics step did not succeed")
                 _write_manifest(pipeline_run_dir, manifest)
                 continue
 
@@ -1072,9 +1178,18 @@ def run_pipeline(
 
             if not dry_run and updated_record.get("status") != "succeeded":
                 if step_name == "products":
+                    _record_for(manifest, "logistics")["status"] = "skipped"
+                    _record_for(manifest, "logistics")["error_summary"] = "Skipped because products step failed."
+                    _emit_pipeline(pipeline_run_dir, "SKIP logistics: products step failed")
                     _record_for(manifest, "reviews")["status"] = "skipped"
                     _record_for(manifest, "reviews")["error_summary"] = "Skipped because products step failed."
                     _emit_pipeline(pipeline_run_dir, "SKIP reviews: products step failed")
+                    blocked_steps.update({"logistics", "reviews"})
+                if step_name == "logistics":
+                    _record_for(manifest, "reviews")["status"] = "skipped"
+                    _record_for(manifest, "reviews")["error_summary"] = "Skipped because logistics step failed."
+                    _emit_pipeline(pipeline_run_dir, "SKIP reviews: logistics step failed")
+                    blocked_steps.add("reviews")
                 if effective_fail_fast:
                     _emit_pipeline(pipeline_run_dir, f"STOP: fail-fast after {step_name}")
                     break
@@ -1119,6 +1234,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=["smoke", "bounded", "full"], default="smoke")
     parser.add_argument("--skip-rank", action="store_true")
     parser.add_argument("--skip-products", action="store_true")
+    parser.add_argument("--skip-logistics", action="store_true")
     parser.add_argument("--skip-reviews", action="store_true")
     parser.add_argument("--resume-run-dir", type=Path)
     parser.add_argument("--force-step", choices=STEP_ORDER)
@@ -1147,6 +1263,7 @@ def main() -> None:
         mode=args.mode,
         skip_rank=args.skip_rank,
         skip_products=args.skip_products,
+        skip_logistics=args.skip_logistics,
         skip_reviews=args.skip_reviews,
         resume_run_dir=args.resume_run_dir,
         force_step=args.force_step,

@@ -295,9 +295,9 @@ function ratingTone(value: number | null): string {
       <footer class="pager">
         <span class="numeric">Показаны {{ pageStart }}-{{ pageEnd }} из {{ totalCount }}</span>
         <div class="pager__actions">
-          <Button variant="secondary" :disabled="page <= 1" @click="changePage(page - 1)">Назад</Button>
+          <Button class="pager__nav" variant="secondary" :disabled="page <= 1" @click="changePage(page - 1)">Назад</Button>
           <span class="numeric">Страница {{ page }} / {{ pageCount }}</span>
-          <Button variant="secondary" :disabled="page >= pageCount" @click="changePage(page + 1)">Далее</Button>
+          <Button class="pager__nav" variant="secondary" :disabled="page >= pageCount" @click="changePage(page + 1)">Далее</Button>
         </div>
       </footer>
     </div>
@@ -576,6 +576,29 @@ function ratingTone(value: number | null): string {
 .pager__actions,
 .detail__summary {
   align-items: center;
+}
+
+.pager__nav {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.14), rgb(249 115 22 / 0.05)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  font-weight: 720;
+}
+
+.pager__nav:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.2), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.pager__nav:disabled {
+  border-color: var(--color-border);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  opacity: 0.58;
 }
 
 .detail {

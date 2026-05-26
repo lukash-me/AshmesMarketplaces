@@ -15,6 +15,8 @@ public sealed class ParserIngestionService : IParserIngestionService
     private const string ProductsKind = "products";
     private const string ReviewsKind = "reviews";
     private const string RanksKind = "ranks";
+    private const string LogisticsKind = "logistics";
+    private const string LogisticsRunKind = "wb_logistics";
     private readonly ApplicationDbContext _dbContext;
 
     public ParserIngestionService(ApplicationDbContext dbContext)
@@ -46,6 +48,14 @@ public sealed class ParserIngestionService : IParserIngestionService
         CancellationToken cancellationToken)
     {
         return await ScanRankRunAsync("validate-ranks", runDirectory, options, cancellationToken);
+    }
+
+    public async Task<ParserIngestionResult> ValidateLogisticsAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        return await ScanLogisticsRunAsync("validate-logistics", runDirectory, options, cancellationToken);
     }
 
     private async Task<ParserIngestionResult> ScanRankRunAsync(
@@ -96,6 +106,31 @@ public sealed class ParserIngestionService : IParserIngestionService
             cancellationToken);
         await ScanReviewRepliesAsync(
             RequiredFile(runDirectory, "review_replies.jsonl"),
+            manifest,
+            options,
+            summary,
+            cancellationToken);
+
+        return summary.ToResult();
+    }
+
+    private async Task<ParserIngestionResult> ScanLogisticsRunAsync(
+        string mode,
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        var manifest = LoadManifest(runDirectory, LogisticsKind);
+        var summary = new ImportSummary(mode, manifest.ParserRunId, options.DryRun);
+
+        await ScanLogisticsSnapshotsAsync(
+            RequiredFile(runDirectory, "logistics_snapshots.jsonl"),
+            manifest,
+            options,
+            summary,
+            cancellationToken);
+        await ScanWarehouseAvailabilityAsync(
+            RequiredFile(runDirectory, "warehouse_availability.jsonl"),
             manifest,
             options,
             summary,
@@ -251,6 +286,60 @@ public sealed class ParserIngestionService : IParserIngestionService
                 manifest,
                 registered.Run,
                 registered.Files["rank_page_fetches.jsonl"],
+                execution,
+                options,
+                summary,
+                cancellationToken);
+            await FinishExecutionAsync(execution, summary, "succeeded", cancellationToken);
+        }
+        catch
+        {
+            await FinishExecutionAsync(execution, summary, "failed", cancellationToken);
+            throw;
+        }
+
+        return summary.ToResult();
+    }
+
+    public async Task<ParserIngestionResult> StageLogisticsAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        var manifest = LoadManifest(runDirectory, LogisticsKind);
+        if (options.DryRun)
+            return await ScanLogisticsRunAsync("stage-logistics", runDirectory, options, cancellationToken);
+
+        var registered = await RegisterRunAndFilesAsync(
+            runDirectory,
+            manifest,
+            [
+                "manifest.json",
+                "logistics_snapshots.jsonl",
+                "warehouse_availability.jsonl",
+                "errors.jsonl",
+                "runner.log"
+            ],
+            cancellationToken);
+        var execution = await StartExecutionAsync(registered.Run.Id, "stage-logistics", cancellationToken);
+        var summary = new ImportSummary("stage-logistics", manifest.ParserRunId, isDryRun: false);
+
+        try
+        {
+            await StageLogisticsSnapshotsAsync(
+                RequiredFile(runDirectory, "logistics_snapshots.jsonl"),
+                manifest,
+                registered.Run,
+                registered.Files["logistics_snapshots.jsonl"],
+                execution,
+                options,
+                summary,
+                cancellationToken);
+            await StageWarehouseAvailabilityAsync(
+                RequiredFile(runDirectory, "warehouse_availability.jsonl"),
+                manifest,
+                registered.Run,
+                registered.Files["warehouse_availability.jsonl"],
                 execution,
                 options,
                 summary,
@@ -484,6 +573,208 @@ public sealed class ParserIngestionService : IParserIngestionService
         summary.RowsSkipped += rows.Count - newRows.Count;
         summary.RowsWritten += newRows.Count;
         _dbContext.ParserProductRows.AddRange(newRows);
+        _dbContext.ParserImportErrors.AddRange(errors);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        _dbContext.ChangeTracker.Clear();
+        rows.Clear();
+        errors.Clear();
+    }
+
+    private async Task ScanLogisticsSnapshotsAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var validRows = 0L;
+        var invalidRows = 0L;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                using var row = ParseLogisticsSnapshot(source, manifest, Guid.NewGuid(), Guid.NewGuid());
+                summary.RowsWritten++;
+                validRows++;
+            }
+            catch
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                invalidRows++;
+            }
+        }
+
+        summary.Increment("logistics_snapshot_rows_valid", validRows);
+        summary.Increment("logistics_snapshot_rows_invalid", invalidRows);
+    }
+
+    private async Task ScanWarehouseAvailabilityAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var validRows = 0L;
+        var invalidRows = 0L;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                using var row = ParseWarehouseAvailability(source, manifest, Guid.NewGuid(), Guid.NewGuid());
+                summary.RowsWritten++;
+                validRows++;
+            }
+            catch
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                invalidRows++;
+            }
+        }
+
+        summary.Increment("warehouse_availability_rows_valid", validRows);
+        summary.Increment("warehouse_availability_rows_invalid", invalidRows);
+    }
+
+    private async Task StageLogisticsSnapshotsAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserRun run,
+        ParserFile file,
+        ParserImportExecution execution,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<ParserLogisticsSnapshotRow>(options.NormalizedBatchSize);
+        var errors = new List<ParserImportError>();
+        var writtenBefore = summary.RowsWritten;
+        var skippedBefore = summary.RowsSkipped;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                rows.Add(ParseLogisticsSnapshot(source, manifest, run.Id, file.Id));
+            }
+            catch (Exception exception)
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                summary.Increment("logistics_snapshot_rows_invalid");
+                errors.Add(CreateError(execution.Id, run.Id, file.Id, source.LineNumber, "logistics-snapshot-row", exception.Message));
+            }
+
+            if (rows.Count + errors.Count >= options.NormalizedBatchSize)
+                await FlushLogisticsSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        }
+
+        await FlushLogisticsSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        summary.Increment("logistics_snapshot_rows_staged", summary.RowsWritten - writtenBefore);
+        summary.Increment("logistics_snapshot_rows_skipped", summary.RowsSkipped - skippedBefore);
+    }
+
+    private async Task FlushLogisticsSnapshotBatchAsync(
+        Guid fileId,
+        List<ParserLogisticsSnapshotRow> rows,
+        List<ParserImportError> errors,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0 && errors.Count == 0)
+            return;
+
+        var lineNumbers = rows.Select(x => x.SourceLineNumber).ToList();
+        var existing = lineNumbers.Count == 0
+            ? []
+            : await _dbContext.ParserLogisticsSnapshotRows
+                .AsNoTracking()
+                .Where(x => x.IdParserFile == fileId && lineNumbers.Contains(x.SourceLineNumber))
+                .Select(x => x.SourceLineNumber)
+                .ToListAsync(cancellationToken);
+        var existingLines = existing.ToHashSet();
+        var newRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+
+        summary.RowsSkipped += rows.Count - newRows.Count;
+        summary.RowsWritten += newRows.Count;
+        _dbContext.ParserLogisticsSnapshotRows.AddRange(newRows);
+        _dbContext.ParserImportErrors.AddRange(errors);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        _dbContext.ChangeTracker.Clear();
+        rows.Clear();
+        errors.Clear();
+    }
+
+    private async Task StageWarehouseAvailabilityAsync(
+        string path,
+        ManifestInfo manifest,
+        ParserRun run,
+        ParserFile file,
+        ParserImportExecution execution,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<ParserWarehouseAvailabilityRow>(options.NormalizedBatchSize);
+        var errors = new List<ParserImportError>();
+        var writtenBefore = summary.RowsWritten;
+        var skippedBefore = summary.RowsSkipped;
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                rows.Add(ParseWarehouseAvailability(source, manifest, run.Id, file.Id));
+            }
+            catch (Exception exception)
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+                summary.Increment("warehouse_availability_rows_invalid");
+                errors.Add(CreateError(execution.Id, run.Id, file.Id, source.LineNumber, "warehouse-availability-row", exception.Message));
+            }
+
+            if (rows.Count + errors.Count >= options.NormalizedBatchSize)
+                await FlushWarehouseAvailabilityBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        }
+
+        await FlushWarehouseAvailabilityBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        summary.Increment("warehouse_availability_rows_staged", summary.RowsWritten - writtenBefore);
+        summary.Increment("warehouse_availability_rows_skipped", summary.RowsSkipped - skippedBefore);
+    }
+
+    private async Task FlushWarehouseAvailabilityBatchAsync(
+        Guid fileId,
+        List<ParserWarehouseAvailabilityRow> rows,
+        List<ParserImportError> errors,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0 && errors.Count == 0)
+            return;
+
+        var lineNumbers = rows.Select(x => x.SourceLineNumber).ToList();
+        var existing = lineNumbers.Count == 0
+            ? []
+            : await _dbContext.ParserWarehouseAvailabilityRows
+                .AsNoTracking()
+                .Where(x => x.IdParserFile == fileId && lineNumbers.Contains(x.SourceLineNumber))
+                .Select(x => x.SourceLineNumber)
+                .ToListAsync(cancellationToken);
+        var existingLines = existing.ToHashSet();
+        var newRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+
+        summary.RowsSkipped += rows.Count - newRows.Count;
+        summary.RowsWritten += newRows.Count;
+        _dbContext.ParserWarehouseAvailabilityRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
         _dbContext.ChangeTracker.Clear();
@@ -1177,6 +1468,10 @@ public sealed class ParserIngestionService : IParserIngestionService
         var path = RequiredFile(runDirectory, "manifest.json");
         using var manifest = JsonDocument.Parse(File.ReadAllText(path));
         var root = manifest.RootElement;
+        var runKind = ReadString(root, "run_kind");
+        if (kind == LogisticsKind && !string.Equals(runKind, LogisticsRunKind, StringComparison.Ordinal))
+            throw new InvalidDataException($"Logistics parser manifest must have run_kind '{LogisticsRunKind}'.");
+
         var countersName = kind is ProductsKind or RanksKind ? "row_counts" : "counters";
         return new ManifestInfo(
             kind,
@@ -1350,6 +1645,96 @@ public sealed class ParserIngestionService : IParserIngestionService
             ReadNonNegativeInt(row, "http_status"),
             ReadString(row, "wb_code"),
             ReadString(row, "message"));
+    }
+
+    private static ParserLogisticsSnapshotRow ParseLogisticsSnapshot(
+        JsonLine source,
+        ManifestInfo manifest,
+        Guid runId,
+        Guid fileId)
+    {
+        source.ThrowIfInvalid();
+        var row = source.Payload.RootElement;
+        return new ParserLogisticsSnapshotRow(
+            runId,
+            fileId,
+            source.LineNumber,
+            RowHash(source.RawLine),
+            ReadInt(row, "schema_version") ?? 1,
+            RequiredString(row, "parser_run_id"),
+            RequiredString(row, "marketplace"),
+            RequiredUtcDate(row, "observed_at_utc"),
+            RequiredString(row, "source_request_family"),
+            RequiredString(row, "source_endpoint"),
+            RequiredString(row, "request_fingerprint"),
+            RequiredString(row, "source_region_dest"),
+            ReadString(row, "source_category"),
+            ReadString(row, "source_subcategory"),
+            ReadString(row, "source_query"),
+            RequiredString(row, "wb_product_id"),
+            ReadString(row, "wb_root_id"),
+            ReadString(row, "seller_id"),
+            ReadString(row, "seller_name"),
+            ReadInt(row, "total_quantity_observed"),
+            ReadBool(row, "quantity_is_capped"),
+            ReadInt(row, "quantity_cap_observed"),
+            RequiredString(row, "quantity_semantics"),
+            ReadString(row, "product_wh_raw"),
+            ReadInt(row, "product_time1_raw"),
+            ReadInt(row, "product_time2_raw"),
+            ReadLong(row, "product_dtype_raw"),
+            ReadInt(row, "product_dist_raw"),
+            CloneDocument(CloneElement(row, "raw_observed_fields")));
+    }
+
+    private static ParserWarehouseAvailabilityRow ParseWarehouseAvailability(
+        JsonLine source,
+        ManifestInfo manifest,
+        Guid runId,
+        Guid fileId)
+    {
+        source.ThrowIfInvalid();
+        var row = source.Payload.RootElement;
+        return new ParserWarehouseAvailabilityRow(
+            runId,
+            fileId,
+            source.LineNumber,
+            RowHash(source.RawLine),
+            ReadInt(row, "schema_version") ?? 1,
+            RequiredString(row, "parser_run_id"),
+            RequiredString(row, "marketplace"),
+            RequiredUtcDate(row, "observed_at_utc"),
+            RequiredString(row, "source_request_family"),
+            RequiredString(row, "source_endpoint"),
+            RequiredString(row, "request_fingerprint"),
+            RequiredString(row, "source_region_dest"),
+            ReadString(row, "source_category"),
+            ReadString(row, "source_subcategory"),
+            ReadString(row, "source_query"),
+            RequiredString(row, "wb_product_id"),
+            ReadString(row, "wb_root_id"),
+            ReadString(row, "seller_id"),
+            ReadString(row, "seller_name"),
+            ReadString(row, "option_id"),
+            ReadString(row, "size_name"),
+            ReadString(row, "size_orig_name"),
+            ReadInt(row, "size_rank"),
+            ReadString(row, "warehouse_id_on_mp"),
+            ReadInt(row, "quantity_observed"),
+            ReadBool(row, "quantity_is_capped"),
+            ReadInt(row, "quantity_cap_observed"),
+            RequiredString(row, "quantity_semantics"),
+            ReadInt(row, "stock_priority_raw"),
+            ReadInt(row, "stock_time1_raw"),
+            ReadInt(row, "stock_time2_raw"),
+            ReadLong(row, "stock_dtype_raw"),
+            ReadInt(row, "stock_dist_raw"),
+            ReadDecimal(row, "price_basic"),
+            ReadDecimal(row, "price_product"),
+            ReadDecimal(row, "price_logistics_raw"),
+            ReadDecimal(row, "price_return_raw"),
+            CloneDocument(CloneElement(row, "raw_stock")),
+            CloneDocument(CloneElement(row, "raw_size_observed_fields")));
     }
 
     private static ParserReviewRootFetch ParseReviewRootFetch(

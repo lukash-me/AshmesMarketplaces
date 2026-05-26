@@ -27,7 +27,7 @@ async function signOut() {
     </button>
     <div class="topbar__search">
       <Search :size="16" />
-      <span>Search products, orders, campaigns</span>
+      <span>Search workspace</span>
     </div>
     <div class="topbar__user">
       <span class="topbar__status">Workspace</span>
