@@ -1,84 +1,58 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { X } from 'lucide-vue-next';
+import { Pencil, X } from 'lucide-vue-next';
 
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import Badge from '@/shared/ui/Badge.vue';
+import Button from '@/shared/ui/Button.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 
 import {
-  compactId,
   fieldValue,
   formatAmount,
   formatDateTime,
   getExpenseCategoryLabel,
-  getExpenseNeutralTone,
   getExpenseStatusLabel,
-  type ExpenseCategoryLookup
+  getExpenseStatusTone,
+  getUserLabel,
+  type ExpenseCategoryLookup,
+  type ExpenseUserLookup
 } from './expenseDisplay';
-import { getExpense, getExpenseCategory } from './expenses.api';
-import type { ExpenseCategoryDetail, ExpenseDetail, ExpenseListItem } from './expenses.types';
+import { getExpense } from './expenses.api';
+import type { ExpenseDetail, ExpenseListItem, ExpenseStatusKey } from './expenses.types';
 
 const props = defineProps<{
   open: boolean;
   expense: ExpenseListItem | null;
   categoriesById: ExpenseCategoryLookup;
+  usersById: ExpenseUserLookup;
+  actionLoading: boolean;
 }>();
 
 const emit = defineEmits<{
   close: [];
+  edit: [expense: ExpenseDetail | ExpenseListItem];
+  status: [expense: ExpenseDetail | ExpenseListItem, statusKey: ExpenseStatusKey];
 }>();
 
 const detail = ref<ExpenseDetail | null>(null);
-const category = ref<ExpenseCategoryDetail | null>(null);
 const detailLoading = ref(false);
-const categoryLoading = ref(false);
 const detailError = ref('');
-const categoryError = ref('');
 let detailLoadVersion = 0;
-let categoryLoadVersion = 0;
 
 const displayExpense = computed(() => detail.value ?? props.expense);
-const linkedCategoryId = computed(() => displayExpense.value?.idCategory ?? null);
-const categoryFromLookup = computed(() =>
-  linkedCategoryId.value ? props.categoriesById[linkedCategoryId.value] ?? null : null
-);
-const displayCategory = computed(() => categoryFromLookup.value ?? category.value);
+const title = computed(() => displayExpense.value?.name ?? 'Расход');
 
 watch(
   () => [props.open, props.expense?.id] as const,
   async ([open, id]) => {
     if (!open || !id) {
       detail.value = null;
-      category.value = null;
       detailError.value = '';
-      categoryError.value = '';
       return;
     }
 
     await loadDetail(id);
-  },
-  { immediate: true }
-);
-
-watch(
-  () => [props.open, linkedCategoryId.value] as const,
-  async ([open, idCategory]) => {
-    if (!open || !idCategory) {
-      category.value = null;
-      categoryError.value = '';
-      categoryLoading.value = false;
-      return;
-    }
-
-    if (props.categoriesById[idCategory]) {
-      category.value = null;
-      categoryError.value = '';
-      categoryLoading.value = false;
-      return;
-    }
-
-    await loadCategory(idCategory);
   },
   { immediate: true }
 );
@@ -106,35 +80,11 @@ async function loadDetail(id: string): Promise<void> {
     }
   } catch (err) {
     if (version === detailLoadVersion) {
-      detailError.value = getProblemMessage(err, 'Unable to load expense details.');
+      detailError.value = getProblemMessage(err, 'Не удалось загрузить расход.');
     }
   } finally {
     if (version === detailLoadVersion) {
       detailLoading.value = false;
-    }
-  }
-}
-
-async function loadCategory(id: string): Promise<void> {
-  const version = ++categoryLoadVersion;
-
-  categoryLoading.value = true;
-  categoryError.value = '';
-  category.value = null;
-
-  try {
-    const response = await getExpenseCategory(id);
-
-    if (version === categoryLoadVersion) {
-      category.value = response;
-    }
-  } catch (err) {
-    if (version === categoryLoadVersion) {
-      categoryError.value = getProblemMessage(err, 'Unable to load linked expense category.');
-    }
-  } finally {
-    if (version === categoryLoadVersion) {
-      categoryLoading.value = false;
     }
   }
 }
@@ -153,26 +103,18 @@ function onKeydown(event: KeyboardEvent): void {
 <template>
   <Teleport to="body">
     <div v-if="open" class="drawer-shell" role="presentation">
-      <button class="drawer-shell__backdrop" type="button" aria-label="Close expense detail" @click="close" />
+      <button class="drawer-shell__backdrop" type="button" aria-label="Закрыть расход" @click="close" />
 
-      <aside
-        class="drawer app-surface"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="expense-detail-title"
-      >
+      <aside class="drawer app-surface" role="dialog" aria-modal="true" aria-labelledby="expense-detail-title">
         <header class="drawer__header">
           <div v-if="displayExpense" class="drawer__title">
-            <Badge :tone="getExpenseNeutralTone()">
-              {{ getExpenseStatusLabel(displayExpense.status) }}
+            <Badge :tone="getExpenseStatusTone(displayExpense.statusKey)">
+              {{ getExpenseStatusLabel(displayExpense.statusKey, displayExpense.statusLabel) }}
             </Badge>
-            <h2 id="expense-detail-title">{{ displayExpense.name }}</h2>
-            <p>
-              Expense {{ compactId(displayExpense.id) }} / Category
-              {{ getExpenseCategoryLabel(displayExpense.idCategory, categoriesById) }}
-            </p>
+            <h2 id="expense-detail-title">{{ title }}</h2>
+            <p>{{ getExpenseCategoryLabel(displayExpense.idCategory, categoriesById, displayExpense.categoryName) }}</p>
           </div>
-          <button class="app-icon-button" type="button" aria-label="Close expense detail" @click="close">
+          <button class="app-icon-button" type="button" aria-label="Закрыть расход" @click="close">
             <X :size="18" />
           </button>
         </header>
@@ -180,17 +122,46 @@ function onKeydown(event: KeyboardEvent): void {
         <div v-if="displayExpense" class="drawer__body">
           <section class="drawer__section drawer__section--summary">
             <div>
-              <span>Cost</span>
+              <span>Сумма</span>
               <strong class="numeric">{{ formatAmount(displayExpense.cost) }}</strong>
             </div>
             <div>
-              <span>Status</span>
-              <strong>{{ getExpenseStatusLabel(displayExpense.status) }}</strong>
-            </div>
-            <div>
-              <span>Paid</span>
+              <span>Дата оплаты</span>
               <strong class="numeric">{{ formatDateTime(displayExpense.datePay) }}</strong>
             </div>
+            <div>
+              <span>Ответственный</span>
+              <strong>{{ getUserLabel(displayExpense.idResponsible, usersById, displayExpense.responsibleLogin, displayExpense.responsibleEmail) }}</strong>
+            </div>
+          </section>
+
+          <section class="drawer__actions">
+            <Button variant="primary" :disabled="actionLoading" @click="emit('edit', detail ?? displayExpense)">
+              <Pencil :size="15" />
+              Редактировать
+            </Button>
+            <Button
+              variant="secondary"
+              :loading="actionLoading && displayExpense.statusKey !== 'paid'"
+              :disabled="actionLoading || displayExpense.statusKey === 'paid'"
+              @click="emit('status', detail ?? displayExpense, 'paid')"
+            >
+              Отметить как оплачено
+            </Button>
+            <Button
+              variant="secondary"
+              :disabled="actionLoading || displayExpense.statusKey === 'pending_payment'"
+              @click="emit('status', detail ?? displayExpense, 'pending_payment')"
+            >
+              К оплате
+            </Button>
+            <Button
+              variant="ghost"
+              :disabled="actionLoading || displayExpense.statusKey === 'cancelled'"
+              @click="emit('status', detail ?? displayExpense, 'cancelled')"
+            >
+              Отменить
+            </Button>
           </section>
 
           <LoadingState v-if="detailLoading" class="drawer__loading" :rows="3" />
@@ -200,71 +171,39 @@ function onKeydown(event: KeyboardEvent): void {
           </section>
 
           <section class="drawer__section">
-            <h3>Description</h3>
+            <h3>Описание</h3>
             <p class="drawer__text">{{ fieldValue(detail?.description) }}</p>
           </section>
 
           <section class="drawer__section">
-            <h3>Identifiers</h3>
-            <dl class="drawer__fields">
-              <div><dt>Expense ID</dt><dd>{{ displayExpense.id }}</dd></div>
-              <div><dt>Workspace ID</dt><dd>{{ displayExpense.idWorkspace }}</dd></div>
-              <div><dt>Category ID</dt><dd>{{ fieldValue(displayExpense.idCategory) }}</dd></div>
-              <div><dt>Creator ID</dt><dd>{{ displayExpense.idCreator }}</dd></div>
-              <div><dt>Responsible ID</dt><dd>{{ fieldValue(displayExpense.idResponsible) }}</dd></div>
-            </dl>
-          </section>
-
-          <section class="drawer__section">
-            <h3>Expense fields</h3>
+            <h3>Детали</h3>
             <dl class="drawer__fields drawer__fields--two">
-              <div><dt>Name</dt><dd>{{ displayExpense.name }}</dd></div>
               <div>
-                <dt>Status</dt>
+                <dt>Категория</dt>
+                <dd>{{ getExpenseCategoryLabel(displayExpense.idCategory, categoriesById, displayExpense.categoryName) }}</dd>
+              </div>
+              <div>
+                <dt>Статус</dt>
                 <dd>
-                  <Badge :tone="getExpenseNeutralTone()">
-                    {{ getExpenseStatusLabel(displayExpense.status) }}
+                  <Badge :tone="getExpenseStatusTone(displayExpense.statusKey)">
+                    {{ getExpenseStatusLabel(displayExpense.statusKey, displayExpense.statusLabel) }}
                   </Badge>
                 </dd>
               </div>
-              <div><dt>Cost</dt><dd>{{ formatAmount(displayExpense.cost) }}</dd></div>
-              <div><dt>Paid</dt><dd>{{ formatDateTime(displayExpense.datePay) }}</dd></div>
+              <div><dt>Рабочее пространство</dt><dd>{{ displayExpense.workspaceName }}</dd></div>
+              <div><dt>Создал</dt><dd>{{ getUserLabel(displayExpense.idCreator, usersById, displayExpense.creatorLogin, displayExpense.creatorEmail) }}</dd></div>
+              <div><dt>Ответственный</dt><dd>{{ getUserLabel(displayExpense.idResponsible, usersById, displayExpense.responsibleLogin, displayExpense.responsibleEmail) }}</dd></div>
+              <div><dt>Сумма</dt><dd>{{ formatAmount(displayExpense.cost) }}</dd></div>
             </dl>
           </section>
 
           <section class="drawer__section">
-            <h3>Timeline</h3>
+            <h3>История</h3>
             <dl class="drawer__fields drawer__fields--two">
-              <div><dt>Created</dt><dd>{{ formatDateTime(displayExpense.dateCreate) }}</dd></div>
-              <div><dt>Updated</dt><dd>{{ formatDateTime(displayExpense.dateUpdate) }}</dd></div>
+              <div><dt>Создан</dt><dd>{{ formatDateTime(displayExpense.dateCreate) }}</dd></div>
+              <div><dt>Обновлен</dt><dd>{{ formatDateTime(displayExpense.dateUpdate) }}</dd></div>
+              <div><dt>Дата оплаты</dt><dd>{{ formatDateTime(displayExpense.datePay) }}</dd></div>
             </dl>
-          </section>
-
-          <section class="drawer__section">
-            <header class="category-header">
-              <h3>Linked category</h3>
-              <code v-if="linkedCategoryId" :title="linkedCategoryId">{{ compactId(linkedCategoryId) }}</code>
-            </header>
-
-            <div v-if="!linkedCategoryId" class="drawer__placeholder">
-              No expense category is linked by the current expense record.
-            </div>
-
-            <LoadingState v-else-if="categoryLoading" class="drawer__loading" :rows="3" />
-
-            <div v-else-if="categoryError" class="drawer__notice">
-              {{ categoryError }} Raw category ID remains visible above.
-            </div>
-
-            <div v-else-if="displayCategory" class="category-detail">
-              <strong>{{ displayCategory.name }}</strong>
-              <p>{{ fieldValue(displayCategory.description) }}</p>
-              <dl class="drawer__fields drawer__fields--two">
-                <div><dt>Category ID</dt><dd>{{ displayCategory.id }}</dd></div>
-                <div><dt>Created</dt><dd>{{ formatDateTime(displayCategory.dateCreate) }}</dd></div>
-                <div><dt>Updated</dt><dd>{{ formatDateTime(displayCategory.dateUpdate) }}</dd></div>
-              </dl>
-            </div>
           </section>
         </div>
       </aside>
@@ -323,8 +262,7 @@ function onKeydown(event: KeyboardEvent): void {
 .drawer__title p {
   margin: 0;
   color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
 }
 
 .drawer__body {
@@ -335,13 +273,18 @@ function onKeydown(event: KeyboardEvent): void {
   padding: var(--space-3);
 }
 
-.drawer__section {
+.drawer__section,
+.drawer__actions {
   display: grid;
   gap: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--surface-panel-muted);
   padding: var(--space-3);
+}
+
+.drawer__actions {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
 }
 
 .drawer__section--summary {
@@ -363,9 +306,6 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .drawer__section--summary strong {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
   font-size: 0.9rem;
 }
 
@@ -392,31 +332,23 @@ function onKeydown(event: KeyboardEvent): void {
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.8125rem;
 }
 
-.drawer__text,
-.category-detail p {
+.drawer__text {
   margin: 0;
   color: var(--color-text);
   line-height: 1.55;
   white-space: pre-wrap;
 }
 
-.drawer__notice,
-.drawer__placeholder {
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
-  padding: var(--space-3);
-  font-size: 0.8125rem;
-}
-
 .drawer__notice {
-  border-color: var(--state-danger-border);
+  border: 1px solid var(--state-danger-border);
+  border-radius: var(--radius-md);
   background: var(--state-danger-soft);
   color: var(--state-danger);
+  padding: var(--space-3);
+  font-size: 0.8125rem;
 }
 
 .drawer__loading {
@@ -425,32 +357,9 @@ function onKeydown(event: KeyboardEvent): void {
   background: var(--surface-panel-muted);
 }
 
-.category-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.category-header code {
-  color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-}
-
-.category-detail {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.category-detail strong {
-  color: var(--color-text);
-  font-size: 0.9rem;
-}
-
 @media (min-width: 680px) {
-  .drawer__section--summary {
+  .drawer__section--summary,
+  .drawer__actions {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 

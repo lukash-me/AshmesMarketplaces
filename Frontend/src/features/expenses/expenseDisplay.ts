@@ -1,4 +1,4 @@
-import type { ExpenseCategoryListItem } from './expenses.types';
+import type { ExpenseCategoryListItem, ExpenseStatusKey, ExpenseUserListItem } from './expenses.types';
 
 export type ExpenseBadgeTone =
   | 'neutral'
@@ -10,24 +10,78 @@ export type ExpenseBadgeTone =
   | 'hot';
 
 export type ExpenseCategoryLookup = Record<string, ExpenseCategoryListItem>;
+export type ExpenseUserLookup = Record<string, ExpenseUserListItem>;
 
-export function getExpenseStatusLabel(status: number): string {
-  return Number.isFinite(status) ? `Status ${status}` : 'Status -';
+export const expenseStatusOptions: Array<{ key: ExpenseStatusKey; label: string; status: number }> = [
+  { key: 'planned', label: 'Запланирован', status: 0 },
+  { key: 'pending_payment', label: 'К оплате', status: 1 },
+  { key: 'paid', label: 'Оплачен', status: 2 },
+  { key: 'cancelled', label: 'Отменён', status: 3 }
+];
+
+export function getExpenseStatusLabel(statusKey: string | null | undefined, fallback?: string): string {
+  return expenseStatusOptions.find((option) => option.key === statusKey)?.label ?? fallback ?? 'Другой статус';
 }
 
-export function getExpenseNeutralTone(): ExpenseBadgeTone {
+export function getExpenseStatusTone(statusKey: string | null | undefined): ExpenseBadgeTone {
+  if (statusKey === 'paid') {
+    return 'success';
+  }
+
+  if (statusKey === 'pending_payment') {
+    return 'warning';
+  }
+
+  if (statusKey === 'planned') {
+    return 'info';
+  }
+
+  if (statusKey === 'cancelled') {
+    return 'danger';
+  }
+
   return 'neutral';
+}
+
+export function getExpenseStatusNumber(statusKey: ExpenseStatusKey): number {
+  return expenseStatusOptions.find((option) => option.key === statusKey)?.status ?? 0;
 }
 
 export function getExpenseCategoryLabel(
   idCategory: string | null | undefined,
-  categoriesById: ExpenseCategoryLookup
+  categoriesById: ExpenseCategoryLookup,
+  hydratedName?: string | null
 ): string {
-  if (!idCategory) {
-    return '-';
+  if (hydratedName?.trim()) {
+    return hydratedName;
   }
 
-  return categoriesById[idCategory]?.name ?? compactId(idCategory);
+  if (!idCategory) {
+    return 'Без категории';
+  }
+
+  return categoriesById[idCategory]?.name ?? 'Без категории';
+}
+
+export function getUserLabel(
+  idUser: string | null | undefined,
+  usersById: ExpenseUserLookup,
+  login?: string | null,
+  email?: string | null
+): string {
+  if (login?.trim()) {
+    return login;
+  }
+
+  if (email?.trim()) {
+    return email;
+  }
+
+  if (idUser && usersById[idUser]) {
+    return usersById[idUser].login || usersById[idUser].email || 'Пользователь';
+  }
+
+  return 'Не назначен';
 }
 
 export function formatDateTime(value: string | null): string {
@@ -41,9 +95,9 @@ export function formatDateTime(value: string | null): string {
     return '-';
   }
 
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
+  return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
+    month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
@@ -61,9 +115,9 @@ export function formatDateShort(value: string | null): string {
     return '-';
   }
 
-  return new Intl.DateTimeFormat('en', {
-    month: 'short',
+  return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
+    month: '2-digit',
     year: 'numeric'
   }).format(date);
 }
@@ -73,17 +127,11 @@ export function formatAmount(value: number | null | undefined): string {
     return '-';
   }
 
-  return new Intl.NumberFormat('en', {
-    maximumFractionDigits: 2
+  return new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0
   }).format(value);
-}
-
-export function compactId(value: string | null | undefined): string {
-  if (!value) {
-    return '-';
-  }
-
-  return value.length > 12 ? `${value.slice(0, 8)}...${value.slice(-4)}` : value;
 }
 
 export function fieldValue(value: string | number | null | undefined): string {
@@ -91,27 +139,23 @@ export function fieldValue(value: string | number | null | undefined): string {
 }
 
 export function getExpenseSortLabel(value: string): string {
-  const direction = value.startsWith('-') ? 'desc' : 'asc';
+  const direction = value.startsWith('-') ? 'по убыванию' : 'по возрастанию';
   const field = value.replace(/^-/, '');
 
   if (field === 'name') {
-    return `Name ${direction}`;
+    return `Название ${direction}`;
   }
 
   if (field === 'cost') {
-    return `Cost ${direction}`;
+    return `Сумма ${direction}`;
   }
 
   if (field === 'datePay') {
-    return `Paid ${direction}`;
-  }
-
-  if (field === 'dateCreate') {
-    return `Created ${direction}`;
+    return `Дата оплаты ${direction}`;
   }
 
   if (field === 'dateUpdate') {
-    return `Updated ${direction}`;
+    return `Обновлено ${direction}`;
   }
 
   return `${field} ${direction}`;

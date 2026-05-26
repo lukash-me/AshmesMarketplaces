@@ -60,6 +60,7 @@ public sealed class DevelopmentSeeder
             cancellationToken);
 
         await SeedOperationsAsync(products, warehouse.Id, workspace.Id, users["Admin"].Id, cancellationToken);
+        await SeedDemoExpensesAsync(workspace.Id, users, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -441,6 +442,84 @@ public sealed class DevelopmentSeeder
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return category;
+    }
+
+    private async Task SeedDemoExpensesAsync(
+        Guid workspaceId,
+        IReadOnlyDictionary<string, User> users,
+        CancellationToken cancellationToken)
+    {
+        var categories = await GetOrCreateExpenseCategoriesAsync(cancellationToken);
+        var adminUserId = users["Admin"].Id;
+
+        foreach (var seedExpense in DevelopmentSeedData.Expenses)
+        {
+            var exists = await _dbContext.Expenses.AnyAsync(
+                x => x.IdWorkspace == workspaceId && x.Name == seedExpense.Name,
+                cancellationToken);
+
+            if (exists)
+            {
+                _logger.LogInformation(
+                    "Development demo expense '{Name}' already exists in workspace {WorkspaceId}; skipping.",
+                    seedExpense.Name,
+                    workspaceId);
+                continue;
+            }
+
+            var category = categories[seedExpense.CategoryName];
+            var idResponsible = seedExpense.ResponsibleRoleName is null
+                ? (Guid?)null
+                : users[seedExpense.ResponsibleRoleName].Id;
+            var dateCreate = DevelopmentSeedData.SeedDate.AddDays(seedExpense.DateCreateOffsetDays);
+            var dateUpdate = DevelopmentSeedData.SeedDate.AddDays(seedExpense.DateUpdateOffsetDays);
+            var datePay = seedExpense.DatePayOffsetDays.HasValue
+                ? DevelopmentSeedData.SeedDate.AddDays(seedExpense.DatePayOffsetDays.Value)
+                : (DateTime?)null;
+
+            _dbContext.Expenses.Add(new Expense(
+                workspaceId,
+                category.Id,
+                adminUserId,
+                idResponsible,
+                seedExpense.Name,
+                seedExpense.Description,
+                seedExpense.Cost,
+                seedExpense.Status,
+                datePay,
+                dateCreate,
+                dateUpdate));
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<Dictionary<string, ExpenseCategory>> GetOrCreateExpenseCategoriesAsync(CancellationToken cancellationToken)
+    {
+        var categoryNames = DevelopmentSeedData.ExpenseCategories.Select(x => x.Name).ToArray();
+        var existingCategories = await _dbContext.ExpenseCategories
+            .Where(x => categoryNames.Contains(x.Name))
+            .ToListAsync(cancellationToken);
+        var categories = existingCategories.ToDictionary(x => x.Name, StringComparer.Ordinal);
+
+        foreach (var seedCategory in DevelopmentSeedData.ExpenseCategories)
+        {
+            if (categories.ContainsKey(seedCategory.Name))
+                continue;
+
+            var category = new ExpenseCategory(
+                seedCategory.Name,
+                seedCategory.Description,
+                DevelopmentSeedData.SeedDate,
+                DevelopmentSeedData.SeedDate);
+
+            _dbContext.ExpenseCategories.Add(category);
+            categories[seedCategory.Name] = category;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return categories;
     }
 
     private void LogCredentials()

@@ -28,9 +28,14 @@ public sealed class ExpenseListQueryValidator : AbstractValidator<ExpenseListQue
             .WithMessage("Sort must be one of: name, -name, cost, -cost, datePay, -datePay, dateCreate, -dateCreate, dateUpdate, -dateUpdate.");
         RuleFor(x => x.IdWorkspace).NotEqual(Guid.Empty).When(x => x.IdWorkspace.HasValue);
         RuleFor(x => x.IdCategory).NotEqual(Guid.Empty).When(x => x.IdCategory.HasValue);
+        RuleFor(x => x.CategoryId).NotEqual(Guid.Empty).When(x => x.CategoryId.HasValue);
         RuleFor(x => x.IdCreator).NotEqual(Guid.Empty).When(x => x.IdCreator.HasValue);
         RuleFor(x => x.IdResponsible).NotEqual(Guid.Empty).When(x => x.IdResponsible.HasValue);
+        RuleFor(x => x.ResponsibleUserId).NotEqual(Guid.Empty).When(x => x.ResponsibleUserId.HasValue);
         RuleFor(x => x.Status).GreaterThanOrEqualTo(0).When(x => x.Status.HasValue);
+        RuleFor(x => x.StatusKey)
+            .Must(BeAllowedStatusKey)
+            .WithMessage("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
         RuleFor(x => x.DatePayFrom).Must(BeUtc).WithMessage("DatePayFrom must be UTC.");
         RuleFor(x => x.DatePayTo).Must(BeUtc).WithMessage("DatePayTo must be UTC.");
         RuleFor(x => x.DateCreateFrom).Must(BeUtc).WithMessage("DateCreateFrom must be UTC.");
@@ -43,7 +48,16 @@ public sealed class ExpenseListQueryValidator : AbstractValidator<ExpenseListQue
             .GreaterThanOrEqualTo(x => x.DateCreateFrom)
             .When(x => x.DateCreateFrom.HasValue && x.DateCreateTo.HasValue)
             .WithMessage("DateCreateTo cannot be earlier than DateCreateFrom.");
+        RuleFor(x => x.AmountFrom).GreaterThanOrEqualTo(0).When(x => x.AmountFrom.HasValue);
+        RuleFor(x => x.AmountTo).GreaterThanOrEqualTo(0).When(x => x.AmountTo.HasValue);
+        RuleFor(x => x.AmountTo)
+            .GreaterThanOrEqualTo(x => x.AmountFrom)
+            .When(x => x.AmountFrom.HasValue && x.AmountTo.HasValue)
+            .WithMessage("AmountTo cannot be less than AmountFrom.");
     }
 
     private static bool BeUtc(DateTime? value) => value is null || value.Value.Kind == DateTimeKind.Utc;
+    private static bool BeAllowedStatusKey(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+        || value is "planned" or "pending_payment" or "paid" or "cancelled";
 }

@@ -27,6 +27,15 @@ public sealed class ExpensesController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("summary")]
+    [ProducesResponseType(typeof(ExpenseSummaryResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ExpenseSummaryResponse>> GetSummary([FromQuery] ExpenseListQuery query, CancellationToken cancellationToken)
+    {
+        var result = await _expenseService.GetSummaryAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(ExpenseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

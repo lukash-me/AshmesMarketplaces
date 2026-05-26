@@ -9,6 +9,11 @@ namespace AshmesMarketplaces.Application.Expenses.Services;
 
 public sealed class ExpenseService : IExpenseService
 {
+    private const int PlannedStatus = 0;
+    private const int PendingPaymentStatus = 1;
+    private const int PaidStatus = 2;
+    private const int CancelledStatus = 3;
+
     private readonly ApplicationDbContext _dbContext;
 
     public ExpenseService(ApplicationDbContext dbContext)
@@ -18,48 +23,13 @@ public sealed class ExpenseService : IExpenseService
 
     public async Task<ServiceResult<PagedResponse<ExpenseListItemResponse>>> GetListAsync(ExpenseListQuery query, CancellationToken cancellationToken)
     {
+        var statusCheck = TryMapStatusKey(query.StatusKey, out var mappedStatus);
+        if (!statusCheck)
+            return ServiceResult<PagedResponse<ExpenseListItemResponse>>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
+
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
-        var expenses = _dbContext.Expenses.AsNoTracking();
-
-        if (query.IdWorkspace.HasValue)
-            expenses = expenses.Where(x => x.IdWorkspace == query.IdWorkspace.Value);
-
-        if (query.IdCategory.HasValue)
-            expenses = expenses.Where(x => x.IdCategory == query.IdCategory.Value);
-
-        if (query.IdCreator.HasValue)
-            expenses = expenses.Where(x => x.IdCreator == query.IdCreator.Value);
-
-        if (query.IdResponsible.HasValue)
-            expenses = expenses.Where(x => x.IdResponsible == query.IdResponsible.Value);
-
-        if (query.Status.HasValue)
-            expenses = expenses.Where(x => x.Status == query.Status.Value);
-
-        if (query.DatePayFrom.HasValue)
-            expenses = expenses.Where(x => x.DatePay >= query.DatePayFrom.Value);
-
-        if (query.DatePayTo.HasValue)
-            expenses = expenses.Where(x => x.DatePay <= query.DatePayTo.Value);
-
-        if (query.DateCreateFrom.HasValue)
-            expenses = expenses.Where(x => x.DateCreate >= query.DateCreateFrom.Value);
-
-        if (query.DateCreateTo.HasValue)
-            expenses = expenses.Where(x => x.DateCreate <= query.DateCreateTo.Value);
-
-        if (!string.IsNullOrWhiteSpace(query.Search))
-        {
-            var search = query.Search.Trim();
-            expenses = expenses.Where(x =>
-                EF.Functions.ILike(x.Name, $"%{search}%")
-                || (x.Description != null && EF.Functions.ILike(x.Description, $"%{search}%"))
-                || (x.IdCategory.HasValue
-                    && _dbContext.ExpenseCategories.Any(c =>
-                        c.Id == x.IdCategory.Value
-                        && EF.Functions.ILike(c.Name, $"%{search}%"))));
-        }
+        var expenses = ApplyFilters(_dbContext.Expenses.AsNoTracking(), query, mappedStatus);
 
         expenses = query.Sort?.Trim() switch
         {
@@ -77,24 +47,126 @@ public sealed class ExpenseService : IExpenseService
         };
 
         var totalCount = await expenses.CountAsync(cancellationToken);
-        var items = await expenses
+        var rows = await expenses
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(x => new ExpenseListItemResponse(
+            .Select(x => new ExpenseProjection(
                 x.Id,
                 x.IdWorkspace,
                 x.IdCategory,
                 x.IdCreator,
                 x.IdResponsible,
                 x.Name,
+                x.Description,
                 x.Cost,
                 x.Status,
+                _dbContext.ExpenseCategories
+                    .Where(category => x.IdCategory.HasValue && category.Id == x.IdCategory.Value)
+                    .Select(category => category.Name)
+                    .FirstOrDefault(),
+                _dbContext.Workspaces
+                    .Where(workspace => workspace.Id == x.IdWorkspace)
+                    .Select(workspace => workspace.Name)
+                    .FirstOrDefault() ?? string.Empty,
+                _dbContext.Users
+                    .Where(user => user.Id == x.IdCreator)
+                    .Select(user => user.Login)
+                    .FirstOrDefault() ?? string.Empty,
+                _dbContext.Users
+                    .Where(user => user.Id == x.IdCreator)
+                    .Select(user => user.Email)
+                    .FirstOrDefault(),
+                _dbContext.Users
+                    .Where(user => x.IdResponsible.HasValue && user.Id == x.IdResponsible.Value)
+                    .Select(user => user.Login)
+                    .FirstOrDefault(),
+                _dbContext.Users
+                    .Where(user => x.IdResponsible.HasValue && user.Id == x.IdResponsible.Value)
+                    .Select(user => user.Email)
+                    .FirstOrDefault(),
                 x.DatePay,
                 x.DateCreate,
                 x.DateUpdate))
             .ToListAsync(cancellationToken);
 
+        var items = rows.Select(MapToListItemResponse).ToList();
+
         return ServiceResult<PagedResponse<ExpenseListItemResponse>>.Success(new PagedResponse<ExpenseListItemResponse>(items, page, pageSize, totalCount));
+    }
+
+    public async Task<ServiceResult<ExpenseSummaryResponse>> GetSummaryAsync(ExpenseListQuery query, CancellationToken cancellationToken)
+    {
+        var statusCheck = TryMapStatusKey(query.StatusKey, out var mappedStatus);
+        if (!statusCheck)
+            return ServiceResult<ExpenseSummaryResponse>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
+
+        var expenses = ApplyFilters(_dbContext.Expenses.AsNoTracking(), query, mappedStatus);
+        var rows = await expenses
+            .Select(x => new
+            {
+                x.Status,
+                x.Cost,
+                x.DatePay,
+                CategoryKey = x.IdCategory.HasValue ? x.IdCategory.Value.ToString() : "none",
+                CategoryName = _dbContext.ExpenseCategories
+                    .Where(category => x.IdCategory.HasValue && category.Id == x.IdCategory.Value)
+                    .Select(category => category.Name)
+                    .FirstOrDefault()
+            })
+            .ToListAsync(cancellationToken);
+
+        var totalAmount = rows.Sum(x => x.Cost ?? 0);
+        var paidRows = rows.Where(x => x.Status == PaidStatus).ToList();
+        var pendingRows = rows.Where(x => x.Status == PendingPaymentStatus).ToList();
+        var nonNullCosts = rows.Where(x => x.Cost.HasValue).Select(x => x.Cost!.Value).ToList();
+
+        var byCategory = rows
+            .GroupBy(x => new { x.CategoryKey, Label = string.IsNullOrWhiteSpace(x.CategoryName) ? "Без категории" : x.CategoryName })
+            .OrderByDescending(group => group.Sum(x => x.Cost ?? 0))
+            .ThenBy(group => group.Key.Label)
+            .Select(group => new ExpenseSummaryBucketResponse(
+                group.Key.CategoryKey,
+                group.Key.Label!,
+                group.Count(),
+                group.Sum(x => x.Cost ?? 0)))
+            .ToList();
+
+        var byStatus = rows
+            .GroupBy(x => x.Status)
+            .OrderBy(group => group.Key)
+            .Select(group => new ExpenseSummaryBucketResponse(
+                GetStatusKey(group.Key) ?? group.Key.ToString(),
+                GetStatusLabel(group.Key),
+                group.Count(),
+                group.Sum(x => x.Cost ?? 0)))
+            .ToList();
+
+        var byMonth = rows
+            .Where(x => x.DatePay.HasValue)
+            .GroupBy(x => new DateTime(x.DatePay!.Value.Year, x.DatePay.Value.Month, 1))
+            .OrderBy(group => group.Key)
+            .Select(group => new ExpenseSummaryBucketResponse(
+                group.Key.ToString("yyyy-MM"),
+                group.Key.ToString("MM.yyyy"),
+                group.Count(),
+                group.Sum(x => x.Cost ?? 0)))
+            .ToList();
+
+        return ServiceResult<ExpenseSummaryResponse>.Success(new ExpenseSummaryResponse(
+            rows.Count,
+            totalAmount,
+            paidRows.Count,
+            paidRows.Sum(x => x.Cost ?? 0),
+            pendingRows.Count,
+            pendingRows.Sum(x => x.Cost ?? 0),
+            rows.Count(x => x.Status == PlannedStatus),
+            rows.Count(x => x.Status == CancelledStatus),
+            rows.Count(x => !x.DatePay.HasValue),
+            nonNullCosts.Count == 0 ? null : nonNullCosts.Average(),
+            rows.Where(x => x.DatePay.HasValue).Select(x => x.DatePay).DefaultIfEmpty().Max(),
+            byCategory,
+            byStatus,
+            byMonth));
     }
 
     public async Task<ServiceResult<ExpenseResponse>> GetByIdAsync(Guid id, CancellationToken cancellationToken)
@@ -102,14 +174,18 @@ public sealed class ExpenseService : IExpenseService
         if (id == Guid.Empty)
             return ServiceResult<ExpenseResponse>.BadRequest("Expense id is required.");
 
-        var expense = await _dbContext.Expenses.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
-        return expense is null
+        var row = await GetProjectionByIdAsync(id, cancellationToken);
+        return row is null
             ? ServiceResult<ExpenseResponse>.NotFound("Expense was not found.")
-            : ServiceResult<ExpenseResponse>.Success(MapToResponse(expense));
+            : ServiceResult<ExpenseResponse>.Success(MapToResponse(row));
     }
 
     public async Task<ServiceResult<ExpenseResponse>> CreateAsync(CreateExpenseRequest request, CancellationToken cancellationToken)
     {
+        var statusCheck = TryMapStatusKey(request.StatusKey, out var mappedStatus);
+        if (!statusCheck)
+            return ServiceResult<ExpenseResponse>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
+
         var referenceCheck = await ValidateReferencesAsync(request.IdWorkspace, request.IdCategory, request.IdCreator, request.IdResponsible, cancellationToken);
         if (referenceCheck is not null)
             return ServiceResult<ExpenseResponse>.Conflict(referenceCheck);
@@ -124,14 +200,16 @@ public sealed class ExpenseService : IExpenseService
                 request.Name,
                 request.Description,
                 request.Cost,
-                request.Status,
+                mappedStatus ?? request.Status,
                 request.DatePay,
                 request.DateCreate,
                 request.DateUpdate);
 
             _dbContext.Expenses.Add(expense);
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return ServiceResult<ExpenseResponse>.Success(MapToResponse(expense));
+
+            var created = await GetProjectionByIdAsync(expense.Id, cancellationToken);
+            return ServiceResult<ExpenseResponse>.Success(MapToResponse(created!));
         }
         catch (ArgumentOutOfRangeException exception)
         {
@@ -152,6 +230,10 @@ public sealed class ExpenseService : IExpenseService
         if (id == Guid.Empty)
             return ServiceResult<ExpenseResponse>.BadRequest("Expense id is required.");
 
+        var statusCheck = TryMapStatusKey(request.StatusKey, out var mappedStatus);
+        if (!statusCheck)
+            return ServiceResult<ExpenseResponse>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
+
         var expense = await _dbContext.Expenses.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (expense is null)
             return ServiceResult<ExpenseResponse>.NotFound("Expense was not found.");
@@ -159,6 +241,8 @@ public sealed class ExpenseService : IExpenseService
         var referenceCheck = await ValidateReferencesAsync(request.IdWorkspace, request.IdCategory, request.IdCreator, request.IdResponsible, cancellationToken);
         if (referenceCheck is not null)
             return ServiceResult<ExpenseResponse>.Conflict(referenceCheck);
+
+        var status = mappedStatus ?? request.Status;
 
         try
         {
@@ -170,7 +254,7 @@ public sealed class ExpenseService : IExpenseService
                 request.Name,
                 request.Description,
                 request.Cost,
-                request.Status,
+                status,
                 request.DatePay,
                 request.DateCreate,
                 request.DateUpdate);
@@ -183,13 +267,15 @@ public sealed class ExpenseService : IExpenseService
             entry.Property(x => x.Name).CurrentValue = request.Name;
             entry.Property(x => x.Description).CurrentValue = request.Description;
             entry.Property(x => x.Cost).CurrentValue = request.Cost;
-            entry.Property(x => x.Status).CurrentValue = request.Status;
+            entry.Property(x => x.Status).CurrentValue = status;
             entry.Property(x => x.DatePay).CurrentValue = request.DatePay;
             entry.Property(x => x.DateCreate).CurrentValue = request.DateCreate;
             entry.Property(x => x.DateUpdate).CurrentValue = request.DateUpdate;
 
             await _dbContext.SaveChangesAsync(cancellationToken);
-            return ServiceResult<ExpenseResponse>.Success(MapToResponse(expense));
+
+            var updated = await GetProjectionByIdAsync(id, cancellationToken);
+            return ServiceResult<ExpenseResponse>.Success(MapToResponse(updated!));
         }
         catch (ArgumentOutOfRangeException exception)
         {
@@ -227,6 +313,106 @@ public sealed class ExpenseService : IExpenseService
         }
     }
 
+    private IQueryable<Expense> ApplyFilters(IQueryable<Expense> expenses, ExpenseListQuery query, int? mappedStatus)
+    {
+        var categoryId = query.CategoryId ?? query.IdCategory;
+        var responsibleUserId = query.ResponsibleUserId ?? query.IdResponsible;
+
+        if (query.IdWorkspace.HasValue)
+            expenses = expenses.Where(x => x.IdWorkspace == query.IdWorkspace.Value);
+
+        if (categoryId.HasValue)
+            expenses = expenses.Where(x => x.IdCategory == categoryId.Value);
+
+        if (query.IdCreator.HasValue)
+            expenses = expenses.Where(x => x.IdCreator == query.IdCreator.Value);
+
+        if (responsibleUserId.HasValue)
+            expenses = expenses.Where(x => x.IdResponsible == responsibleUserId.Value);
+
+        if (mappedStatus.HasValue)
+            expenses = expenses.Where(x => x.Status == mappedStatus.Value);
+        else if (query.Status.HasValue)
+            expenses = expenses.Where(x => x.Status == query.Status.Value);
+
+        if (query.DatePayFrom.HasValue)
+            expenses = expenses.Where(x => x.DatePay >= query.DatePayFrom.Value);
+
+        if (query.DatePayTo.HasValue)
+            expenses = expenses.Where(x => x.DatePay <= query.DatePayTo.Value);
+
+        if (query.DateCreateFrom.HasValue)
+            expenses = expenses.Where(x => x.DateCreate >= query.DateCreateFrom.Value);
+
+        if (query.DateCreateTo.HasValue)
+            expenses = expenses.Where(x => x.DateCreate <= query.DateCreateTo.Value);
+
+        if (query.AmountFrom.HasValue)
+            expenses = expenses.Where(x => x.Cost.HasValue && x.Cost.Value >= query.AmountFrom.Value);
+
+        if (query.AmountTo.HasValue)
+            expenses = expenses.Where(x => x.Cost.HasValue && x.Cost.Value <= query.AmountTo.Value);
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            var search = query.Search.Trim();
+            expenses = expenses.Where(x =>
+                EF.Functions.ILike(x.Name, $"%{search}%")
+                || (x.Description != null && EF.Functions.ILike(x.Description, $"%{search}%"))
+                || (x.IdCategory.HasValue
+                    && _dbContext.ExpenseCategories.Any(c =>
+                        c.Id == x.IdCategory.Value
+                        && EF.Functions.ILike(c.Name, $"%{search}%"))));
+        }
+
+        return expenses;
+    }
+
+    private async Task<ExpenseProjection?> GetProjectionByIdAsync(Guid id, CancellationToken cancellationToken)
+    {
+        return await _dbContext.Expenses
+            .AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => new ExpenseProjection(
+                x.Id,
+                x.IdWorkspace,
+                x.IdCategory,
+                x.IdCreator,
+                x.IdResponsible,
+                x.Name,
+                x.Description,
+                x.Cost,
+                x.Status,
+                _dbContext.ExpenseCategories
+                    .Where(category => x.IdCategory.HasValue && category.Id == x.IdCategory.Value)
+                    .Select(category => category.Name)
+                    .FirstOrDefault(),
+                _dbContext.Workspaces
+                    .Where(workspace => workspace.Id == x.IdWorkspace)
+                    .Select(workspace => workspace.Name)
+                    .FirstOrDefault() ?? string.Empty,
+                _dbContext.Users
+                    .Where(user => user.Id == x.IdCreator)
+                    .Select(user => user.Login)
+                    .FirstOrDefault() ?? string.Empty,
+                _dbContext.Users
+                    .Where(user => user.Id == x.IdCreator)
+                    .Select(user => user.Email)
+                    .FirstOrDefault(),
+                _dbContext.Users
+                    .Where(user => x.IdResponsible.HasValue && user.Id == x.IdResponsible.Value)
+                    .Select(user => user.Login)
+                    .FirstOrDefault(),
+                _dbContext.Users
+                    .Where(user => x.IdResponsible.HasValue && user.Id == x.IdResponsible.Value)
+                    .Select(user => user.Email)
+                    .FirstOrDefault(),
+                x.DatePay,
+                x.DateCreate,
+                x.DateUpdate))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     private async Task<string?> ValidateReferencesAsync(
         Guid idWorkspace,
         Guid? idCategory,
@@ -259,7 +445,31 @@ public sealed class ExpenseService : IExpenseService
         return null;
     }
 
-    private static ExpenseResponse MapToResponse(Expense expense)
+    private static ExpenseListItemResponse MapToListItemResponse(ExpenseProjection expense)
+    {
+        return new ExpenseListItemResponse(
+            expense.Id,
+            expense.IdWorkspace,
+            expense.IdCategory,
+            expense.IdCreator,
+            expense.IdResponsible,
+            expense.Name,
+            expense.Cost,
+            expense.Status,
+            GetStatusKey(expense.Status),
+            GetStatusLabel(expense.Status),
+            expense.CategoryName,
+            expense.WorkspaceName,
+            expense.CreatorLogin,
+            expense.CreatorEmail,
+            expense.ResponsibleLogin,
+            expense.ResponsibleEmail,
+            expense.DatePay,
+            expense.DateCreate,
+            expense.DateUpdate);
+    }
+
+    private static ExpenseResponse MapToResponse(ExpenseProjection expense)
     {
         return new ExpenseResponse(
             expense.Id,
@@ -271,8 +481,75 @@ public sealed class ExpenseService : IExpenseService
             expense.Description,
             expense.Cost,
             expense.Status,
+            GetStatusKey(expense.Status),
+            GetStatusLabel(expense.Status),
+            expense.CategoryName,
+            expense.WorkspaceName,
+            expense.CreatorLogin,
+            expense.CreatorEmail,
+            expense.ResponsibleLogin,
+            expense.ResponsibleEmail,
             expense.DatePay,
             expense.DateCreate,
             expense.DateUpdate);
     }
+
+    private static bool TryMapStatusKey(string? statusKey, out int? status)
+    {
+        status = statusKey?.Trim() switch
+        {
+            null or "" => null,
+            "planned" => PlannedStatus,
+            "pending_payment" => PendingPaymentStatus,
+            "paid" => PaidStatus,
+            "cancelled" => CancelledStatus,
+            _ => null
+        };
+
+        return string.IsNullOrWhiteSpace(statusKey) || status.HasValue;
+    }
+
+    private static string? GetStatusKey(int status)
+    {
+        return status switch
+        {
+            PlannedStatus => "planned",
+            PendingPaymentStatus => "pending_payment",
+            PaidStatus => "paid",
+            CancelledStatus => "cancelled",
+            _ => null
+        };
+    }
+
+    private static string GetStatusLabel(int status)
+    {
+        return status switch
+        {
+            PlannedStatus => "Запланирован",
+            PendingPaymentStatus => "К оплате",
+            PaidStatus => "Оплачен",
+            CancelledStatus => "Отменён",
+            _ => "Другой статус"
+        };
+    }
+
+    private sealed record ExpenseProjection(
+        Guid Id,
+        Guid IdWorkspace,
+        Guid? IdCategory,
+        Guid IdCreator,
+        Guid? IdResponsible,
+        string Name,
+        string? Description,
+        decimal? Cost,
+        int Status,
+        string? CategoryName,
+        string WorkspaceName,
+        string CreatorLogin,
+        string? CreatorEmail,
+        string? ResponsibleLogin,
+        string? ResponsibleEmail,
+        DateTime? DatePay,
+        DateTime DateCreate,
+        DateTime DateUpdate);
 }

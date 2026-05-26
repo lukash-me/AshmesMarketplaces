@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { Eye, Pencil } from 'lucide-vue-next';
 
 import Badge from '@/shared/ui/Badge.vue';
 import Button from '@/shared/ui/Button.vue';
 import DataTable from '@/shared/ui/DataTable.vue';
 
 import {
-  compactId,
   formatAmount,
   formatDateShort,
   getExpenseCategoryLabel,
-  getExpenseNeutralTone,
   getExpenseStatusLabel,
-  type ExpenseCategoryLookup
+  getExpenseStatusTone,
+  getUserLabel,
+  type ExpenseCategoryLookup,
+  type ExpenseUserLookup
 } from './expenseDisplay';
 import type { ExpenseListItem } from './expenses.types';
 
@@ -24,24 +26,26 @@ const props = defineProps<{
   sort: string;
   selectedId?: string | null;
   categoriesById: ExpenseCategoryLookup;
-  categoriesLoading: boolean;
+  usersById: ExpenseUserLookup;
 }>();
 
 const emit = defineEmits<{
   sort: [value: string];
   page: [value: number];
   open: [row: ExpenseListItem];
+  edit: [row: ExpenseListItem];
 }>();
 
 const columns = [
-  { key: 'name', label: 'Name', sortable: true },
-  { key: 'status', label: 'Status' },
-  { key: 'category', label: 'Category' },
-  { key: 'cost', label: 'Cost', sortable: true, align: 'right' },
-  { key: 'datePay', label: 'Paid', sortable: true },
-  { key: 'dateCreate', label: 'Created', sortable: true },
-  { key: 'dateUpdate', label: 'Updated', sortable: true },
-  { key: 'id', label: 'Expense ID' }
+  { key: 'name', label: 'Расход', sortable: true },
+  { key: 'category', label: 'Категория' },
+  { key: 'cost', label: 'Сумма', sortable: true, align: 'right' },
+  { key: 'status', label: 'Статус' },
+  { key: 'datePay', label: 'Дата оплаты', sortable: true },
+  { key: 'responsible', label: 'Ответственный' },
+  { key: 'creator', label: 'Создал' },
+  { key: 'dateUpdate', label: 'Обновлено', sortable: true },
+  { key: 'actions', label: '' }
 ];
 
 const pageCount = computed(() => Math.max(1, Math.ceil(props.totalCount / props.pageSize)));
@@ -58,66 +62,68 @@ const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pag
       :row-key="(row) => row.id"
       :row-interactive="true"
       :selected-row-key="selectedId"
-      :row-aria-label="(row) => `Open expense ${row.name}`"
+      :row-aria-label="(row) => `Открыть расход ${row.name}`"
       @sort="emit('sort', $event)"
       @row-click="emit('open', $event)"
     >
       <template #cell-name="{ row }">
         <span class="name-cell">
           <strong>{{ row.name }}</strong>
-          <code :title="row.idWorkspace">WS {{ compactId(row.idWorkspace) }}</code>
+          <small>{{ row.workspaceName || 'Операционный расход' }}</small>
         </span>
-      </template>
-
-      <template #cell-status="{ value }">
-        <Badge class="status-badge" :tone="getExpenseNeutralTone()">
-          {{ getExpenseStatusLabel(Number(value)) }}
-        </Badge>
       </template>
 
       <template #cell-category="{ row }">
-        <span class="category-cell">
-          <span>{{ categoriesLoading ? 'Loading categories' : getExpenseCategoryLabel(row.idCategory, categoriesById) }}</span>
-          <code v-if="row.idCategory" :title="row.idCategory">{{ compactId(row.idCategory) }}</code>
-        </span>
+        {{ getExpenseCategoryLabel(row.idCategory, categoriesById, row.categoryName) }}
       </template>
 
-      <template #cell-cost="{ value }">
-        <span class="numeric">{{ formatAmount(value as number | null) }}</span>
+      <template #cell-cost="{ row }">
+        <span class="numeric amount-cell">{{ formatAmount(row.cost) }}</span>
       </template>
 
-      <template #cell-datePay="{ value }">
-        <span class="date-cell">
-          <span class="numeric">{{ formatDateShort(value as string | null) }}</span>
-        </span>
+      <template #cell-status="{ row }">
+        <Badge class="status-badge" :tone="getExpenseStatusTone(row.statusKey)">
+          {{ getExpenseStatusLabel(row.statusKey, row.statusLabel) }}
+        </Badge>
       </template>
 
-      <template #cell-dateCreate="{ value }">
-        <span class="date-cell">
-          <span class="numeric">{{ formatDateShort(String(value)) }}</span>
-        </span>
+      <template #cell-datePay="{ row }">
+        <span class="numeric">{{ formatDateShort(row.datePay) }}</span>
       </template>
 
-      <template #cell-dateUpdate="{ value }">
-        <span class="date-cell">
-          <span class="numeric">{{ formatDateShort(String(value)) }}</span>
-        </span>
+      <template #cell-responsible="{ row }">
+        {{ getUserLabel(row.idResponsible, usersById, row.responsibleLogin, row.responsibleEmail) }}
       </template>
 
-      <template #cell-id="{ value }">
-        <code class="code-cell" :title="String(value)">{{ compactId(String(value)) }}</code>
+      <template #cell-creator="{ row }">
+        {{ getUserLabel(row.idCreator, usersById, row.creatorLogin, row.creatorEmail) }}
+      </template>
+
+      <template #cell-dateUpdate="{ row }">
+        <span class="numeric">{{ formatDateShort(row.dateUpdate) }}</span>
+      </template>
+
+      <template #cell-actions="{ row }">
+        <div class="row-actions" @click.stop>
+          <button class="app-icon-button" type="button" title="Открыть" @click="emit('open', row)">
+            <Eye :size="15" />
+          </button>
+          <button class="app-icon-button" type="button" title="Редактировать" @click="emit('edit', row)">
+            <Pencil :size="15" />
+          </button>
+        </div>
       </template>
     </DataTable>
 
     <footer class="expenses-table__footer">
-      <span class="numeric">Showing {{ pageStart }}-{{ pageEnd }} of {{ totalCount }}</span>
+      <span class="numeric">Показано {{ pageStart }}-{{ pageEnd }} из {{ totalCount }}</span>
       <div class="expenses-table__pager">
         <Button variant="secondary" :disabled="page <= 1" @click="emit('page', page - 1)">
-          Previous
+          Назад
         </Button>
-        <span class="numeric">Page {{ page }} / {{ pageCount }}</span>
+        <span class="numeric">Страница {{ page }} / {{ pageCount }}</span>
         <Button variant="secondary" :disabled="page >= pageCount" @click="emit('page', page + 1)">
-          Next
+          Вперед
         </Button>
       </div>
     </footer>
@@ -129,35 +135,36 @@ const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pag
   overflow: hidden;
 }
 
-.name-cell,
-.category-cell {
+.name-cell {
   display: grid;
-  min-width: 12rem;
+  min-width: 13rem;
   gap: 0.125rem;
 }
 
 .name-cell strong {
   color: var(--color-text);
-  font-weight: 680;
+  font-weight: 700;
 }
 
-.name-cell code,
-.category-cell code,
-.code-cell {
+.name-cell small {
   color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.category-cell span,
-.date-cell {
-  color: var(--color-text-muted);
-  font-size: 0.8125rem;
+.amount-cell {
+  font-weight: 720;
 }
 
 .status-badge {
   white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
 }
 
 .expenses-table__footer {

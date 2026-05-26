@@ -1,14 +1,28 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { useAuthStore } from '@/features/auth/auth.store';
 import { getProblemMessage } from '@/shared/api/problemDetails';
+import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
+import KpiGrid from '@/widgets/KpiGrid.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
 import ExpenseDetailDrawer from './ExpenseDetailDrawer.vue';
-import { getExpenseCategories, getExpenses } from './expenses.api';
+import ExpenseFormDrawer from './ExpenseFormDrawer.vue';
+import {
+  createExpense,
+  getExpense,
+  getExpenseCategories,
+  getExpenses,
+  getExpenseSummary,
+  getExpenseUsers,
+  getExpenseWorkspaces,
+  updateExpense
+} from './expenses.api';
+import { formatAmount, formatDateShort, getExpenseStatusNumber } from './expenseDisplay';
 import ExpensesFilters from './ExpensesFilters.vue';
 import {
   parseExpensesQuery,
@@ -16,27 +30,47 @@ import {
   resetExpenseQueryFilters,
   toExpensesApiParams,
   toExpensesRouteQuery,
+  toExpensesSummaryParams,
   type ExpenseQueryFilterKey
 } from './expensesQuery';
 import ExpensesTable from './ExpensesTable.vue';
 import type {
   ExpenseCategoryListItem,
+  ExpenseDetail,
   ExpenseListItem,
-  ExpenseQueryState
+  ExpenseQueryState,
+  ExpenseStatusKey,
+  ExpenseSummary,
+  ExpenseUserListItem,
+  ExpenseWorkspaceListItem,
+  SaveExpenseRequest
 } from './expenses.types';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 
 const queryState = ref<ExpenseQueryState>(parseExpensesQuery(route.query));
 const expenses = ref<ExpenseListItem[]>([]);
 const totalCount = ref(0);
+const summary = ref<ExpenseSummary | null>(null);
 const loading = ref(false);
+const summaryLoading = ref(false);
 const error = ref('');
+const summaryError = ref('');
 const selectedExpense = ref<ExpenseListItem | null>(null);
 const categories = ref<ExpenseCategoryListItem[]>([]);
-const categoriesLoading = ref(false);
-const categoriesError = ref('');
+const users = ref<ExpenseUserListItem[]>([]);
+const workspaces = ref<ExpenseWorkspaceListItem[]>([]);
+const lookupError = ref('');
+const formOpen = ref(false);
+const formMode = ref<'create' | 'edit'>('create');
+const formExpense = ref<ExpenseDetail | null>(null);
+const formSaving = ref(false);
+const formError = ref('');
+const actionLoading = ref(false);
+const toastMessage = ref('');
+let toastTimer: number | undefined;
 
 const categoriesById = computed(() =>
   categories.value.reduce<Record<string, ExpenseCategoryListItem>>((lookup, category) => {
@@ -45,51 +79,122 @@ const categoriesById = computed(() =>
   }, {})
 );
 
+const usersById = computed(() =>
+  users.value.reduce<Record<string, ExpenseUserListItem>>((lookup, user) => {
+    lookup[user.id] = user;
+    return lookup;
+  }, {})
+);
+
+const currentWorkspaceId = computed(
+  () => auth.user?.workspaces[0]?.idWorkspace ?? workspaces.value[0]?.id ?? ''
+);
+const currentUserId = computed(() => auth.user?.id ?? '');
+
+const kpiItems = computed(() => [
+  {
+    label: 'Всего расходов',
+    value: summary.value ? summary.value.totalCount : '...',
+    caption: summary.value ? formatAmount(summary.value.totalAmount) : 'Загрузка'
+  },
+  {
+    label: 'К оплате',
+    value: summary.value ? summary.value.pendingPaymentCount : '...',
+    caption: summary.value ? formatAmount(summary.value.pendingPaymentAmount) : 'Загрузка'
+  },
+  {
+    label: 'Оплачено',
+    value: summary.value ? summary.value.paidCount : '...',
+    caption: summary.value ? formatAmount(summary.value.paidAmount) : 'Загрузка'
+  },
+  {
+    label: 'Последняя оплата',
+    value: summary.value ? formatDateShort(summary.value.latestPaymentDate) : '...',
+    caption: summary.value?.latestPaymentDate ? 'По дате оплаты' : 'Нет данных'
+  },
+  {
+    label: 'Без даты оплаты',
+    value: summary.value ? summary.value.withoutPaymentDateCount : '...',
+    caption: 'Требуют уточнения'
+  }
+]);
+
 watch(
   () => route.query,
   async (query) => {
     queryState.value = parseExpensesQuery(query);
-    await loadExpenses();
+    await loadExpensesAndSummary();
   },
   { immediate: true }
 );
 
-void loadCategories();
+void loadLookups();
 
-async function loadExpenses() {
+onBeforeUnmount(() => {
+  clearToast();
+});
+
+function clearToast() {
+  if (toastTimer !== undefined) {
+    window.clearTimeout(toastTimer);
+    toastTimer = undefined;
+  }
+
+  toastMessage.value = '';
+}
+
+function showToast(message: string) {
+  clearToast();
+  toastMessage.value = message;
+  toastTimer = window.setTimeout(() => {
+    toastMessage.value = '';
+    toastTimer = undefined;
+  }, 3000);
+}
+
+async function loadExpensesAndSummary() {
   loading.value = true;
+  summaryLoading.value = true;
   error.value = '';
+  summaryError.value = '';
 
   try {
-    const response = await getExpenses(toExpensesApiParams(queryState.value));
-    expenses.value = response.items;
-    totalCount.value = response.totalCount;
+    const [expenseResponse, summaryResponse] = await Promise.all([
+      getExpenses(toExpensesApiParams(queryState.value)),
+      getExpenseSummary(toExpensesSummaryParams(queryState.value))
+    ]);
+
+    expenses.value = expenseResponse.items;
+    totalCount.value = expenseResponse.totalCount;
+    summary.value = summaryResponse;
   } catch (err) {
     expenses.value = [];
     totalCount.value = 0;
-    error.value = getProblemMessage(err, 'Unable to load expenses.');
+    summary.value = null;
+    const message = getProblemMessage(err, 'Не удалось загрузить расходы.');
+    error.value = message;
+    summaryError.value = message;
   } finally {
     loading.value = false;
+    summaryLoading.value = false;
   }
 }
 
-async function loadCategories() {
-  categoriesLoading.value = true;
-  categoriesError.value = '';
+async function loadLookups() {
+  lookupError.value = '';
 
   try {
-    const response = await getExpenseCategories({
-      page: 1,
-      pageSize: 200,
-      sort: 'name'
-    });
+    const [categoryResponse, userResponse, workspaceResponse] = await Promise.all([
+      getExpenseCategories({ page: 1, pageSize: 200, sort: 'name' }),
+      getExpenseUsers({ page: 1, pageSize: 200, sort: 'login' }),
+      getExpenseWorkspaces({ page: 1, pageSize: 50, sort: 'name' })
+    ]);
 
-    categories.value = response.items;
+    categories.value = categoryResponse.items;
+    users.value = userResponse.items;
+    workspaces.value = workspaceResponse.items;
   } catch (err) {
-    categories.value = [];
-    categoriesError.value = getProblemMessage(err, 'Unable to load expense categories.');
-  } finally {
-    categoriesLoading.value = false;
+    lookupError.value = getProblemMessage(err, 'Не удалось загрузить справочники расходов.');
   }
 }
 
@@ -123,42 +228,142 @@ function openExpense(row: ExpenseListItem) {
 function closeExpense() {
   selectedExpense.value = null;
 }
+
+function openCreateForm() {
+  formMode.value = 'create';
+  formExpense.value = null;
+  formError.value = '';
+  formOpen.value = true;
+}
+
+async function openEditForm(expense: ExpenseListItem | ExpenseDetail) {
+  formMode.value = 'edit';
+  formError.value = '';
+  formOpen.value = true;
+
+  if ('description' in expense) {
+    formExpense.value = expense;
+    return;
+  }
+
+  try {
+    formExpense.value = await getExpense(expense.id);
+  } catch (err) {
+    formError.value = getProblemMessage(err, 'Не удалось открыть расход для редактирования.');
+    formExpense.value = null;
+  }
+}
+
+function closeForm() {
+  formOpen.value = false;
+  formError.value = '';
+  formExpense.value = null;
+}
+
+async function saveExpense(request: SaveExpenseRequest) {
+  formSaving.value = true;
+  formError.value = '';
+  clearToast();
+
+  try {
+    const saved = formMode.value === 'edit' && formExpense.value
+      ? await updateExpense(formExpense.value.id, request)
+      : await createExpense(request);
+
+    showToast(formMode.value === 'edit' ? 'Расход обновлён.' : 'Расход добавлен.');
+    closeForm();
+    await loadExpensesAndSummary();
+
+    if (selectedExpense.value?.id === saved.id) {
+      selectedExpense.value = saved;
+    }
+  } catch (err) {
+    formError.value = getProblemMessage(err, 'Не удалось сохранить расход.');
+  } finally {
+    formSaving.value = false;
+  }
+}
+
+async function changeStatus(expense: ExpenseListItem | ExpenseDetail, statusKey: ExpenseStatusKey) {
+  actionLoading.value = true;
+  clearToast();
+
+  try {
+    const detail = 'description' in expense ? expense : await getExpense(expense.id);
+    const now = new Date().toISOString();
+    const updated = await updateExpense(detail.id, {
+      idWorkspace: detail.idWorkspace,
+      idCategory: detail.idCategory,
+      idCreator: detail.idCreator,
+      idResponsible: detail.idResponsible,
+      name: detail.name,
+      description: detail.description,
+      cost: detail.cost ?? 0,
+      status: getExpenseStatusNumber(statusKey),
+      statusKey,
+      datePay: statusKey === 'paid' && !detail.datePay ? now : detail.datePay,
+      dateCreate: detail.dateCreate,
+      dateUpdate: now
+    });
+
+    showToast('Статус расхода обновлён.');
+    selectedExpense.value = updated;
+    await loadExpensesAndSummary();
+  } catch (err) {
+    error.value = getProblemMessage(err, 'Не удалось обновить статус расхода.');
+  } finally {
+    actionLoading.value = false;
+  }
+}
 </script>
 
 <template>
   <div class="expenses-page">
     <PageHeader
-      title="Expenses"
-      description="Read-only operational seller expenses with categories, status codes and payment dates."
+      title="Расходы"
+      description="Учитывайте операционные траты, платежи и статусы расходов, связанных с товарным бизнесом."
     />
 
     <ExpensesFilters
       :state="queryState"
       :categories-by-id="categoriesById"
+      :users-by-id="usersById"
       @apply="updateQuery"
       @reset="resetFilters"
       @remove="removeFilter"
     />
 
-    <section v-if="categoriesError" class="expenses-page__notice app-surface">
-      {{ categoriesError }} Category IDs are still shown from expense records.
+    <KpiGrid :items="kpiItems" variant="market" />
+
+    <section v-if="summaryError && !summaryLoading" class="expenses-page__notice app-surface">
+      {{ summaryError }}
     </section>
+
+    <section v-if="lookupError" class="expenses-page__notice app-surface">
+      {{ lookupError }} Список расходов продолжит использовать данные из записей.
+    </section>
+
+    <div v-if="!loading && !error && expenses.length > 0" class="expenses-page__table-actions">
+      <Button variant="primary" @click="openCreateForm">Добавить расход</Button>
+    </div>
 
     <LoadingState v-if="loading" class="app-surface" />
 
     <EmptyState
       v-else-if="error"
       class="app-surface"
-      title="Expenses could not be loaded"
+      title="Не удалось загрузить расходы"
       :description="error"
     />
 
     <EmptyState
       v-else-if="expenses.length === 0"
       class="app-surface"
-      title="No expenses found"
-      description="Adjust filters or load expenses through the existing backend API."
-    />
+      title="Расходов пока нет"
+      description="Добавьте первый расход, чтобы отслеживать операционные траты и платежи."
+    >
+      <Button variant="primary" @click="openCreateForm">Добавить расход</Button>
+    </EmptyState>
 
     <ExpensesTable
       v-else
@@ -169,18 +374,48 @@ function closeExpense() {
       :sort="queryState.sort"
       :selected-id="selectedExpense?.id"
       :categories-by-id="categoriesById"
-      :categories-loading="categoriesLoading"
+      :users-by-id="usersById"
       @sort="updateQuery({ page: 1, sort: $event })"
       @page="updateQuery({ page: $event })"
       @open="openExpense"
+      @edit="openEditForm"
     />
 
     <ExpenseDetailDrawer
       :open="Boolean(selectedExpense)"
       :expense="selectedExpense"
       :categories-by-id="categoriesById"
+      :users-by-id="usersById"
+      :action-loading="actionLoading"
       @close="closeExpense"
+      @edit="openEditForm"
+      @status="changeStatus"
     />
+
+    <ExpenseFormDrawer
+      :open="formOpen"
+      :mode="formMode"
+      :expense="formExpense"
+      :categories="categories"
+      :users="users"
+      :workspace-id="currentWorkspaceId"
+      :creator-id="currentUserId"
+      :loading="formSaving"
+      :error="formError"
+      @close="closeForm"
+      @save="saveExpense"
+    />
+
+    <Teleport to="body">
+      <div
+        v-if="toastMessage"
+        class="expenses-toast app-surface"
+        role="status"
+        aria-live="polite"
+      >
+        {{ toastMessage }}
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -191,9 +426,34 @@ function closeExpense() {
 }
 
 .expenses-page__notice {
-  border-color: var(--state-warning-border);
-  color: var(--state-warning);
   padding: var(--space-3);
   font-size: 0.8125rem;
+}
+
+.expenses-page__notice {
+  border-color: var(--state-warning-border);
+  color: var(--state-warning);
+}
+
+.expenses-page__table-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.expenses-toast {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 70;
+  max-width: min(24rem, calc(100vw - 2rem));
+  padding: var(--space-3) var(--space-4);
+  border-color: var(--state-success-border);
+  background:
+    linear-gradient(135deg, rgb(52 211 153 / 0.12), transparent 58%),
+    var(--color-surface);
+  color: var(--state-success-text);
+  font-size: 0.875rem;
+  font-weight: 700;
+  box-shadow: var(--shadow-panel);
 }
 </style>

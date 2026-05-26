@@ -35,9 +35,6 @@ public class Expense
         DateTimeUtc.EnsureUtc(dateCreate, nameof(dateCreate));
         DateTimeUtc.EnsureUtc(dateUpdate, nameof(dateUpdate));
 
-        if (datePay.HasValue && datePay < dateCreate)
-            throw new ArgumentException("DatePay cannot be earlier than DateCreate", nameof(datePay));
-
         if (dateUpdate < dateCreate)
             throw new ArgumentException("DateUpdate cannot be earlier than DateCreate", nameof(dateUpdate));
 
