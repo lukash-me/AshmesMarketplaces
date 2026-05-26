@@ -120,6 +120,8 @@ type FireDiagnostics = FireFrameStats & {
   rows: number;
   frameRows: number;
   sparkCount: number;
+  cardWidth: number;
+  fireLayerWidth: number;
   mainRect: FireRect;
   layerRect: FireRect;
   layerInsideMain: boolean;
@@ -314,8 +316,8 @@ function runFireAnimation(timestamp: number) {
 }
 
 function createFireSimulation(item: HotProductRecommendationItem): FireSimulation {
-  const size = cardSizes.get(item.id) ?? { width: 900, height: 124 };
-  const columns = clamp(Math.floor(size.width / 6), 80, 220);
+  const size = getFireLayerSize(item.id);
+  const columns = clamp(Math.floor(size.width / 4.4), 96, 280);
   const rows = fireLogicalRows;
   const params = fireTier(item.score);
   const tier = scoreTier(item.score);
@@ -326,6 +328,9 @@ function createFireSimulation(item: HotProductRecommendationItem): FireSimulatio
     const offset = (noise(index * 19, seed, 0) - 0.5) * 0.16;
     return clamp((slot + offset) * columns, 0, columns - 1);
   });
+  if (columns >= 120) {
+    sourceCenters[sourceCenters.length - 1] = clamp(columns * (0.86 + (noise(seed, sourceCount, 1) - 0.5) * 0.04), 0, columns - 1);
+  }
 
   return {
     id: item.id,
@@ -344,6 +349,16 @@ function createFireSimulation(item: HotProductRecommendationItem): FireSimulatio
     seed,
     params
   };
+}
+
+function getFireLayerSize(id: string): { width: number; height: number } {
+  const measured = cardSizes.get(id);
+  const element = observedCards.get(id);
+  const rect = element?.getBoundingClientRect();
+  const width = Math.max(measured?.width ?? 0, element?.clientWidth ?? 0, rect?.width ?? 0, 900);
+  const height = Math.max(measured?.height ?? 0, element?.clientHeight ?? 0, rect?.height ?? 0, 124);
+
+  return { width, height };
 }
 
 function warmUpFireSimulation(simulation: FireSimulation) {
@@ -391,7 +406,7 @@ function baseLayerValue(simulation: FireSimulation, x: number, y: number): numbe
   const edgeMargin = (columns * (1 - params.baseCoverage)) / 2;
   const leftFade = clamp((x - edgeMargin) / Math.max(1, columns * 0.08), 0, 1);
   const rightFade = clamp((columns - edgeMargin - x) / Math.max(1, columns * 0.08), 0, 1);
-  const edgeFade = Math.min(leftFade, rightFade);
+  const edgeFade = clamp(Math.min(leftFade, rightFade) + 0.14, 0, 1);
   const baseProgress = fromBottom / fireBaseZoneRatio;
   const broadWave =
     0.7 +
@@ -406,7 +421,11 @@ function baseLayerValue(simulation: FireSimulation, x: number, y: number): numbe
   const plumeBoost = 0.74 + source * 0.36;
   const rowFalloff = 1 - baseProgress * 0.48;
 
-  return clamp(params.baseHeat * edgeFade * broadWave * detailWave * gap * heightMask * plumeBoost * rowFalloff, 0, 1);
+  return clamp(
+    params.baseHeat * edgeFade * broadWave * detailWave * gap * heightMask * plumeBoost * rowFalloff,
+    0,
+    1
+  );
 }
 
 function tongueLayerValue(simulation: FireSimulation, x: number, y: number): number {
@@ -547,15 +566,22 @@ function renderFireSimulation(simulation: FireSimulation): string {
       const heatValue = heat[fireIndex(simulation, x, y)];
       const baseValue = baseLayerValue(simulation, x, y);
       const tongueValue = tongueLayerValue(simulation, x, y);
-      const value = Math.max(heatValue, baseValue, tongueValue);
+      const rightTailValue = connectedRightTailValue(simulation, x, y);
+      const value = Math.max(heatValue, baseValue, tongueValue, rightTailValue);
       const visibilityNoise = noise(x * 3.1, y * 5.7 + seed, frame * 0.018);
       const isBaseZone = fromBottom <= fireBaseZoneRatio;
       const threshold = isBaseZone ? 0.112 + fromBottom * 0.14 : 0.078 + fromBottom * 0.095;
       const baseVisibilityBoost = isBaseZone ? params.baseConnectivity * 0.24 + baseValue * 0.16 : 0;
       const tongueVisibilityBoost = !isBaseZone && fromBottom > fireMiddleZoneRatio ? 0.075 : !isBaseZone ? 0.025 : 0;
+      const tailVisibilityBoost = rightTailValue > 0 ? 0.12 + rightTailValue * 0.56 : 0;
       if (
         value < threshold ||
-        visibilityNoise > params.maxOccupancy * 1.08 + value * 0.52 + baseVisibilityBoost + tongueVisibilityBoost
+        visibilityNoise >
+          params.maxOccupancy * 1.08 +
+            value * 0.52 +
+            baseVisibilityBoost +
+            tongueVisibilityBoost +
+            tailVisibilityBoost
       ) {
         line += ' ';
         continue;
@@ -568,6 +594,62 @@ function renderFireSimulation(simulation: FireSimulation): string {
   }
 
   return enforceOccupancy(renderedRows, columns, rows, params.maxOccupancy, seed, frame).join('\n');
+}
+
+function connectedRightTailValue(simulation: FireSimulation, x: number, y: number): number {
+  const { columns, rows, params, frame, seed } = simulation;
+  const fromBottom = (rows - 1 - y) / Math.max(1, rows - 1);
+
+  if (fromBottom > fireMiddleZoneRatio + 0.08) {
+    return 0;
+  }
+
+  const horizontalPosition = x / Math.max(1, columns - 1);
+  const rightBlend = smoothstep(0.44, 0.74, horizontalPosition);
+
+  if (rightBlend <= 0) {
+    return 0;
+  }
+
+  const source = sourceInfluence(simulation, x, y);
+  const baseRise =
+    fireBaseZoneRatio +
+    0.13 +
+    Math.sin(x * 0.036 + seed * 0.0007 + frame * 0.026) * 0.06 +
+    source * 0.065;
+  const verticalMask =
+    fromBottom <= baseRise ? 1 : clamp(1 - (fromBottom - baseRise) / 0.19, 0, 1);
+
+  if (verticalMask <= 0) {
+    return 0;
+  }
+
+  const gapNoise = noise(Math.floor(x / 8), seed * 0.029 + y * 4, Math.floor(frame / 11) * 0.07);
+  const gap = gapNoise < 0.045 ? 0.46 : 1;
+  const softScoreArea = horizontalPosition > 0.88 && fromBottom > 0.34 && fromBottom < 0.64 ? 0.82 : 1;
+  const edgeLift = horizontalPosition > 0.76 && (fromBottom < 0.34 || fromBottom > 0.56) ? 1.24 : 1;
+  const wave =
+    0.76 +
+    Math.sin(x * 0.052 - frame * 0.031 + seed * 0.0005) * 0.12 +
+    Math.sin(x * 0.117 + y * 0.13 + frame * 0.018) * 0.055;
+
+  return clamp(
+    params.baseHeat *
+      (0.24 + params.baseConnectivity * 0.17) *
+      rightBlend *
+      verticalMask *
+      gap *
+      softScoreArea *
+      edgeLift *
+      wave,
+    0,
+    1
+  );
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = clamp((value - edge0) / Math.max(0.0001, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function fireSymbol(heat: number): string {
@@ -788,6 +870,8 @@ function computeFireDiagnostics(
     rows: simulation.rows,
     frameRows: frameText.split('\n').length,
     sparkCount: simulation.sparks.length,
+    cardWidth: mainRect.width,
+    fireLayerWidth: layerRect.width,
     mainRect,
     layerRect,
     layerInsideMain: rectInside(layerRect, mainRect),
@@ -968,6 +1052,8 @@ function fireDebugAttributes(item: HotProductRecommendationItem): Record<string,
     'data-fire-bottom-density': formatDiagnosticRatio(diagnostics.bottomDensity),
     'data-fire-middle-density': formatDiagnosticRatio(diagnostics.middleDensity),
     'data-fire-top-density': formatDiagnosticRatio(diagnostics.topDensity),
+    'data-fire-card-width': formatDiagnosticRatio(diagnostics.cardWidth),
+    'data-fire-layer-width': formatDiagnosticRatio(diagnostics.fireLayerWidth),
     'data-fire-bottom-coverage-ratio': formatDiagnosticRatio(diagnostics.bottomCoverageRatio),
     'data-fire-base-coverage': formatDiagnosticRatio(diagnostics.baseCoverage),
     'data-fire-spark-count': String(diagnostics.sparkCount),
@@ -1150,8 +1236,11 @@ onBeforeUnmount(() => {
           <span class="hot-products__badge">Рекомендуем обратить внимание</span>
         </div>
         <p>
-          Товары, которые стоит изучить в первую очередь. Оценка учитывает рыночные признаки, но перед запуском всё равно
-          проверьте маржинальность, поставщика и конкуренцию.
+          <span>Товары, которые стоит изучить в первую очередь.</span>
+          <span>
+            Оценка учитывает рыночные признаки, но перед запуском всё равно проверьте маржинальность, поставщика и
+            конкуренцию.
+          </span>
         </p>
       </div>
     </header>
@@ -1408,6 +1497,8 @@ onBeforeUnmount(() => {
 }
 
 .hot-products__heading p {
+  display: grid;
+  gap: 0.15rem;
   margin: 0;
   color: var(--color-text-muted);
   font-size: 0.875rem;
@@ -1648,7 +1739,7 @@ onBeforeUnmount(() => {
   gap: var(--space-3);
   align-items: stretch;
   height: 7.75rem;
-  padding: 0.25rem var(--space-3) 0.25rem 0.25rem;
+  padding: 0.25rem 0.65rem 0.25rem 0.25rem;
   cursor: pointer;
 }
 
@@ -1665,7 +1756,7 @@ onBeforeUnmount(() => {
 
 .hot-card__ascii-fire {
   position: absolute;
-  z-index: 0;
+  z-index: 1;
   inset: 0;
   margin: 0;
   overflow: hidden;
@@ -1690,7 +1781,7 @@ onBeforeUnmount(() => {
 
 .hot-card:hover .hot-card__ascii-fire,
 .hot-card:focus-within .hot-card__ascii-fire {
-  opacity: 0.48;
+  opacity: 0.54;
 }
 
 .hot-card__main:focus-visible {
@@ -1726,7 +1817,7 @@ onBeforeUnmount(() => {
 .hot-card__body {
   display: grid;
   position: relative;
-  z-index: 1;
+  z-index: 2;
   min-width: 0;
   align-content: start;
   gap: 0.3rem;
@@ -1786,6 +1877,13 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   background: rgb(255 255 255 / 0.032);
   padding: 0.32rem 0.46rem;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.hot-card:hover .hot-card__metric,
+.hot-card:focus-within .hot-card__metric {
+  border-color: rgb(249 115 22 / 0.15);
+  background: rgb(8 11 16 / 0.58);
 }
 
 .hot-card__metric strong {
@@ -1816,6 +1914,14 @@ onBeforeUnmount(() => {
     rgb(255 255 255 / 0.032);
 }
 
+.hot-card:hover .hot-card__metric--price,
+.hot-card:focus-within .hot-card__metric--price {
+  border-color: rgb(249 115 22 / 0.24);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.055), rgb(249 115 22 / 0.018)),
+    rgb(8 11 16 / 0.54);
+}
+
 .hot-card__rating--positive {
   color: var(--state-success) !important;
 }
@@ -1835,11 +1941,13 @@ onBeforeUnmount(() => {
 .hot-card__side {
   display: grid;
   position: relative;
-  z-index: 1;
+  z-index: 2;
   align-content: center;
-  align-self: center;
+  align-self: start;
+  justify-self: end;
   box-sizing: border-box;
-  height: calc(100% - 0.5rem);
+  height: calc(100% - 0.72rem);
+  width: 100%;
   min-height: 0;
   gap: 0.42rem;
   border: 1px solid var(--flame-edge);
@@ -1847,7 +1955,17 @@ onBeforeUnmount(() => {
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.11), rgb(249 115 22 / 0.03)),
     rgb(255 255 255 / 0.028);
+  margin-top: 0.1rem;
   padding: 0.52rem 0.72rem;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.hot-card:hover .hot-card__side,
+.hot-card:focus-within .hot-card__side {
+  border-color: color-mix(in srgb, var(--flame-edge) 76%, rgb(251 146 60 / 0.34));
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.075), rgb(249 115 22 / 0.02)),
+    rgb(8 11 16 / 0.62);
 }
 
 .hot-card__score {

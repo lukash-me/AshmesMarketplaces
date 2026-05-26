@@ -1,15 +1,13 @@
 <script setup lang="ts">
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
 import {
   BarChart3,
   Boxes,
   CreditCard,
   LayoutDashboard,
-  Megaphone,
-  PackageSearch,
   Radar,
   Settings,
-  Sparkles,
-  Star,
   Truck,
   X
 } from 'lucide-vue-next';
@@ -22,19 +20,83 @@ defineEmits<{
   close: [];
 }>();
 
-const navItems = [
-  { to: '/overview', label: 'Overview', icon: LayoutDashboard },
-  { to: '/market/intelligence', label: 'Маркетинговая разведка', icon: Radar },
-  { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 },
-  { to: '/products', label: 'Мои товары', icon: PackageSearch },
-  { to: '/orders', label: 'Orders', icon: Boxes },
-  { to: '/reviews', label: 'Отзывы моих товаров', icon: Star },
-  { to: '/logistics', label: 'Logistics', icon: Truck },
-  { to: '/campaigns', label: 'Campaigns', icon: Megaphone },
-  { to: '/expenses', label: 'Expenses', icon: CreditCard },
-  { to: '/recommendations', label: 'Recommendations', icon: Sparkles },
-  { to: '/settings/access', label: 'Access', icon: Settings }
+type MarketIntelligenceSection = 'events' | 'weaknesses' | 'prices' | 'stock' | 'repeats';
+type OrdersSection = 'all' | 'assumed-orders' | 'new-products' | 'restocks';
+
+const route = useRoute();
+const marketIntelligencePath = '/market/intelligence';
+const ordersPath = '/orders';
+const marketIntelligenceSections: Array<{ key: MarketIntelligenceSection; label: string }> = [
+  { key: 'events', label: 'События' },
+  { key: 'weaknesses', label: 'Зоны для проверки' },
+  { key: 'prices', label: 'Скидки и цены' },
+  { key: 'stock', label: 'Остатки' },
+  { key: 'repeats', label: 'Повторы' }
 ];
+const marketIntelligenceSectionKeys = marketIntelligenceSections.map((section) => section.key);
+const ordersSections: Array<{ key: OrdersSection; label: string }> = [
+  { key: 'all', label: 'Все события' },
+  { key: 'assumed-orders', label: 'Предполагаемые заказы' },
+  { key: 'new-products', label: 'Новые товары' },
+  { key: 'restocks', label: 'Пополнения товаров' }
+];
+const ordersSectionKeys = ordersSections.map((section) => section.key);
+
+const primaryNavItems = [
+  { to: '/overview', label: 'Обзор', icon: LayoutDashboard },
+  { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 }
+];
+
+const secondaryNavItems = [
+  { to: '/logistics', label: 'Логистика', icon: Truck },
+  { to: '/expenses', label: 'Расходы', icon: CreditCard },
+  { to: '/settings/access', label: 'Доступы', icon: Settings }
+];
+
+const isMarketIntelligenceRoute = computed(() => route.path === marketIntelligencePath);
+const isOrdersRoute = computed(() => route.path === ordersPath);
+const activeMarketIntelligenceSection = computed(() =>
+  isMarketIntelligenceRoute.value ? normalizeMarketIntelligenceSection(route.query.section) : null
+);
+const activeOrdersSection = computed(() =>
+  isOrdersRoute.value ? normalizeOrdersSection(route.query.tab) : null
+);
+
+function normalizeMarketIntelligenceSection(value: unknown): MarketIntelligenceSection {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === 'string' && marketIntelligenceSectionKeys.includes(raw as MarketIntelligenceSection)
+    ? raw as MarketIntelligenceSection
+    : 'events';
+}
+
+function marketIntelligenceSectionTo(section: MarketIntelligenceSection) {
+  return {
+    path: marketIntelligencePath,
+    query: isMarketIntelligenceRoute.value
+      ? { ...route.query, section }
+      : { section }
+  };
+}
+
+function normalizeOrdersSection(value: unknown): OrdersSection {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const raw = typeof rawValue === 'string' ? rawValue : 'all';
+
+  if (raw === 'stock-changes') {
+    return 'restocks';
+  }
+
+  return ordersSectionKeys.includes(raw as OrdersSection)
+    ? raw as OrdersSection
+    : 'all';
+}
+
+function ordersSectionTo(section: OrdersSection) {
+  return {
+    path: ordersPath,
+    query: section === 'all' ? {} : { tab: section }
+  };
+}
 </script>
 
 <template>
@@ -42,7 +104,24 @@ const navItems = [
   <aside class="sidebar" :class="{ 'sidebar--open': open }">
     <div class="sidebar__brand">
       <div class="sidebar__mark">
-        <BarChart3 :size="18" />
+        <svg viewBox="0 0 96 150" aria-hidden="true" focusable="false">
+          <path
+            class="sidebar__flame-outer"
+            d="M47 145C25 131 10 111 11 86c1-21 13-33 18-48 4-12 1-23-4-34 19 11 31 29 30 48 11-12 17-29 13-48 21 19 29 43 23 66 8-7 12-17 11-29 13 17 17 39 10 60-8 25-31 40-65 44Z"
+          />
+          <path
+            class="sidebar__flame-middle"
+            d="M49 132c-18-11-28-26-27-45 1-16 11-25 20-36 7-9 9-20 6-32 17 13 23 30 17 49 10-7 16-18 17-33 13 15 17 32 11 49 7-4 12-11 15-21 5 19 0 39-13 52-10 10-24 16-46 17Z"
+          />
+          <path
+            class="sidebar__flame-inner"
+            d="M50 126c-13-9-20-21-18-35 2-12 11-20 20-30 8-9 11-17 10-27 13 13 15 27 8 42 7-3 12-9 16-18 5 17 1 34-10 47-7 9-15 16-26 21Z"
+          />
+          <path
+            class="sidebar__flame-core"
+            d="M52 116c-8-7-11-15-8-25 2-8 9-14 15-21 4-5 7-11 7-18 8 10 8 21 2 32 5-2 9-6 12-12 1 16-9 34-28 44Z"
+          />
+        </svg>
       </div>
       <div>
         <strong>Ashmes</strong>
@@ -55,7 +134,68 @@ const navItems = [
 
     <nav class="sidebar__nav">
       <RouterLink
-        v-for="item in navItems"
+        v-for="item in primaryNavItems"
+        :key="item.to"
+        class="sidebar__link"
+        :to="item.to"
+        @click="$emit('close')"
+      >
+        <component :is="item.icon" :size="17" />
+        <span>{{ item.label }}</span>
+      </RouterLink>
+
+      <div class="sidebar__group">
+        <RouterLink
+          class="sidebar__link"
+          :class="{ 'sidebar__link--active': isMarketIntelligenceRoute }"
+          :to="{ path: marketIntelligencePath, query: { section: 'events' } }"
+          @click="$emit('close')"
+        >
+          <Radar :size="17" />
+          <span>Маркетинговая разведка</span>
+        </RouterLink>
+
+        <div class="sidebar__subnav" aria-label="Разделы маркетинговой разведки">
+          <RouterLink
+            v-for="section in marketIntelligenceSections"
+            :key="section.key"
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === section.key }"
+            :to="marketIntelligenceSectionTo(section.key)"
+            @click="$emit('close')"
+          >
+            {{ section.label }}
+          </RouterLink>
+        </div>
+      </div>
+
+      <div class="sidebar__group">
+        <RouterLink
+          class="sidebar__link"
+          :class="{ 'sidebar__link--active': isOrdersRoute }"
+          :to="{ path: ordersPath }"
+          @click="$emit('close')"
+        >
+          <Boxes :size="17" />
+          <span>Заказы</span>
+        </RouterLink>
+
+        <div class="sidebar__subnav" aria-label="Разделы заказов">
+          <RouterLink
+            v-for="section in ordersSections"
+            :key="section.key"
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeOrdersSection === section.key }"
+            :to="ordersSectionTo(section.key)"
+            @click="$emit('close')"
+          >
+            {{ section.label }}
+          </RouterLink>
+        </div>
+      </div>
+
+      <RouterLink
+        v-for="item in secondaryNavItems"
         :key="item.to"
         class="sidebar__link"
         :to="item.to"
@@ -118,10 +258,33 @@ const navItems = [
   height: 2rem;
   width: 2rem;
   place-items: center;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--accent-ember-border);
-  background: var(--background-brand-mark);
-  color: var(--accent-ember-text);
+  filter:
+    drop-shadow(0 0 0.26rem rgb(249 115 22 / 0.2))
+    drop-shadow(0 0.18rem 0.4rem rgb(0 0 0 / 0.34));
+}
+
+.sidebar__mark svg {
+  width: 1.45rem;
+  height: 2rem;
+  overflow: visible;
+}
+
+.sidebar__flame-outer {
+  fill: rgb(185 28 28 / 0.82);
+  stroke: rgb(248 113 113 / 0.72);
+  stroke-width: 2.5;
+}
+
+.sidebar__flame-middle {
+  fill: rgb(234 88 12 / 0.88);
+}
+
+.sidebar__flame-inner {
+  fill: rgb(249 115 22 / 0.9);
+}
+
+.sidebar__flame-core {
+  fill: rgb(254 240 138 / 0.88);
 }
 
 .sidebar__nav {
@@ -144,14 +307,50 @@ const navItems = [
 }
 
 .sidebar__link:hover,
-.sidebar__link.router-link-active {
+.sidebar__link.router-link-active,
+.sidebar__link--active {
   background: var(--surface-active-overlay);
   color: var(--color-text);
 }
 
-.sidebar__link.router-link-active {
+.sidebar__link.router-link-active,
+.sidebar__link--active {
   box-shadow: inset 2px 0 0 var(--color-ember);
   color: var(--accent-ember-text-strong);
+}
+
+.sidebar__group {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.sidebar__subnav {
+  display: grid;
+  gap: 0.12rem;
+  margin: -0.05rem 0 0.25rem 1.5rem;
+  padding-left: var(--space-3);
+  border-left: 1px solid rgb(249 115 22 / 0.18);
+}
+
+.sidebar__sublink {
+  min-height: 1.8rem;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.8rem;
+  transition: background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.sidebar__sublink:hover,
+.sidebar__sublink--active {
+  background: rgb(249 115 22 / 0.09);
+  color: var(--accent-ember-text-strong);
+}
+
+.sidebar__sublink--active {
+  box-shadow: inset 2px 0 0 var(--color-ember);
 }
 
 @media (min-width: 1024px) {
