@@ -12,6 +12,7 @@ import { getProblemMessage } from '@/shared/api/problemDetails';
 import Badge from '@/shared/ui/Badge.vue';
 import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 
 import type { ParserProductListItem } from './parserProducts.types';
@@ -230,8 +231,10 @@ function ratingTone(value: number | null): string {
   <section class="reviews">
     <header class="reviews__header">
       <div>
-        <h3>Отзывы покупателей</h3>
-        <p>Читайте отзывы и ответы продавца по карточке.</p>
+        <h3>
+          <span>Отзывы покупателей</span>
+          <HelpTooltip text="Читайте отзывы и ответы продавца по карточке." />
+        </h3>
       </div>
       <div class="review-controls" aria-label="Настройки отзывов">
         <label :class="{ 'review-controls__field--active': sort !== '-createdAtOnMp' }">
@@ -395,7 +398,6 @@ function ratingTone(value: number | null): string {
 }
 
 .reviews__header h3,
-.reviews__header p,
 .detail h4,
 .detail p,
 .reply p {
@@ -404,12 +406,14 @@ function ratingTone(value: number | null): string {
 
 .reviews__header h3,
 .detail h4 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: 0.78rem;
   font-weight: 740;
   text-transform: uppercase;
 }
 
-.reviews__header p,
 .review-card small,
 .reply small,
 .pager {

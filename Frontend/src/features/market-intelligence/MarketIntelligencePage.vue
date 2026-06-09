@@ -6,6 +6,7 @@ import PageHeader from '@/widgets/PageHeader.vue';
 import Badge from '@/shared/ui/Badge.vue';
 import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 import SectionSelector from '@/shared/ui/SectionSelector.vue';
 import { getProblemMessage } from '@/shared/api/problemDetails';
@@ -820,10 +821,6 @@ function sanitizeText(value: string | null | undefined): string {
         <Button class="mi-refresh" variant="primary" :loading="loading" @click="refresh">{{ refreshButtonLabel() }}</Button>
       </div>
 
-      <div v-if="intelligence" class="mi-sync">
-        <span>Последняя синхронизация WB</span>
-        <strong>{{ formatDateTime(intelligence.observationWindow.latestObservedAtUtc) }}</strong>
-      </div>
     </section>
 
     <LoadingState v-if="loading && !intelligence" label="Загружаем данные по нише..." />
@@ -849,8 +846,10 @@ function sanitizeText(value: string | null | undefined): string {
       <section v-if="activeSection === 'events'" class="mi-section app-surface">
         <header class="mi-section__header">
           <div>
-            <h2>Изменения в выбранном топе</h2>
-            <p>Группы карточек, где изменились позиции, цена или скидка.</p>
+            <h2>
+              <span>Изменения в выбранном топе</span>
+              <HelpTooltip text="Группы карточек, где изменились позиции, цена или скидка." />
+            </h2>
           </div>
         </header>
 
@@ -864,8 +863,10 @@ function sanitizeText(value: string | null | undefined): string {
           <article v-for="group in eventGroups" :key="group.key" class="event-group">
             <header class="event-group__header">
               <div>
-                <h3>{{ group.title }}</h3>
-                <p>{{ group.description }}</p>
+                <h3>
+                  <span>{{ group.title }}</span>
+                  <HelpTooltip :text="group.description" />
+                </h3>
               </div>
               <Badge tone="info">Карточек: {{ formatNumber(group.events.length) }}</Badge>
             </header>
@@ -936,8 +937,10 @@ function sanitizeText(value: string | null | undefined): string {
       <section v-else-if="activeSection === 'weaknesses'" class="mi-section app-surface">
         <header class="mi-section__header">
           <div>
-            <h2>Зоны для проверки</h2>
-            <p>Карточки, у которых высокая видимость сочетается с заметными слабыми признаками.</p>
+            <h2>
+              <span>Зоны для проверки</span>
+              <HelpTooltip text="Карточки, у которых высокая видимость сочетается с заметными слабыми признаками." />
+            </h2>
           </div>
         </header>
 
@@ -1001,8 +1004,10 @@ function sanitizeText(value: string | null | undefined): string {
       <section v-else-if="activeSection === 'prices'" class="mi-section app-surface">
         <header class="mi-section__header">
           <div>
-            <h2>Скидки и ценовое давление</h2>
-            <p>Цены, скидки и отклонения от медианы.</p>
+            <h2>
+              <span>Скидки и ценовое давление</span>
+              <HelpTooltip text="Цены, скидки и отклонения от медианы." />
+            </h2>
           </div>
         </header>
 
@@ -1077,8 +1082,10 @@ function sanitizeText(value: string | null | undefined): string {
       <section v-else-if="activeSection === 'stock'" class="mi-section app-surface">
         <header class="mi-section__header">
           <div>
-            <h2>Остатки</h2>
-            <p>Только явные значения из текущих данных.</p>
+            <h2>
+              <span>Остатки</span>
+              <HelpTooltip text="Только явные значения из текущих данных." />
+            </h2>
           </div>
         </header>
 
@@ -1148,8 +1155,10 @@ function sanitizeText(value: string | null | undefined): string {
       <section v-else class="mi-section app-surface">
         <header class="mi-section__header">
           <div>
-            <h2>Повторы и концентрация</h2>
-            <p>Кто занимает заметную часть выбранного топа.</p>
+            <h2>
+              <span>Повторы и концентрация</span>
+              <HelpTooltip text="Кто занимает заметную часть выбранного топа." />
+            </h2>
           </div>
         </header>
 
@@ -1213,7 +1222,7 @@ function sanitizeText(value: string | null | undefined): string {
 .mi-controls,
 .mi-summary,
 .mi-section {
-  border-color: rgb(249 115 22 / 0.18);
+  border-color: var(--accent-ember-border);
 }
 
 .mi-controls {
@@ -1242,7 +1251,6 @@ function sanitizeText(value: string | null | undefined): string {
 }
 
 .mi-field span,
-.mi-sync span,
 .mi-summary span,
 .mi-metric span {
   display: block;
@@ -1272,7 +1280,6 @@ function sanitizeText(value: string | null | undefined): string {
   box-shadow: var(--focus-ring);
 }
 
-.mi-sync,
 .mi-summary,
 .mi-metric,
 .product-card,
@@ -1281,28 +1288,9 @@ function sanitizeText(value: string | null | undefined): string {
   min-width: 0;
 }
 
-.mi-sync strong,
 .mi-summary strong,
 .mi-metric strong {
   display: block;
-  overflow-wrap: anywhere;
-}
-
-.mi-sync {
-  display: grid;
-  width: min(100%, 17rem);
-  gap: var(--space-2);
-  min-height: 3.65rem;
-  align-content: center;
-  justify-self: end;
-  border: 1px solid rgb(249 115 22 / 0.14);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  padding: 0 var(--space-3);
-}
-
-.mi-sync span {
-  line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
@@ -1322,9 +1310,9 @@ function sanitizeText(value: string | null | undefined): string {
   position: relative;
   overflow: hidden;
   padding: var(--space-4);
-  border-color: rgb(249 115 22 / 0.26);
+  border-color: var(--accent-ember-border);
   background:
-    linear-gradient(135deg, rgb(249 115 22 / 0.1), transparent 42%),
+    linear-gradient(135deg, var(--accent-ember-soft), transparent 42%),
     var(--color-surface);
 }
 
@@ -1380,6 +1368,13 @@ function sanitizeText(value: string | null | undefined): string {
   margin: 0;
   font-size: 1rem;
   font-weight: 750;
+}
+
+.mi-section__header h2,
+.event-group__header h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .mi-section__header p,
@@ -1439,9 +1434,9 @@ function sanitizeText(value: string | null | undefined): string {
 .compact-product--clickable:focus-visible {
   border-color: var(--accent-primary-border);
   background:
-    linear-gradient(90deg, rgb(249 115 22 / 0.08), transparent 42%),
+    linear-gradient(90deg, var(--accent-ember-soft), transparent 42%),
     var(--color-surface-hover);
-  box-shadow: inset 2px 0 0 rgb(249 115 22 / 0.42), 0 14px 34px rgb(0 0 0 / 0.18);
+  box-shadow: inset 2px 0 0 var(--accent-ember-border), 0 14px 34px rgb(0 0 0 / 0.18);
   outline: none;
 }
 
@@ -1565,6 +1560,7 @@ function sanitizeText(value: string | null | undefined): string {
   border-color: var(--state-success-border);
   background: var(--state-success-soft);
   color: var(--state-success-text);
+  box-shadow: inset 0 0 0 1px var(--state-success-border);
 }
 
 .delta-chip--negative {
@@ -1711,7 +1707,7 @@ function sanitizeText(value: string | null | undefined): string {
 .bar-row__track {
   height: 0.8rem;
   overflow: hidden;
-  border: 1px solid rgb(249 115 22 / 0.18);
+  border: 1px solid var(--accent-ember-border);
   border-radius: 999px;
   background: rgb(15 23 42 / 0.72);
 }
@@ -1722,7 +1718,7 @@ function sanitizeText(value: string | null | undefined): string {
   height: 100%;
   border-radius: inherit;
   background: var(--accent-ember);
-  box-shadow: 0 0 18px rgb(249 115 22 / 0.36);
+  box-shadow: 0 0 18px var(--accent-ember-border);
 }
 
 @media (max-width: 1180px) {
@@ -1735,10 +1731,6 @@ function sanitizeText(value: string | null | undefined): string {
 @media (max-width: 860px) {
   .mi-controls {
     grid-template-columns: 1fr;
-  }
-
-  .mi-sync {
-    justify-self: stretch;
   }
 
   .mi-summary-grid,
@@ -1761,7 +1753,6 @@ function sanitizeText(value: string | null | undefined): string {
 
 @media (max-width: 720px) {
   .mi-field,
-  .mi-sync,
   .mi-refresh {
     width: 100%;
   }

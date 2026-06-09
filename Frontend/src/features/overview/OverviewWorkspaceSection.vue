@@ -3,6 +3,8 @@ import { computed, type Component } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
 import { ArrowRight, BarChart3, Boxes, CreditCard, Radar, Truck } from 'lucide-vue-next';
 
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
+
 import { MARKET_INTELLIGENCE_DEFAULT_LINK } from './overview.api';
 import type { OverviewCardStatus, OverviewData, OverviewMetric } from './overview.types';
 
@@ -185,8 +187,10 @@ function formatDateTime(value: string | null | undefined): string {
   <section class="workspace-section" aria-labelledby="overview-workspace-title">
     <div class="workspace-section__header">
       <div>
-        <h2 id="overview-workspace-title">Мои разделы</h2>
-        <p>Быстрый переход к рабочим областям, которые уже есть в системе.</p>
+        <h2 id="overview-workspace-title">
+          <span>Мои разделы</span>
+          <HelpTooltip text="Быстрый переход к рабочим областям, которые уже есть в системе." />
+        </h2>
       </div>
     </div>
 
@@ -229,19 +233,20 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 .workspace-section__header h2,
-.workspace-section__header p,
 .workspace-card p {
   margin: 0;
 }
 
 .workspace-section__header h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--color-text);
   font-size: 1rem;
   font-weight: 820;
   letter-spacing: 0;
 }
 
-.workspace-section__header p,
 .workspace-card p,
 .workspace-card__metric span {
   color: var(--color-text-muted);
@@ -260,10 +265,8 @@ function formatDateTime(value: string | null | undefined): string {
   min-height: 12rem;
   align-content: start;
   gap: var(--space-3);
-  border-color: rgb(249 115 22 / 0.14);
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.026), transparent 7rem),
-    var(--surface-panel);
+  border-color: var(--border-ember-muted);
+  background: var(--background-card-soft);
   padding: var(--space-3);
 }
 
@@ -313,7 +316,7 @@ function formatDateTime(value: string | null | undefined): string {
   display: grid;
   min-width: 0;
   gap: 0.18rem;
-  border: 1px solid rgb(255 255 255 / 0.07);
+  border: 1px solid var(--surface-metric-border);
   border-radius: var(--radius-sm);
   background: var(--surface-control);
   padding: var(--space-2);
@@ -358,7 +361,7 @@ function formatDateTime(value: string | null | undefined): string {
 
 .workspace-card__cta:hover {
   border-color: var(--accent-ember-border);
-  background: rgb(249 115 22 / 0.1);
+  background: var(--accent-ember-hover-bg);
   color: var(--accent-ember-text-strong);
 }
 

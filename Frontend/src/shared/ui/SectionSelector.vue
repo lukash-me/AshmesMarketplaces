@@ -42,11 +42,11 @@ const emit = defineEmits<{
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3);
-  border-color: rgb(249 115 22 / 0.34);
+  border-color: var(--accent-ember-border);
   background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
+    linear-gradient(180deg, var(--accent-ember-soft), transparent),
     var(--color-surface);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 12px 34px rgb(0 0 0 / 0.18);
+  box-shadow: var(--shadow-panel);
 }
 
 .section-selector__label {
@@ -65,13 +65,13 @@ const emit = defineEmits<{
   height: 0.55rem;
   border-radius: 999px;
   background: var(--accent-ember);
-  box-shadow: 0 0 14px rgb(249 115 22 / 0.52);
+  box-shadow: 0 0 14px var(--accent-primary-border);
   content: '';
 }
 
 .section-selector__item {
   min-height: 2.35rem;
-  border: 1px solid rgb(249 115 22 / 0.14);
+  border: 1px solid var(--border-ember-muted);
   border-radius: var(--radius-md);
   background: var(--surface-control);
   color: var(--color-text);
@@ -90,6 +90,6 @@ const emit = defineEmits<{
 
 .section-selector__item:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgb(249 115 22 / 0.24);
+  box-shadow: var(--focus-ring);
 }
 </style>

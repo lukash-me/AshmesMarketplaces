@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
+
 import type {
   ParserProductLogisticsSummaryAggregate,
   ParserProductQuantityBuckets
@@ -102,8 +104,10 @@ function formatDateTime(value: string | null | undefined): string {
   <section class="mi-section app-surface logistics-summary" aria-labelledby="market-logistics-summary-title">
     <header class="mi-section__header logistics-summary__header">
       <div>
-        <h2 id="market-logistics-summary-title">Логистика выборки</h2>
-        <p>Покрытие и наблюдаемые остатки WB по текущим фильтрам.</p>
+        <h2 id="market-logistics-summary-title">
+          <span>Логистика выборки</span>
+          <HelpTooltip text="Покрытие и наблюдаемые остатки WB по текущим фильтрам." />
+        </h2>
       </div>
       <span v-if="destinationLabel" class="delta-chip delta-chip--neutral">{{ destinationLabel }}</span>
     </header>

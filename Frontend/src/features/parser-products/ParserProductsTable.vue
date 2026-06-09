@@ -5,6 +5,7 @@ import { computed, onMounted, ref } from 'vue';
 import Badge from '@/shared/ui/Badge.vue';
 import Button from '@/shared/ui/Button.vue';
 import DataTable, { type DataTableColumn } from '@/shared/ui/DataTable.vue';
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 
 import MarketProductImage from './MarketProductImage.vue';
 import type {
@@ -311,8 +312,10 @@ function formatDateTime(value: string | null | undefined): string {
   <div class="market-products-table app-surface">
     <header class="table-toolbar">
       <div class="table-toolbar__heading">
-        <h2>Аналитика товаров</h2>
-        <p>Исследуйте товары конкурентов, цены, рейтинги и отзывы, чтобы находить перспективные ниши.</p>
+        <h2>
+          <span>Аналитика товаров</span>
+          <HelpTooltip text="Исследуйте товары конкурентов, цены, рейтинги и отзывы, чтобы находить перспективные ниши." />
+        </h2>
       </div>
       <div class="column-picker">
         <Button class="column-picker__button" variant="secondary" @click="columnMenuOpen = !columnMenuOpen">
@@ -472,14 +475,9 @@ function formatDateTime(value: string | null | undefined): string {
 .market-products-table {
   position: relative;
   overflow: visible;
-  border-color: rgb(249 115 22 / 0.2);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.035), transparent 10rem),
-    var(--surface-panel);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.035),
-    inset 0 0 0 1px rgb(249 115 22 / 0.035),
-    var(--shadow-panel);
+  border-color: var(--color-border-strong);
+  background: var(--background-card-soft);
+  box-shadow: var(--shadow-panel);
 }
 
 .market-products-table::before {
@@ -503,7 +501,8 @@ function formatDateTime(value: string | null | undefined): string {
   position: relative;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgb(249 115 22 / 0.18);
+  border-bottom: 1px solid var(--color-border-strong);
+  background: var(--surface-table-header-strong);
   color: var(--color-text-muted);
   padding: var(--space-3);
   font-size: 0.8125rem;
@@ -515,15 +514,14 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 .table-toolbar__heading h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0;
   color: var(--color-text);
   font-size: 1rem;
   font-weight: 820;
   letter-spacing: 0;
-}
-
-.table-toolbar p {
-  margin: 0;
 }
 
 .column-picker {
@@ -565,9 +563,9 @@ function formatDateTime(value: string | null | undefined): string {
   border: 1px solid var(--accent-ember-border);
   border-radius: var(--radius-md);
   background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.075), transparent 40%),
-    rgb(8 11 18 / 0.985);
-  box-shadow: 0 20px 56px rgb(0 0 0 / 0.52), 0 0 0 1px rgb(255 255 255 / 0.025);
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 40%),
+    var(--surface-panel-raised);
+  box-shadow: var(--shadow-panel);
   backdrop-filter: blur(18px);
   padding: var(--space-3);
 }
@@ -761,21 +759,19 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 :deep(th) {
-  border-bottom: 1px solid rgb(249 115 22 / 0.2);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.055), rgb(12 15 22 / 0.98)),
-    var(--surface-table-header);
-  color: var(--color-text);
+  border-bottom: 1px solid var(--border-table-header);
+  background: var(--surface-table-header-strong);
+  color: var(--text-table-header);
   font-size: 0.78rem;
   font-weight: 840;
   letter-spacing: 0.035em;
   line-height: 1.1;
   text-transform: uppercase;
-  box-shadow: inset 0 -1px 0 rgb(249 115 22 / 0.08);
+  box-shadow: inset 0 -1px 0 var(--surface-highlight-overlay);
 }
 
 :deep(th.table__cell--sortable) {
-  color: var(--accent-ember-text-strong);
+  color: var(--text-table-header);
 }
 
 :deep(.table__sort) {
@@ -788,32 +784,32 @@ function formatDateTime(value: string | null | undefined): string {
 
 :deep(.table__sort svg) {
   flex: 0 0 auto;
-  color: rgb(253 186 116 / 0.72);
+  color: currentColor;
   opacity: 0.95;
-  filter: drop-shadow(0 0 4px rgb(249 115 22 / 0.12));
+  filter: none;
   transition: color 120ms ease, opacity 120ms ease, filter 120ms ease;
 }
 
 :deep(.table__sort:hover) {
-  color: var(--accent-ember-text-strong);
+  color: var(--text-table-header);
 }
 
 :deep(.table__sort:hover svg) {
-  color: var(--accent-primary-hover-border);
-  filter: drop-shadow(0 0 6px rgb(249 115 22 / 0.28));
+  color: currentColor;
+  filter: none;
 }
 
 :deep(th.table__cell--sorted) {
-  color: var(--accent-ember-text-strong);
+  color: var(--text-table-header);
   box-shadow:
     inset 0 -1px 0 var(--accent-ember-border),
     inset 0 -4px 8px rgb(249 115 22 / 0.08);
 }
 
 :deep(th.table__cell--sorted .table__sort svg) {
-  color: var(--accent-fire-hover);
+  color: currentColor;
   opacity: 1;
-  filter: drop-shadow(0 0 8px rgb(249 115 22 / 0.42));
+  filter: none;
 }
 
 :deep(tbody tr) {

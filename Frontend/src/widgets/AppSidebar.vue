@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import {
   BarChart3,
   Boxes,
+  ChevronUp,
   CreditCard,
   LayoutDashboard,
+  Moon,
   Radar,
   Settings,
+  Sun,
   Truck,
   X
 } from 'lucide-vue-next';
+
+import { useThemeStore } from '@/features/theme/theme.store';
 
 defineProps<{
   open: boolean;
@@ -24,6 +29,8 @@ type MarketIntelligenceSection = 'events' | 'weaknesses' | 'prices' | 'stock' | 
 type OrdersSection = 'all' | 'assumed-orders' | 'new-products' | 'restocks';
 
 const route = useRoute();
+const theme = useThemeStore();
+const themeMenuOpen = ref(false);
 const marketIntelligencePath = '/market/intelligence';
 const ordersPath = '/orders';
 const marketIntelligenceSections: Array<{ key: MarketIntelligenceSection; label: string }> = [
@@ -96,6 +103,11 @@ function ordersSectionTo(section: OrdersSection) {
     path: ordersPath,
     query: section === 'all' ? {} : { tab: section }
   };
+}
+
+function selectTheme(value: 'obsidian' | 'ash') {
+  theme.setTheme(value);
+  themeMenuOpen.value = false;
 }
 </script>
 
@@ -205,6 +217,47 @@ function ordersSectionTo(section: OrdersSection) {
         <span>{{ item.label }}</span>
       </RouterLink>
     </nav>
+
+    <div class="sidebar__footer">
+      <div class="sidebar__theme">
+        <section v-if="themeMenuOpen" class="sidebar__theme-menu" role="menu" aria-label="Выбор темы">
+          <button
+            class="sidebar__theme-option"
+            :class="{ 'sidebar__theme-option--active': theme.theme === 'ash' }"
+            type="button"
+            role="menuitemradio"
+            :aria-checked="theme.theme === 'ash'"
+            @click="selectTheme('ash')"
+          >
+            <Sun :size="16" />
+            <span>Светлая</span>
+          </button>
+          <button
+            class="sidebar__theme-option"
+            :class="{ 'sidebar__theme-option--active': theme.theme === 'obsidian' }"
+            type="button"
+            role="menuitemradio"
+            :aria-checked="theme.theme === 'obsidian'"
+            @click="selectTheme('obsidian')"
+          >
+            <Moon :size="16" />
+            <span>Темная</span>
+          </button>
+        </section>
+
+        <button
+          class="sidebar__theme-button"
+          type="button"
+          aria-haspopup="menu"
+          :aria-expanded="themeMenuOpen"
+          @click="themeMenuOpen = !themeMenuOpen"
+        >
+          <component :is="theme.isLight ? Sun : Moon" :size="17" />
+          <span>Выбор темы</span>
+          <ChevronUp class="sidebar__theme-chevron" :size="16" />
+        </button>
+      </div>
+    </div>
   </aside>
 </template>
 
@@ -213,6 +266,8 @@ function ordersSectionTo(section: OrdersSection) {
   position: fixed;
   inset: 0 auto 0 0;
   z-index: 40;
+  display: flex;
+  flex-direction: column;
   width: 16rem;
   transform: translateX(-100%);
   border-right: 1px solid var(--color-border);
@@ -258,9 +313,7 @@ function ordersSectionTo(section: OrdersSection) {
   height: 2rem;
   width: 2rem;
   place-items: center;
-  filter:
-    drop-shadow(0 0 0.26rem rgb(249 115 22 / 0.2))
-    drop-shadow(0 0.18rem 0.4rem rgb(0 0 0 / 0.34));
+  filter: var(--shadow-brand-mark);
 }
 
 .sidebar__mark svg {
@@ -270,26 +323,29 @@ function ordersSectionTo(section: OrdersSection) {
 }
 
 .sidebar__flame-outer {
-  fill: rgb(185 28 28 / 0.82);
-  stroke: rgb(248 113 113 / 0.72);
+  fill: var(--flame-outer-fill);
+  stroke: var(--flame-outer-stroke);
   stroke-width: 2.5;
 }
 
 .sidebar__flame-middle {
-  fill: rgb(234 88 12 / 0.88);
+  fill: var(--flame-middle-fill);
 }
 
 .sidebar__flame-inner {
-  fill: rgb(249 115 22 / 0.9);
+  fill: var(--flame-inner-fill);
 }
 
 .sidebar__flame-core {
-  fill: rgb(254 240 138 / 0.88);
+  fill: var(--flame-core-fill);
 }
 
 .sidebar__nav {
   display: grid;
   gap: var(--space-1);
+  flex: 1;
+  align-content: start;
+  overflow-y: auto;
   padding: var(--space-3);
 }
 
@@ -329,7 +385,7 @@ function ordersSectionTo(section: OrdersSection) {
   gap: 0.12rem;
   margin: -0.05rem 0 0.25rem 1.5rem;
   padding-left: var(--space-3);
-  border-left: 1px solid rgb(249 115 22 / 0.18);
+  border-left: 1px solid var(--accent-ember-sidebar-border);
 }
 
 .sidebar__sublink {
@@ -345,12 +401,110 @@ function ordersSectionTo(section: OrdersSection) {
 
 .sidebar__sublink:hover,
 .sidebar__sublink--active {
-  background: rgb(249 115 22 / 0.09);
+  background: var(--accent-ember-hover-bg);
   color: var(--accent-ember-text-strong);
 }
 
 .sidebar__sublink--active {
   box-shadow: inset 2px 0 0 var(--color-ember);
+}
+
+.sidebar__footer {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.sidebar__theme {
+  position: relative;
+}
+
+.sidebar__theme-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 2.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-control-raised);
+  padding: 0 var(--space-3);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.sidebar__theme-button span {
+  flex: 1;
+  text-align: left;
+}
+
+.sidebar__theme-chevron {
+  color: var(--color-text-subtle);
+}
+
+.sidebar__theme-button:hover {
+  border-color: var(--accent-ember-border);
+  background: var(--accent-ember-hover-bg);
+  color: var(--accent-ember-text-strong);
+}
+
+.sidebar__theme-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.sidebar__theme-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 45;
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-raised);
+  box-shadow: var(--shadow-panel);
+  padding: var(--space-2);
+}
+
+.sidebar__theme-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.15rem;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 720;
+  padding: 0 var(--space-2);
+  text-align: left;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.sidebar__theme-option:hover,
+.sidebar__theme-option--active {
+  border-color: var(--color-border-strong);
+  background: var(--surface-active-overlay);
+  color: var(--color-text);
+}
+
+.sidebar__theme-option--active {
+  box-shadow: inset 2px 0 0 var(--color-ember);
+}
+
+.sidebar__theme-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 @media (min-width: 1024px) {

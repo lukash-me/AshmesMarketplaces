@@ -36,6 +36,7 @@ withDefaults(
   gap: var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
+  background-clip: padding-box;
   padding: 0 var(--space-3);
   font-size: 0.8125rem;
   font-weight: 680;

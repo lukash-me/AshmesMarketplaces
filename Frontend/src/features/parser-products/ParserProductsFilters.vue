@@ -236,7 +236,7 @@ function getSortLabel(value: string): string {
   z-index: 3;
   display: grid;
   gap: var(--space-3);
-  border-color: rgb(249 115 22 / 0.18);
+  border-color: var(--color-border-strong);
   background:
     linear-gradient(90deg, rgb(249 115 22 / 0.035), transparent 42%),
     var(--surface-panel);
@@ -280,7 +280,7 @@ function getSortLabel(value: string): string {
 }
 
 .filters__ranges {
-  border: 1px solid rgb(249 115 22 / 0.16);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   background: var(--surface-control);
   padding: var(--space-2) var(--space-3);
@@ -337,7 +337,7 @@ function getSortLabel(value: string): string {
   max-width: 100%;
   align-items: center;
   gap: var(--space-1);
-  border: 1px solid rgb(249 115 22 / 0.22);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.07), transparent),

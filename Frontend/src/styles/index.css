@@ -4,7 +4,7 @@
 * {
   box-sizing: border-box;
   scrollbar-width: thin;
-  scrollbar-color: rgb(249 115 22 / 0.48) rgb(5 8 13 / 0.72);
+  scrollbar-color: var(--theme-scrollbar-thumb) var(--theme-scrollbar-track);
 }
 
 *::-webkit-scrollbar {
@@ -13,17 +13,17 @@
 }
 
 *::-webkit-scrollbar-track {
-  background: rgb(5 8 13 / 0.72);
+  background: var(--theme-scrollbar-track);
 }
 
 *::-webkit-scrollbar-thumb {
-  border: 2px solid rgb(5 8 13 / 0.72);
+  border: 2px solid var(--theme-scrollbar-track);
   border-radius: 999px;
-  background: rgb(249 115 22 / 0.46);
+  background: var(--theme-scrollbar-thumb);
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: rgb(251 146 60 / 0.68);
+  background: var(--theme-scrollbar-thumb-hover);
 }
 
 html {
@@ -108,7 +108,8 @@ a {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
-  box-shadow: var(--shadow-panel);
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px var(--color-border), var(--shadow-panel);
   backdrop-filter: blur(18px);
 }
 
@@ -116,6 +117,8 @@ a {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface-muted);
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px var(--color-border);
   backdrop-filter: blur(14px);
 }
 
@@ -154,7 +157,7 @@ a {
 .mi-section {
   display: grid;
   gap: var(--space-3);
-  border-color: rgb(249 115 22 / 0.18);
+  border-color: var(--accent-ember-sidebar-border);
   padding: var(--space-4);
 }
 
@@ -167,6 +170,9 @@ a {
 
 .mi-section__header h2,
 .mi-section__header h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0;
   font-size: 1rem;
   font-weight: 750;
@@ -192,9 +198,9 @@ a {
 .mi-summary {
   position: relative;
   overflow: hidden;
-  border-color: rgb(249 115 22 / 0.26);
+  border-color: var(--accent-ember-border);
   background:
-    linear-gradient(135deg, rgb(249 115 22 / 0.1), transparent 42%),
+    linear-gradient(135deg, var(--accent-ember-soft), transparent 42%),
     var(--color-surface);
   padding: var(--space-4);
 }
@@ -266,6 +272,7 @@ a {
   border-color: var(--state-success-border);
   background: var(--state-success-soft);
   color: var(--state-success-text);
+  box-shadow: inset 0 0 0 1px var(--state-success-border);
 }
 
 .delta-chip--negative {

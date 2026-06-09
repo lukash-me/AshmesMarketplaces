@@ -134,15 +134,16 @@ th {
   position: sticky;
   top: 0;
   z-index: 1;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--surface-table-header);
-  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--border-table-header);
+  background: var(--surface-table-header-strong);
+  color: var(--text-table-header);
   font-size: 0.6875rem;
-  font-weight: 700;
+  font-weight: 820;
   padding: 0.625rem 0.75rem;
   text-align: left;
   text-transform: uppercase;
   backdrop-filter: blur(14px);
+  box-shadow: inset 0 -1px 0 var(--surface-highlight-overlay);
 }
 
 td {
@@ -202,5 +203,9 @@ tbody tr.table__row--warm td:first-child {
   background: transparent;
   padding: 0;
   font-weight: inherit;
+}
+
+.table__sort svg {
+  color: currentColor;
 }
 </style>

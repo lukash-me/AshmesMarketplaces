@@ -1,15 +1,20 @@
 <script setup lang="ts">
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
+
 defineProps<{
   title: string;
   description?: string;
+  subtitle?: string;
 }>();
 </script>
 
 <template>
   <div class="page-header">
     <div>
-      <h1>{{ title }}</h1>
-      <p v-if="description">{{ description }}</p>
+      <h1>
+        <span>{{ title }}</span>
+        <HelpTooltip v-if="description || subtitle" :text="description || subtitle || ''" />
+      </h1>
     </div>
     <div class="page-header__actions">
       <slot />
@@ -28,16 +33,13 @@ defineProps<{
 }
 
 h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: 0;
   font-size: 1.375rem;
   font-weight: 750;
   letter-spacing: 0;
-}
-
-p {
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
 }
 
 .page-header__actions {

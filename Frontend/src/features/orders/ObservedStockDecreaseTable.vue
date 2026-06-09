@@ -4,6 +4,7 @@ import { ExternalLink } from 'lucide-vue-next';
 
 import Button from '@/shared/ui/Button.vue';
 import DataTable, { type DataTableColumn } from '@/shared/ui/DataTable.vue';
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import { getWildberriesProductUrl } from '@/features/parser-products/wildberriesLinks';
 
@@ -87,8 +88,10 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   <div class="observed-stock-table app-surface">
     <header class="table-toolbar">
       <div class="table-toolbar__heading">
-        <h2>Снижение наблюдаемого остатка WB</h2>
-        <p>Только товары, где последний наблюдаемый остаток меньше предыдущего.</p>
+        <h2>
+          <span>Снижение наблюдаемого остатка WB</span>
+          <HelpTooltip text="Только товары, где последний наблюдаемый остаток меньше предыдущего." />
+        </h2>
       </div>
       <div v-if="summary" class="summary-strip" aria-label="Сводка по наблюдаемым остаткам">
         <span>
@@ -258,12 +261,14 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   gap: var(--space-1);
 }
 
-.table-toolbar h2,
-.table-toolbar p {
+.table-toolbar h2 {
   margin: 0;
 }
 
 .table-toolbar h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--color-text);
   font-size: 1rem;
   font-weight: 820;
@@ -372,17 +377,15 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 }
 
 :deep(th) {
-  border-bottom: 1px solid rgb(249 115 22 / 0.2);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.055), rgb(12 15 22 / 0.98)),
-    var(--surface-table-header);
-  color: var(--color-text);
+  border-bottom: 1px solid var(--border-table-header);
+  background: var(--surface-table-header-strong);
+  color: var(--text-table-header);
   font-size: 0.75rem;
   font-weight: 840;
   letter-spacing: 0.035em;
   line-height: 1.1;
   text-transform: uppercase;
-  box-shadow: inset 0 -1px 0 rgb(249 115 22 / 0.08);
+  box-shadow: inset 0 -1px 0 var(--surface-highlight-overlay);
 }
 
 :deep(.table__sort) {
@@ -391,7 +394,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 }
 
 :deep(.table__sort svg) {
-  color: rgb(253 186 116 / 0.72);
+  color: currentColor;
 }
 
 :deep(tbody tr) {

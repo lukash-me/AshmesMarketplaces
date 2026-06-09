@@ -802,10 +802,8 @@ function formatDateTime(value: string | null | undefined): string {
 
 .market-kpi,
 .market-panel {
-  border-color: rgb(249 115 22 / 0.16);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.035), transparent 8rem),
-    var(--surface-panel);
+  border-color: var(--border-ember-subtle);
+  background: var(--background-card-ember);
   padding: var(--space-3);
 }
 
@@ -862,7 +860,7 @@ function formatDateTime(value: string | null | undefined): string {
   display: grid;
   gap: 0.2rem;
   min-width: 0;
-  border: 1px solid rgb(255 255 255 / 0.07);
+  border: 1px solid var(--surface-metric-border);
   border-radius: var(--radius-sm);
   background: var(--surface-control);
   padding: var(--space-2);
@@ -932,7 +930,7 @@ function formatDateTime(value: string | null | undefined): string {
 
 .market-kpi:hover .market-kpi__link {
   border-color: var(--accent-ember-border);
-  background: rgb(249 115 22 / 0.1);
+  background: var(--accent-ember-hover-bg);
   color: var(--accent-ember-text-strong);
 }
 
@@ -981,14 +979,14 @@ function formatDateTime(value: string | null | undefined): string {
   height: 0.48rem;
   overflow: hidden;
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.055);
+  background: var(--surface-chart-track);
 }
 
 .bar-row__track span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, rgb(249 115 22 / 0.8), rgb(251 191 36 / 0.72));
+  background: var(--accent-chart-fill);
   transition: width 750ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -1026,7 +1024,7 @@ function formatDateTime(value: string | null | undefined): string {
 
 .market-panel__cta:hover {
   border-color: var(--accent-ember-border);
-  background: rgb(249 115 22 / 0.1);
+  background: var(--accent-ember-hover-bg);
   color: var(--accent-ember-text-strong);
 }
 
@@ -1035,14 +1033,14 @@ function formatDateTime(value: string | null | undefined): string {
   overflow: hidden;
   position: relative;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, rgb(255 255 255 / 0.055), rgb(249 115 22 / 0.085), rgb(255 255 255 / 0.055));
+  background: var(--background-overview-skeleton);
   background-size: 220% 100%;
   animation: overview-skeleton 1800ms ease-in-out infinite;
 }
 
 .market-kpi__icon.market-skeleton {
-  border-color: rgb(249 115 22 / 0.14);
-  background-color: rgb(249 115 22 / 0.055);
+  border-color: var(--border-ember-muted);
+  background-color: var(--accent-ember-soft);
 }
 
 .market-skeleton-stack {
@@ -1080,7 +1078,7 @@ function formatDateTime(value: string | null | undefined): string {
 .market-skeleton--button {
   width: 100%;
   min-height: 2rem;
-  border-color: rgb(255 255 255 / 0.06);
+  border-color: var(--border-skeleton-button);
   color: transparent;
 }
 
@@ -1132,7 +1130,7 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   100% {
-    border-color: rgb(255 255 255 / 0.07);
+    border-color: var(--surface-metric-border);
     box-shadow: none;
   }
 }
@@ -1175,32 +1173,32 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   100% {
-    border-color: rgb(255 255 255 / 0.07);
+    border-color: var(--surface-metric-border);
     box-shadow: none;
   }
 }
 
 @keyframes overview-bar-fill-highlight-a {
   0% {
-    background: linear-gradient(90deg, rgb(56 189 248 / 0.88), rgb(96 165 250 / 0.78));
+    background: var(--accent-chart-fill-change-strong);
     filter: brightness(1.34) saturate(1.18);
-    box-shadow: 0 0 14px rgb(56 189 248 / 0.24);
+    box-shadow: 0 0 14px var(--accent-chart-fill-glow-strong);
   }
 
   35% {
-    background: linear-gradient(90deg, rgb(56 189 248 / 0.72), rgb(96 165 250 / 0.64));
+    background: var(--accent-chart-fill-change-soft);
     filter: brightness(1.2) saturate(1.1);
-    box-shadow: 0 0 10px rgb(59 130 246 / 0.17);
+    box-shadow: 0 0 10px var(--accent-chart-fill-glow);
   }
 
   68% {
-    background: linear-gradient(90deg, rgb(249 115 22 / 0.82), rgb(251 191 36 / 0.72));
+    background: var(--accent-chart-fill-return);
     filter: brightness(1.08) saturate(1.04);
-    box-shadow: 0 0 6px rgb(56 189 248 / 0.08);
+    box-shadow: 0 0 6px var(--accent-chart-fill-glow-soft);
   }
 
   100% {
-    background: linear-gradient(90deg, rgb(249 115 22 / 0.8), rgb(251 191 36 / 0.72));
+    background: var(--accent-chart-fill);
     filter: brightness(1) saturate(1);
     box-shadow: none;
   }
@@ -1208,25 +1206,25 @@ function formatDateTime(value: string | null | undefined): string {
 
 @keyframes overview-bar-fill-highlight-b {
   0% {
-    background: linear-gradient(90deg, rgb(56 189 248 / 0.88), rgb(96 165 250 / 0.78));
+    background: var(--accent-chart-fill-change-strong);
     filter: brightness(1.34) saturate(1.18);
-    box-shadow: 0 0 14px rgb(56 189 248 / 0.24);
+    box-shadow: 0 0 14px var(--accent-chart-fill-glow-strong);
   }
 
   35% {
-    background: linear-gradient(90deg, rgb(56 189 248 / 0.72), rgb(96 165 250 / 0.64));
+    background: var(--accent-chart-fill-change-soft);
     filter: brightness(1.2) saturate(1.1);
-    box-shadow: 0 0 10px rgb(59 130 246 / 0.17);
+    box-shadow: 0 0 10px var(--accent-chart-fill-glow);
   }
 
   68% {
-    background: linear-gradient(90deg, rgb(249 115 22 / 0.82), rgb(251 191 36 / 0.72));
+    background: var(--accent-chart-fill-return);
     filter: brightness(1.08) saturate(1.04);
-    box-shadow: 0 0 6px rgb(56 189 248 / 0.08);
+    box-shadow: 0 0 6px var(--accent-chart-fill-glow-soft);
   }
 
   100% {
-    background: linear-gradient(90deg, rgb(249 115 22 / 0.8), rgb(251 191 36 / 0.72));
+    background: var(--accent-chart-fill);
     filter: brightness(1) saturate(1);
     box-shadow: none;
   }
@@ -1326,7 +1324,7 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   .bar-row__fill--changed {
-    background: linear-gradient(90deg, rgb(56 189 248 / 0.7), rgb(96 165 250 / 0.62));
+    background: var(--accent-chart-fill-reduced);
     filter: brightness(1.08) saturate(1.04);
     box-shadow: none;
   }
