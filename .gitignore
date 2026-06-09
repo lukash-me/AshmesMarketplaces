@@ -10,6 +10,13 @@ Documents/
 .gitignore
 Backend/.idea/*
 .dev/
+.build/
+downloaded_files/
+Frontend/test-results/
+
+# Production Docker deployment local state
+deploy/docker/.env
+deploy/docker/backups/
 
 # User-specific files
 *.rsuser
