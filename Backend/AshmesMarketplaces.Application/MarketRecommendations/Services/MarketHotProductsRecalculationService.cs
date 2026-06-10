@@ -71,12 +71,6 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         if (_options.TimeoutSeconds <= 0 || _options.MaxProductsPerRequest <= 0)
             return ServiceResult<RecalculateHotProductsResponse>.Unavailable("Intelligence service configuration is invalid.");
 
-        if (request.MaxProducts is > 0 && request.MaxProducts > _options.MaxProductsPerRequest)
-        {
-            return ServiceResult<RecalculateHotProductsResponse>.BadRequest(
-                $"Requested maxProducts exceeds configured Intelligence maximum of {_options.MaxProductsPerRequest}.");
-        }
-
         var snapshotResult = await _snapshotBuilder.BuildAsync(request, _options, cancellationToken);
         if (!snapshotResult.IsSuccess)
             return snapshotResult.Error!.Type == ServiceErrorType.NotFound
@@ -108,84 +102,31 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
                 return ServiceResult<RecalculateHotProductsResponse>.Success(MapRunSummary(existing));
         }
 
-        var clientResult = await _intelligenceClient.CalculateHotProductsAsync(intelligenceRequest, cancellationToken);
-        if (!clientResult.IsSuccess)
-        {
-            var failedRun = await PersistRunAsync(
-                snapshot,
-                intelligenceRequest,
-                inputSnapshotHash,
-                StatusFailed,
-                AlgorithmVersion,
-                ModelVersion,
-                completedAtUtc: DateTime.UtcNow,
-                validUntilUtc: null,
-                recommendationsCount: 0,
-                warnings: [],
-                errorCode: clientResult.Error!.Type == ServiceErrorType.Unavailable
-                    ? "intelligence_unavailable"
-                    : "intelligence_error",
-                errorMessage: clientResult.Error.Message,
-                recommendations: [],
-                cancellationToken);
+        var batchResult = await CalculateInBatchesAsync(
+            request,
+            snapshot,
+            requestId,
+            inputSnapshotHash,
+            cancellationToken);
+        if (!batchResult.IsSuccess)
+            return batchResult.Error!.Type == ServiceErrorType.BadRequest
+                ? ServiceResult<RecalculateHotProductsResponse>.BadRequest(batchResult.Error.Message)
+                : ServiceResult<RecalculateHotProductsResponse>.Unavailable(batchResult.Error.Message);
 
-            _logger.LogWarning(
-                "Hot-products recalculation failed after snapshot. runId={RunId} requestId={RequestId} productCount={ProductCount} errorType={ErrorType}",
-                failedRun.Id,
-                intelligenceRequest.RequestId,
-                snapshot.Products.Count,
-                clientResult.Error.Type);
-
-            return clientResult.Error.Type == ServiceErrorType.BadRequest
-                ? ServiceResult<RecalculateHotProductsResponse>.BadRequest(clientResult.Error.Message)
-                : ServiceResult<RecalculateHotProductsResponse>.Unavailable(clientResult.Error.Message);
-        }
-
-        var response = clientResult.Value!;
-        var validationErrors = ValidateResponse(response, intelligenceRequest, snapshot);
-        if (validationErrors.Count > 0)
-        {
-            var failedRun = await PersistRunAsync(
-                snapshot,
-                intelligenceRequest,
-                inputSnapshotHash,
-                StatusFailed,
-                response.AlgorithmVersion,
-                response.ModelVersion,
-                response.ComputedAtUtc.Kind == DateTimeKind.Utc ? response.ComputedAtUtc : DateTime.UtcNow,
-                validUntilUtc: null,
-                recommendationsCount: 0,
-                warnings: response.Warnings,
-                errorCode: "intelligence_response_validation_failed",
-                errorMessage: string.Join("; ", validationErrors),
-                recommendations: [],
-                cancellationToken);
-
-            _logger.LogWarning(
-                "Hot-products Intelligence response validation failed. runId={RunId} requestId={RequestId} errorCount={ErrorCount}",
-                failedRun.Id,
-                intelligenceRequest.RequestId,
-                validationErrors.Count);
-
-            return ServiceResult<RecalculateHotProductsResponse>.Unavailable(
-                "Intelligence service returned an invalid hot-products response.");
-        }
-
-        var recommendations = response.Status == StatusCompleted
-            ? response.Recommendations
-            : [];
+        var batchResponse = batchResult.Value!;
+        var recommendations = batchResponse.Recommendations;
         var validUntilUtc = recommendations.Count == 0 ? (DateTime?)null : recommendations.Max(x => x.ValidUntilUtc);
         var persistedRun = await PersistRunAsync(
             snapshot,
             intelligenceRequest,
             inputSnapshotHash,
-            response.Status,
-            response.AlgorithmVersion,
-            response.ModelVersion,
-            response.ComputedAtUtc,
+            batchResponse.Status,
+            batchResponse.AlgorithmVersion,
+            batchResponse.ModelVersion,
+            batchResponse.ComputedAtUtc,
             validUntilUtc,
             recommendations.Count,
-            response.Warnings,
+            batchResponse.Warnings,
             errorCode: null,
             errorMessage: null,
             recommendations,
@@ -421,6 +362,115 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             run.CreatedAtUtc,
             ReadWarnings(run.RawWarnings));
     }
+
+    private async Task<ServiceResult<HotProductsBatchResponse>> CalculateInBatchesAsync(
+        RecalculateHotProductsRequest request,
+        MarketHotProductsSnapshot snapshot,
+        string requestId,
+        string inputSnapshotHash,
+        CancellationToken cancellationToken)
+    {
+        var chunkSize = Math.Max(_options.MaxProductsPerRequest, 1);
+        var recommendations = new List<HotProductRecommendationDto>();
+        var warnings = new List<string>();
+        var computedAtUtc = DateTime.UtcNow;
+        var algorithmVersion = AlgorithmVersion;
+        var modelVersion = ModelVersion;
+        var chunkIndex = 0;
+
+        foreach (var chunk in snapshot.Products.Chunk(chunkSize))
+        {
+            chunkIndex++;
+            var chunkProducts = chunk.ToList();
+            var chunkSnapshot = snapshot with { Products = chunkProducts };
+            var chunkRequest = BuildIntelligenceRequest(
+                request,
+                chunkSnapshot,
+                $"{requestId}-batch-{chunkIndex}");
+
+            var clientResult = await _intelligenceClient.CalculateHotProductsAsync(chunkRequest, cancellationToken);
+            if (!clientResult.IsSuccess)
+            {
+                await PersistRunAsync(
+                    snapshot,
+                    chunkRequest,
+                    inputSnapshotHash,
+                    StatusFailed,
+                    AlgorithmVersion,
+                    ModelVersion,
+                    completedAtUtc: DateTime.UtcNow,
+                    validUntilUtc: null,
+                    recommendationsCount: 0,
+                    warnings,
+                    errorCode: clientResult.Error!.Type == ServiceErrorType.Unavailable
+                        ? "intelligence_unavailable"
+                        : "intelligence_error",
+                    errorMessage: clientResult.Error.Message,
+                    recommendations: [],
+                    cancellationToken);
+
+                return clientResult.Error.Type == ServiceErrorType.BadRequest
+                    ? ServiceResult<HotProductsBatchResponse>.BadRequest(clientResult.Error.Message)
+                    : ServiceResult<HotProductsBatchResponse>.Unavailable(clientResult.Error.Message);
+            }
+
+            var response = clientResult.Value!;
+            var validationErrors = ValidateResponse(response, chunkRequest, chunkSnapshot);
+            if (validationErrors.Count > 0)
+            {
+                await PersistRunAsync(
+                    snapshot,
+                    chunkRequest,
+                    inputSnapshotHash,
+                    StatusFailed,
+                    response.AlgorithmVersion,
+                    response.ModelVersion,
+                    response.ComputedAtUtc.Kind == DateTimeKind.Utc ? response.ComputedAtUtc : DateTime.UtcNow,
+                    validUntilUtc: null,
+                    recommendationsCount: 0,
+                    warnings: response.Warnings,
+                    errorCode: "intelligence_response_validation_failed",
+                    errorMessage: string.Join("; ", validationErrors),
+                    recommendations: [],
+                    cancellationToken);
+
+                return ServiceResult<HotProductsBatchResponse>.Unavailable(
+                    "Intelligence service returned an invalid hot-products response.");
+            }
+
+            computedAtUtc = response.ComputedAtUtc.Kind == DateTimeKind.Utc ? response.ComputedAtUtc : computedAtUtc;
+            algorithmVersion = response.AlgorithmVersion;
+            modelVersion = response.ModelVersion;
+            warnings.AddRange(response.Warnings);
+            if (response.Status == StatusCompleted)
+                recommendations.AddRange(response.Recommendations);
+        }
+
+        var maxRecommendations = request.MaxRecommendations ?? 200;
+        recommendations = recommendations
+            .GroupBy(x => x.ProductKey, StringComparer.Ordinal)
+            .Select(x => x.OrderByDescending(item => item.Score).First())
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Confidence)
+            .Take(maxRecommendations)
+            .ToList();
+
+        return ServiceResult<HotProductsBatchResponse>.Success(new HotProductsBatchResponse(
+            recommendations.Count == 0 ? StatusNotEnoughData : StatusCompleted,
+            algorithmVersion,
+            modelVersion,
+            computedAtUtc,
+            recommendations,
+            warnings.Distinct(StringComparer.Ordinal).ToList()));
+    }
+
+    private sealed record HotProductsBatchResponse(
+        string Status,
+        string AlgorithmVersion,
+        string ModelVersion,
+        DateTime ComputedAtUtc,
+        IReadOnlyList<HotProductRecommendationDto> Recommendations,
+        IReadOnlyList<string> Warnings);
 
     private static IReadOnlyList<string> ReadWarnings(JsonDocument? warnings)
     {

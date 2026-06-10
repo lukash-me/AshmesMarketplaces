@@ -97,6 +97,7 @@ const selectedSubcategory = ref(readInitialSubcategory());
 const selectedTopN = ref(readInitialTopN());
 const activeSection = ref<SectionKey>(readInitialSection());
 const expandedEventGroups = ref<string[]>([]);
+const activeEventGroupKey = ref<string | null>(null);
 const intelligence = ref<PublicMarketIntelligence | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -146,6 +147,14 @@ const eventGroups = computed<EventGroup[]>(() => {
     .sort((left, right) => eventGroupOrder(left.key) - eventGroupOrder(right.key));
 });
 
+const selectedEventGroup = computed<EventGroup | null>(() => {
+  if (eventGroups.value.length === 0) {
+    return null;
+  }
+
+  return eventGroups.value.find((group) => group.key === activeEventGroupKey.value) ?? eventGroups.value[0] ?? null;
+});
+
 const summaryCards = computed(() => {
   const data = intelligence.value;
 
@@ -192,6 +201,8 @@ watch(
     activeSection.value = normalizeSection(section);
   }
 );
+
+watch(eventGroups, ensureActiveEventGroup, { immediate: true });
 
 async function refresh(): Promise<void> {
   loading.value = true;
@@ -251,6 +262,34 @@ function selectSection(section: SectionKey): void {
 
 function selectSectionValue(section: string): void {
   selectSection(normalizeSection(section));
+}
+
+function selectEventGroup(key: string): void {
+  activeEventGroupKey.value = key;
+}
+
+function ensureActiveEventGroup(): void {
+  if (eventGroups.value.length === 0) {
+    activeEventGroupKey.value = null;
+    return;
+  }
+
+  if (eventGroups.value.some((group) => group.key === activeEventGroupKey.value)) {
+    return;
+  }
+
+  activeEventGroupKey.value =
+    eventGroups.value.find((group) => group.key === 'sharp_position_move')?.key ?? eventGroups.value[0]?.key ?? null;
+}
+
+function eventGroupButtonLabel(group: EventGroup): string {
+  const labels: Record<string, string> = {
+    sharp_position_move: 'Изменения позиций',
+    entered_checked_range: 'Вошли в топ',
+    left_checked_range: 'Вышли из топа'
+  };
+
+  return labels[group.key] ?? group.title;
 }
 
 function toggleEventGroup(key: string): void {
@@ -408,15 +447,15 @@ function eventGroupCopy(type: string): { title: string; description: string } {
   const top = topLabel.value;
   const copy: Record<string, { title: string; description: string }> = {
     entered_checked_range: {
-      title: 'Карточки вошли в топ',
+      title: 'Вошли в топ',
       description: `Появились в выбранном ${top} по этой нише.`
     },
     left_checked_range: {
-      title: 'Карточки вышли из топа',
+      title: 'Вышли из топа',
       description: `Были в выбранном ${top}, но сейчас не попали в него.`
     },
     sharp_position_move: {
-      title: 'Изменение позиций',
+      title: 'Изменения позиций',
       description: 'Карточки с сильным изменением видимости за период сравнения.'
     },
     visible_price_change: {
@@ -481,7 +520,7 @@ function eventDelta(event: MarketEvent): DeltaView | null {
   const after = parseNumber(event.afterValue);
 
   if (event.type === 'sharp_position_move' && before !== null && after !== null) {
-    return deltaView(before - after, 'мест');
+    return positionDeltaView(before, after);
   }
 
   if (event.type === 'visible_price_change' && before !== null && after !== null) {
@@ -685,6 +724,24 @@ function deltaView(value: number, unit: string): DeltaView {
   };
 }
 
+function positionDeltaView(before: number, after: number): DeltaView {
+  const delta = Math.round(Math.abs(after - before));
+
+  if (delta === 0) {
+    return {
+      label: 'без изменений',
+      tone: 'neutral'
+    };
+  }
+
+  const movedUp = after < before;
+
+  return {
+    label: `${movedUp ? '↑' : '↓'} ${formatNumber(delta)} мест`,
+    tone: movedUp ? 'positive' : 'negative'
+  };
+}
+
 function parseNumber(value: string | null | undefined): number | null {
   if (!value) {
     return null;
@@ -801,18 +858,18 @@ function sanitizeText(value: string | null | undefined): string {
 
     <section class="mi-controls app-surface">
       <div class="mi-controls__fields">
-        <label class="mi-field">
+        <label class="mi-field app-select-field">
           <span>Ниша</span>
-          <select v-model="selectedSubcategory" @change="applySubcategorySelection">
+          <select v-model="selectedSubcategory" class="app-select" @change="applySubcategorySelection">
             <option v-for="context in demoContexts" :key="context.sourceSubcategory" :value="context.sourceSubcategory">
               {{ context.label }}
             </option>
           </select>
         </label>
 
-        <label class="mi-field mi-field--short">
+        <label class="mi-field mi-field--short app-select-field">
           <span>{{ topLabel }}</span>
-          <select v-model.number="selectedTopN" @change="applyTopNSelection">
+          <select v-model.number="selectedTopN" class="app-select" @change="applyTopNSelection">
             <option v-for="option in topNOptions" :key="option" :value="option">Топ-{{ option }}</option>
           </select>
           <small>Количество позиций выдачи, которые сравниваются в этой нише.</small>
@@ -843,7 +900,7 @@ function sanitizeText(value: string | null | undefined): string {
         @update:model-value="selectSectionValue"
       />
 
-      <section v-if="activeSection === 'events'" class="mi-section app-surface">
+      <section v-if="activeSection === 'events'" class="mi-section app-surface app-operator-panel">
         <header class="mi-section__header">
           <div>
             <h2>
@@ -860,23 +917,37 @@ function sanitizeText(value: string | null | undefined): string {
         />
 
         <div v-else class="event-groups">
-          <article v-for="group in eventGroups" :key="group.key" class="event-group">
+          <div class="event-switcher" aria-label="Группы событий">
+            <button
+              v-for="group in eventGroups"
+              :key="group.key"
+              type="button"
+              class="event-switcher__button"
+              :class="{ 'event-switcher__button--active': selectedEventGroup?.key === group.key }"
+              @click="selectEventGroup(group.key)"
+            >
+              <span>{{ eventGroupButtonLabel(group) }}</span>
+              <strong>{{ formatNumber(group.events.length) }}</strong>
+            </button>
+          </div>
+
+          <article v-if="selectedEventGroup" class="event-group app-operator-card">
             <header class="event-group__header">
               <div>
                 <h3>
-                  <span>{{ group.title }}</span>
-                  <HelpTooltip :text="group.description" />
+                  <span>{{ eventGroupButtonLabel(selectedEventGroup) }}</span>
+                  <HelpTooltip :text="selectedEventGroup.description" />
                 </h3>
               </div>
-              <Badge tone="info">Карточек: {{ formatNumber(group.events.length) }}</Badge>
+              <Badge tone="info">Карточек: {{ formatNumber(selectedEventGroup.events.length) }}</Badge>
             </header>
 
-            <div v-if="visibleGroupEvents(group).length" class="product-card-grid">
+            <div v-if="visibleGroupEvents(selectedEventGroup).length" class="product-card-grid">
               <article
-                v-for="event in visibleGroupEvents(group)"
+                v-for="event in visibleGroupEvents(selectedEventGroup)"
                 :key="`${event.type}-${event.wbProductId}-${event.beforeValue}-${event.afterValue}`"
-                class="product-card"
-                :class="{ 'product-card--clickable': event.productRowId }"
+                class="product-card app-operator-card"
+                :class="{ 'product-card--clickable app-operator-card--interactive': event.productRowId }"
                 :tabindex="event.productRowId ? 0 : undefined"
                 :role="event.productRowId ? 'button' : undefined"
                 @click="openProduct(event)"
@@ -887,13 +958,10 @@ function sanitizeText(value: string | null | undefined): string {
                   <MarketProductImage :src="event.thumbnailUrl" :alt="productTitle(event)" />
                 </div>
                 <div class="product-card__body">
-                  <div class="product-card__top">
-                    <Badge :tone="severityTone(event.severity)">{{ group.title }}</Badge>
-                  </div>
                   <span class="product-card__sku">WB {{ event.wbProductId }}</span>
                   <h4>{{ productTitle(event) }}</h4>
                   <p>{{ brandSeller(event) }}</p>
-                  <div class="value-line product-card__wide">
+                  <div class="value-line product-card__wide app-operator-metric">
                     <strong>{{ eventCurrentLabel(event) }}</strong>
                     <div v-if="eventPreviousLabel(event) || eventDelta(event)" class="value-line__meta">
                       <span v-if="eventPreviousLabel(event)">{{ eventPreviousLabel(event) }}</span>
@@ -911,7 +979,7 @@ function sanitizeText(value: string | null | undefined): string {
                   </p>
                   <Button
                     v-if="event.productRowId"
-                    class="product-card__action"
+                    class="product-card__action app-operator-link"
                     variant="ghost"
                     @click.stop="openProduct(event)"
                   >
@@ -923,18 +991,18 @@ function sanitizeText(value: string | null | undefined): string {
             </div>
 
             <Button
-              v-if="hasMoreEvents(group)"
+              v-if="hasMoreEvents(selectedEventGroup)"
               class="event-group__toggle"
               variant="ghost"
-              @click="toggleEventGroup(group.key)"
+              @click="toggleEventGroup(selectedEventGroup.key)"
             >
-              {{ isEventGroupExpanded(group.key) ? 'Свернуть' : 'Показать больше карточек' }}
+              {{ isEventGroupExpanded(selectedEventGroup.key) ? 'Свернуть' : 'Показать больше карточек' }}
             </Button>
           </article>
         </div>
       </section>
 
-      <section v-else-if="activeSection === 'weaknesses'" class="mi-section app-surface">
+      <section v-else-if="activeSection === 'weaknesses'" class="mi-section app-surface app-operator-panel">
         <header class="mi-section__header">
           <div>
             <h2>
@@ -954,8 +1022,8 @@ function sanitizeText(value: string | null | undefined): string {
           <article
             v-for="weakness in intelligence.competitorWeaknesses.slice(0, 12)"
             :key="`${weakness.type}-${weakness.wbProductId}-${weakness.position}`"
-            class="product-card product-card--check"
-            :class="{ 'product-card--clickable': weakness.productRowId }"
+            class="product-card product-card--check app-operator-card"
+            :class="{ 'product-card--clickable app-operator-card--interactive': weakness.productRowId }"
             :tabindex="weakness.productRowId ? 0 : undefined"
             :role="weakness.productRowId ? 'button' : undefined"
             @click="openProduct(weakness)"
@@ -973,7 +1041,7 @@ function sanitizeText(value: string | null | undefined): string {
               <span class="product-card__sku">WB {{ weakness.wbProductId }}</span>
               <h4>{{ productTitle(weakness) }}</h4>
               <p>{{ brandSeller(weakness) }}</p>
-              <div class="metric-compare product-card__wide">
+              <div class="metric-compare product-card__wide app-operator-metric">
                 <div class="metric-compare__current">
                   <strong>{{ weaknessMetricValue(weakness) }}</strong>
                   <span
@@ -989,7 +1057,7 @@ function sanitizeText(value: string | null | undefined): string {
               <p class="product-card__note product-card__wide">{{ sanitizeText(weakness.explanation) }}</p>
               <Button
                 v-if="weakness.productRowId"
-                class="product-card__action"
+                class="product-card__action app-operator-link"
                 variant="ghost"
                 @click.stop="openProduct(weakness)"
               >
@@ -1001,7 +1069,7 @@ function sanitizeText(value: string | null | undefined): string {
         </div>
       </section>
 
-      <section v-else-if="activeSection === 'prices'" class="mi-section app-surface">
+      <section v-else-if="activeSection === 'prices'" class="mi-section app-surface app-operator-panel">
         <header class="mi-section__header">
           <div>
             <h2>
@@ -1015,7 +1083,7 @@ function sanitizeText(value: string | null | undefined): string {
           <div
             v-for="summary in [...promoSummaries, ...priceSummaries]"
             :key="`${summary.type}-${summary.title}`"
-            class="mi-metric"
+            class="mi-metric app-operator-card"
           >
             <span>{{ displayPressureTitle(summary) }}</span>
             <strong>{{ formatSummaryValue(summary.currentValue, summary.unit) }}</strong>
@@ -1036,8 +1104,8 @@ function sanitizeText(value: string | null | undefined): string {
             <article
               v-for="product in intelligence.pricePressure.highPriceVisibleProducts.slice(0, 8)"
               :key="product.wbProductId"
-              class="compact-product"
-              :class="{ 'compact-product--clickable': product.productRowId }"
+              class="compact-product app-operator-card"
+              :class="{ 'compact-product--clickable app-operator-card--interactive': product.productRowId }"
               :tabindex="product.productRowId ? 0 : undefined"
               :role="product.productRowId ? 'button' : undefined"
               @click="openProduct(product)"
@@ -1068,7 +1136,7 @@ function sanitizeText(value: string | null | undefined): string {
               </div>
               <Button
                 v-if="product.productRowId"
-                class="compact-product__action"
+                class="compact-product__action app-operator-link"
                 variant="ghost"
                 @click.stop="openProduct(product)"
               >
@@ -1079,7 +1147,7 @@ function sanitizeText(value: string | null | undefined): string {
         </div>
       </section>
 
-      <section v-else-if="activeSection === 'stock'" class="mi-section app-surface">
+      <section v-else-if="activeSection === 'stock'" class="mi-section app-surface app-operator-panel">
         <header class="mi-section__header">
           <div>
             <h2>
@@ -1118,8 +1186,8 @@ function sanitizeText(value: string | null | undefined): string {
             <article
               v-for="product in intelligence.stockPressure.highRankLowStockProducts"
               :key="product.wbProductId"
-              class="compact-product"
-              :class="{ 'compact-product--clickable': product.productRowId }"
+              class="compact-product app-operator-card"
+              :class="{ 'compact-product--clickable app-operator-card--interactive': product.productRowId }"
               :tabindex="product.productRowId ? 0 : undefined"
               :role="product.productRowId ? 'button' : undefined"
               @click="openProduct(product)"
@@ -1141,7 +1209,7 @@ function sanitizeText(value: string | null | undefined): string {
               </div>
               <Button
                 v-if="product.productRowId"
-                class="compact-product__action"
+                class="compact-product__action app-operator-link"
                 variant="ghost"
                 @click.stop="openProduct(product)"
               >
@@ -1152,7 +1220,7 @@ function sanitizeText(value: string | null | undefined): string {
         </div>
       </section>
 
-      <section v-else class="mi-section app-surface">
+      <section v-else class="mi-section app-surface app-operator-panel">
         <header class="mi-section__header">
           <div>
             <h2>
@@ -1209,7 +1277,11 @@ function sanitizeText(value: string | null | undefined): string {
       </section>
     </template>
 
-    <MarketProductDetailDrawer :open="Boolean(selectedProduct)" :product="selectedProduct" @close="closeProduct" />
+    <MarketProductDetailDrawer
+      :open="Boolean(selectedProduct)"
+      :product="selectedProduct"
+      @close="closeProduct"
+    />
   </div>
 </template>
 
@@ -1255,29 +1327,15 @@ function sanitizeText(value: string | null | undefined): string {
 .mi-metric span {
   display: block;
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   font-weight: 700;
 }
 
 .mi-field small {
   max-width: 16rem;
   color: var(--color-text-subtle);
-  font-size: 0.72rem;
+  font-size: var(--operator-label-size);
   line-height: 1.35;
-}
-
-.mi-field select {
-  height: 2.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-}
-
-.mi-field select:focus {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .mi-summary,
@@ -1339,7 +1397,7 @@ function sanitizeText(value: string | null | undefined): string {
 .product-card__note {
   margin: var(--space-2) 0 0;
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
   line-height: 1.4;
 }
 
@@ -1381,7 +1439,7 @@ function sanitizeText(value: string | null | undefined): string {
 .event-group__header p {
   margin: var(--space-1) 0 0;
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
 }
 
 .event-groups,
@@ -1389,6 +1447,66 @@ function sanitizeText(value: string | null | undefined): string {
 .histogram-panel {
   display: grid;
   gap: var(--space-3);
+}
+
+.event-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.event-switcher__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.15rem;
+  border: 1px solid var(--operator-border-muted);
+  border-radius: var(--radius-md);
+  background: var(--surface-control-raised);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--operator-body-size);
+  font-weight: 740;
+  padding: 0 var(--space-3);
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.event-switcher__button strong {
+  color: var(--operator-link);
+  font-size: var(--operator-body-size);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-switcher__button:hover,
+.event-switcher__button:focus-visible {
+  border-color: var(--accent-primary-hover-border);
+  background: var(--accent-ember-hover-bg);
+  color: var(--accent-ember-text-strong);
+  outline: none;
+}
+
+.event-switcher__button--active {
+  border-color: var(--accent-primary-hover-border);
+  background: var(--button-primary-bg);
+  color: var(--text-on-fire);
+  box-shadow: inset 0 0 0 1px var(--accent-primary-border);
+}
+
+.event-switcher__button--active:hover,
+.event-switcher__button--active:focus-visible {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.94), rgb(185 28 28 / 0.86)),
+    var(--accent-ember);
+  color: var(--text-on-fire);
+  box-shadow:
+    inset 0 0 0 1px var(--accent-primary-border),
+    0 0 0 3px var(--accent-ember-soft);
+}
+
+.event-switcher__button--active strong {
+  color: var(--text-on-fire);
 }
 
 .event-group,
@@ -1399,19 +1517,19 @@ function sanitizeText(value: string | null | undefined): string {
 .bar-row {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--color-surface-muted);
+  background: var(--operator-card-bg);
 }
 
 .event-group {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-3);
+  gap: var(--space-4);
+  padding: var(--space-4);
 }
 
 .product-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .product-card {
@@ -1433,10 +1551,8 @@ function sanitizeText(value: string | null | undefined): string {
 .compact-product--clickable:hover,
 .compact-product--clickable:focus-visible {
   border-color: var(--accent-primary-border);
-  background:
-    linear-gradient(90deg, var(--accent-ember-soft), transparent 42%),
-    var(--color-surface-hover);
-  box-shadow: inset 2px 0 0 var(--accent-ember-border), 0 14px 34px rgb(0 0 0 / 0.18);
+  background: var(--operator-card-hover-bg);
+  box-shadow: inset 2px 0 0 var(--operator-border), var(--shadow-panel);
   outline: none;
 }
 
@@ -1447,7 +1563,7 @@ function sanitizeText(value: string | null | undefined): string {
   overflow: hidden;
   background: var(--surface-control);
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   font-weight: 800;
 }
 
@@ -1472,8 +1588,8 @@ function sanitizeText(value: string | null | undefined): string {
 
 .product-card__body {
   display: grid;
-  gap: 0.45rem;
-  padding: var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-4);
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -1492,13 +1608,13 @@ function sanitizeText(value: string | null | undefined): string {
 
 .product-card__wide {
   grid-column: 1 / -1;
-  margin-left: calc(-5.75rem - var(--space-3));
-  margin-top: var(--space-1);
- }
+  margin-left: 0;
+  margin-top: var(--space-2);
+}
 
 .product-card__sku {
   color: var(--color-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   font-weight: 700;
 }
 
@@ -1511,11 +1627,11 @@ function sanitizeText(value: string | null | undefined): string {
 .value-line,
 .metric-compare {
   display: grid;
-  gap: var(--space-1);
+  gap: var(--space-2);
   align-self: stretch;
   border-radius: var(--radius-sm);
-  background: var(--surface-control);
-  padding: var(--space-2);
+  background: var(--operator-metric-bg);
+  padding: var(--space-3);
 }
 
 .value-line span,
@@ -1541,7 +1657,7 @@ function sanitizeText(value: string | null | undefined): string {
 }
 
 .metric-compare__reference {
-  font-size: 0.78rem;
+  font-size: var(--operator-meta-size);
 }
 
 .delta-chip {
@@ -1551,7 +1667,7 @@ function sanitizeText(value: string | null | undefined): string {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0.18rem 0.42rem;
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   font-weight: 750;
   font-variant-numeric: tabular-nums;
 }
@@ -1582,13 +1698,35 @@ function sanitizeText(value: string | null | undefined): string {
 
 .product-card__action {
   grid-column: 1 / -1;
-  margin-left: calc(-5.75rem - var(--space-3));
+  margin-left: 0;
+  margin-top: var(--space-1);
 }
 
 .product-card__disabled {
   align-self: end;
   color: var(--color-text-subtle);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
+}
+
+:deep(.product-card__action.app-operator-link.button),
+:deep(.compact-product__action.app-operator-link.button) {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--operator-link);
+  box-shadow: none;
+  padding: 0;
+}
+
+:deep(.product-card__action.app-operator-link.button:hover),
+:deep(.product-card__action.app-operator-link.button:focus-visible),
+:deep(.compact-product__action.app-operator-link.button:hover),
+:deep(.compact-product__action.app-operator-link.button:focus-visible) {
+  border: 0;
+  background: transparent;
+  color: var(--operator-link-hover);
+  text-decoration: underline;
+  outline: none;
 }
 
 .event-group__toggle {
@@ -1657,7 +1795,7 @@ function sanitizeText(value: string | null | undefined): string {
 .compact-product span,
 .bar-row p {
   color: var(--color-text-muted);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
 }
 
 .compact-product__values {
@@ -1666,7 +1804,7 @@ function sanitizeText(value: string | null | undefined): string {
   font-variant-numeric: tabular-nums;
   margin-top: var(--space-2);
   border-radius: var(--radius-sm);
-  background: var(--surface-control);
+  background: var(--operator-metric-bg);
   padding: var(--space-2);
 }
 
@@ -1772,7 +1910,7 @@ function sanitizeText(value: string | null | undefined): string {
 
   .product-card__wide,
   .product-card__action {
-    margin-left: calc(-5.25rem - var(--space-3));
+    margin-left: 0;
   }
 }
 </style>

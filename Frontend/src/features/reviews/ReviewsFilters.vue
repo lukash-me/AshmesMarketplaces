@@ -104,9 +104,9 @@ function apply() {
 
       <Input v-model="form.rating" type="number" label="Rating" placeholder="0+" />
 
-      <label class="filters__select-field">
+      <label class="filters__select-field app-select-field">
         <span>Reply state</span>
-        <select v-model="form.isReplied" class="filters__select">
+        <select v-model="form.isReplied" class="filters__select app-select">
           <option value="">Any</option>
           <option value="true">Replied</option>
           <option value="false">Unreplied</option>
@@ -173,23 +173,6 @@ function apply() {
   font-weight: 680;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-.filters__select {
-  height: 2.25rem;
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-  outline: none;
-}
-
-.filters__select:focus {
-  border-color: var(--color-primary);
-  background: var(--surface-control-focus);
-  box-shadow: var(--focus-ring);
 }
 
 .filters__chips {

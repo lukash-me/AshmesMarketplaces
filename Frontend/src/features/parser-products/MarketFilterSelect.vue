@@ -204,17 +204,25 @@ function onDocumentKeydown(event: KeyboardEvent) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: var(--space-2);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--select-control-border);
   border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: inherit;
+  background: var(--select-control-bg);
+  color: var(--select-control-text);
   cursor: pointer;
   padding: 0.45rem var(--space-3);
   text-align: left;
 }
 
+.filter-select__trigger:hover,
+.filter-select--open .filter-select__trigger {
+  border-color: var(--select-control-border-hover);
+  background: var(--select-control-bg-hover);
+}
+
 .filter-select__trigger:focus-visible {
   outline: none;
+  border-color: var(--select-control-border-focus);
+  background: var(--select-control-bg-focus);
   box-shadow: var(--focus-ring);
 }
 
@@ -228,7 +236,7 @@ function onDocumentKeydown(event: KeyboardEvent) {
 
 .filter-select__label {
   align-self: end;
-  color: var(--color-text-muted);
+  color: var(--select-label-text);
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -257,7 +265,7 @@ function onDocumentKeydown(event: KeyboardEvent) {
   place-items: center;
   border: 0;
   border-radius: 999px;
-  background: var(--surface-control-raised);
+  background: var(--select-control-bg);
   color: var(--color-text-muted);
   transform: translateY(-50%);
 }
@@ -274,12 +282,10 @@ function onDocumentKeydown(event: KeyboardEvent) {
   display: grid;
   width: min(19rem, calc(100vw - 2rem));
   gap: var(--space-2);
-  border: 1px solid var(--accent-ember-border);
+  border: 1px solid var(--select-menu-border);
   border-radius: var(--radius-md);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.075), transparent 42%),
-    rgb(8 11 18 / 0.985);
-  box-shadow: 0 20px 56px rgb(0 0 0 / 0.52), 0 0 0 1px rgb(255 255 255 / 0.025);
+  background: var(--select-menu-bg);
+  box-shadow: var(--select-menu-shadow);
   backdrop-filter: blur(18px);
   padding: var(--space-2);
 }
@@ -288,7 +294,7 @@ function onDocumentKeydown(event: KeyboardEvent) {
   position: absolute;
   inset: 0 0 auto;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(249 115 22 / 0.48), transparent);
+  background: linear-gradient(90deg, transparent, var(--accent-primary-border), transparent);
   content: '';
   pointer-events: none;
 }
@@ -299,15 +305,15 @@ function onDocumentKeydown(event: KeyboardEvent) {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--select-control-border);
   border-radius: var(--radius-sm);
-  background: rgb(5 8 13 / 0.78);
+  background: var(--select-search-bg);
   color: var(--color-text-muted);
   padding: 0 var(--space-2);
 }
 
 .filter-select__search:focus-within {
-  border-color: var(--accent-ember-border);
+  border-color: var(--select-control-border-focus);
   box-shadow: var(--focus-ring);
 }
 
@@ -331,20 +337,19 @@ function onDocumentKeydown(event: KeyboardEvent) {
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text);
+  color: var(--select-option-text);
   padding: 0.45rem var(--space-2);
   text-align: left;
 }
 
 .filter-select__option:hover,
 .filter-select__option--active {
-  background:
-    linear-gradient(90deg, rgb(249 115 22 / 0.14), transparent),
-    var(--color-surface-hover);
+  background: var(--select-option-hover-bg);
 }
 
 .filter-select__option--active {
-  color: var(--accent-ember-text-strong);
+  background: var(--select-option-active-bg);
+  color: var(--select-option-active-text);
 }
 
 .filter-select__option--clear {

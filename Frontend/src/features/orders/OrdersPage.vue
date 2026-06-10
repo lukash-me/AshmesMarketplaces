@@ -238,6 +238,7 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
     />
 
     <SectionSelector
+      class="orders-tabs app-operator-panel"
       :items="tabs"
       :model-value="queryState.tab"
       aria-label="Разделы событий рынка"
@@ -256,22 +257,22 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
     <template v-else>
       <section
         v-if="summary && !hasNotEnoughRunsWarning"
-        class="orders-summary app-surface"
+        class="orders-summary app-surface app-operator-panel"
         aria-label="Сводка по наблюдаемым событиям"
       >
-        <span>
+        <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.newProductObservedCount) }}</strong>
           Новые товары
         </span>
-        <span>
+        <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.stockDecreasedCount) }}</strong>
           Снижение остатков
         </span>
-        <span>
+        <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.stockIncreasedCount) }}</strong>
           Пополнения товаров
         </span>
-        <span>
+        <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.comparedPairsCount) }}</strong>
           Сравнено товаров
         </span>
@@ -322,10 +323,12 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-3);
-  border-color: rgb(249 115 22 / 0.18);
-  background:
-    linear-gradient(90deg, rgb(249 115 22 / 0.035), transparent 44%),
-    var(--surface-panel);
+  border-color: var(--operator-border-muted);
+  background: var(--operator-panel-bg);
+  padding: var(--space-3);
+}
+
+.orders-tabs {
   padding: var(--space-3);
 }
 
@@ -333,12 +336,9 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
   display: grid;
   gap: 0.1rem;
   min-width: 0;
-  border: 1px solid rgb(249 115 22 / 0.18);
-  border-radius: var(--radius-sm);
-  background: var(--surface-control);
   padding: var(--space-2);
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
 }
 
 .orders-summary strong {

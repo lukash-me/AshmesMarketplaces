@@ -178,6 +178,76 @@ class ProductAdviceResponse(ContractModel):
     computed_at_utc: datetime = Field(alias="computedAtUtc")
 
 
+class WorkspaceProductHistoryPointDto(ContractModel):
+    observed_at_utc: datetime = Field(alias="observedAtUtc")
+    value: float | None = None
+
+
+class WorkspaceProductHistoryDto(ContractModel):
+    price_observations: list[WorkspaceProductHistoryPointDto] = Field(default_factory=list, alias="priceObservations")
+    position_observations: list[WorkspaceProductHistoryPointDto] = Field(default_factory=list, alias="positionObservations")
+    stock_observations: list[WorkspaceProductHistoryPointDto] = Field(default_factory=list, alias="stockObservations")
+    feedback_observations: list[WorkspaceProductHistoryPointDto] = Field(default_factory=list, alias="feedbackObservations")
+
+
+class WorkspaceProductAnalysisOptionsDto(ContractModel):
+    max_similar_products: int = Field(default=5, ge=1, le=20, alias="maxSimilarProducts")
+    algorithm: str | None = None
+
+
+class WorkspaceProductAnalysisRequest(ContractModel):
+    request_id: str = Field(min_length=1, alias="requestId")
+    generated_at_utc: datetime = Field(alias="generatedAtUtc")
+    marketplace: str = Field(min_length=1)
+    product: MarketProductFeatureDto
+    history: WorkspaceProductHistoryDto
+    candidates: list[MarketProductFeatureDto] = Field(default_factory=list)
+    options: WorkspaceProductAnalysisOptionsDto | None = None
+
+
+class WorkspaceProductSignalDto(ContractModel):
+    code: str
+    severity: str
+    title: str
+    description: str
+    metric_facts: list[str] = Field(default_factory=list, alias="metricFacts")
+    confidence: float = Field(ge=0, le=1)
+
+
+class WorkspaceSimilarProductDto(ContractModel):
+    product_key: str = Field(alias="productKey")
+    wb_product_id: WbIdentifier = Field(default=None, alias="wbProductId")
+    wb_root_id: WbIdentifier = Field(default=None, alias="wbRootId")
+    similarity_score: float = Field(alias="similarityScore")
+    reason: str
+
+
+class WorkspaceSimilarProductGroupItemDto(ContractModel):
+    product_key: str = Field(alias="productKey")
+    facts: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class WorkspaceSimilarProductGroupDto(ContractModel):
+    key: str
+    title: str
+    description: str
+    items: list[WorkspaceSimilarProductGroupItemDto] = Field(default_factory=list)
+
+
+class WorkspaceProductAnalysisResponse(ContractModel):
+    request_id: str = Field(alias="requestId")
+    status: RecommendationStatus
+    algorithm: str
+    algorithm_version: str = Field(alias="algorithmVersion")
+    model_version: str = Field(alias="modelVersion")
+    computed_at_utc: datetime = Field(alias="computedAtUtc")
+    signals: list[WorkspaceProductSignalDto] = Field(default_factory=list)
+    similar_products: list[WorkspaceSimilarProductDto] = Field(default_factory=list, alias="similarProducts")
+    similar_product_groups: list[WorkspaceSimilarProductGroupDto] = Field(default_factory=list, alias="similarProductGroups")
+    warnings: list[str] = Field(default_factory=list)
+
+
 class JobStatusResponse(ContractModel):
     job_id: str = Field(alias="jobId")
     request_id: str = Field(alias="requestId")

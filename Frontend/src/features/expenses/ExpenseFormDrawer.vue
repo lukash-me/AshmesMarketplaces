@@ -182,7 +182,7 @@ function toDateInput(value: string | null): string {
 
           <label class="field">
             <span>Категория</span>
-            <select v-model="form.idCategory" class="field__control">
+            <select v-model="form.idCategory" class="field__control app-select">
               <option value="">Без категории</option>
               <option v-for="category in categories" :key="category.id" :value="category.id">
                 {{ category.name }}
@@ -192,7 +192,7 @@ function toDateInput(value: string | null): string {
 
           <label class="field">
             <span>Статус</span>
-            <select v-model="form.statusKey" class="field__control">
+            <select v-model="form.statusKey" class="field__control app-select">
               <option v-for="status in expenseStatusOptions" :key="status.key" :value="status.key">
                 {{ status.label }}
               </option>
@@ -203,7 +203,7 @@ function toDateInput(value: string | null): string {
 
           <label class="field">
             <span>Ответственный</span>
-            <select v-model="form.idResponsible" class="field__control">
+            <select v-model="form.idResponsible" class="field__control app-select">
               <option value="">Не назначен</option>
               <option v-for="user in users" :key="user.id" :value="user.id">
                 {{ user.login || user.email || 'Пользователь' }}

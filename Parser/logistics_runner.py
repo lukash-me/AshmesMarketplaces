@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import random
 import re
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 try:
     from loguru import logger
@@ -38,7 +42,48 @@ from logistics_exporters import (
 )
 from logistics_manifest import LogisticsRunManifest
 from manifest import get_git_commit, utc_now_iso
-from wb_logistics_client import WbLogisticsClient
+from wb_logistics_client import LogisticsFetchResult, WbLogisticsClient
+
+
+class AdaptiveDelay:
+    def __init__(self, *, initial_ms: int, enabled: bool) -> None:
+        self.enabled = enabled
+        self.min_ms = max(0, int(initial_ms))
+        self.max_ms = max(self.min_ms, self.min_ms * 8, 2_000)
+        self.current_ms = max(0, int(initial_ms))
+        self.success_streak = 0
+        self.lock = threading.Lock()
+
+    def sleep(self) -> None:
+        with self.lock:
+            current_ms = self.current_ms
+        if current_ms <= 0:
+            return
+        jitter = random.uniform(0.75, 1.25)
+        time.sleep((current_ms / 1000.0) * jitter)
+
+    def record(self, result: LogisticsFetchResult) -> None:
+        if not self.enabled:
+            return
+        with self.lock:
+            if result.status == "failed" and result.is_transient:
+                self.current_ms = min(self.max_ms, max(self.current_ms * 2, self.min_ms + 250))
+                self.success_streak = 0
+                return
+            if result.status == "succeeded":
+                self.success_streak += 1
+                if self.success_streak >= 50 and self.current_ms > self.min_ms:
+                    self.current_ms = max(self.min_ms, int(self.current_ms * 0.8))
+                    self.success_streak = 0
+
+    def snapshot(self) -> dict[str, int | bool]:
+        with self.lock:
+            return {
+                "enabled": self.enabled,
+                "min_delay_ms": self.min_ms,
+                "current_delay_ms": self.current_ms,
+                "max_delay_ms": self.max_ms,
+            }
 
 
 def _make_run_id() -> str:
@@ -161,6 +206,117 @@ def _final_status(manifest: LogisticsRunManifest, *, dry_run: bool) -> str:
     return "succeeded"
 
 
+def _client_for_thread(
+    *,
+    client_factory: Callable[[], WbLogisticsClient] | None,
+    thread_local: threading.local,
+    timeout_sec: int,
+    retries: int,
+    delay_ms: int,
+    throttle: AdaptiveDelay,
+) -> WbLogisticsClient:
+    if not hasattr(thread_local, "client"):
+        thread_local.client = client_factory() if client_factory else WbLogisticsClient(
+            timeout_sec=timeout_sec,
+            retries=retries,
+            delay_ms=delay_ms,
+            delay_provider=throttle.sleep,
+        )
+    return thread_local.client
+
+
+def _fetch_product_with_retry_queue(
+    *,
+    product: LogisticsProductInput,
+    dest: str,
+    args: argparse.Namespace,
+    client_factory: Callable[[], WbLogisticsClient] | None,
+    thread_local: threading.local,
+    throttle: AdaptiveDelay,
+) -> tuple[LogisticsProductInput, str, LogisticsFetchResult, int]:
+    product_dest = dest or product.source_region_dest or ""
+    client = _client_for_thread(
+        client_factory=client_factory,
+        thread_local=thread_local,
+        timeout_sec=args.timeout_sec,
+        retries=args.retries,
+        delay_ms=args.delay_ms,
+        throttle=throttle,
+    )
+    result = client.fetch_product(wb_product_id=product.wb_product_id, dest=product_dest)
+    throttle.record(result)
+    total_attempts = result.attempts
+    total_retries = result.retries
+    retry_queue_attempts = 0
+    max_retry_queue_passes = max(0, int(getattr(args, "retry_queue_passes", 0) or 0))
+    while result.status == "failed" and result.is_transient and retry_queue_attempts < max_retry_queue_passes:
+        retry_queue_attempts += 1
+        result = client.fetch_product(wb_product_id=product.wb_product_id, dest=product_dest)
+        throttle.record(result)
+        total_attempts += result.attempts
+        total_retries += result.retries
+    result.attempts = total_attempts
+    result.retries = total_retries
+    return product, product_dest, result, retry_queue_attempts
+
+
+def _iter_fetch_results(
+    *,
+    products: list[LogisticsProductInput],
+    args: argparse.Namespace,
+    client_factory: Callable[[], WbLogisticsClient] | None,
+    throttle: AdaptiveDelay,
+) -> Any:
+    max_workers = max(1, int(getattr(args, "max_concurrent", 1) or 1))
+    if max_workers == 1:
+        thread_local = threading.local()
+        for product in products:
+            yield _fetch_product_with_retry_queue(
+                product=product,
+                dest=args.dest,
+                args=args,
+                client_factory=client_factory,
+                thread_local=thread_local,
+                throttle=throttle,
+            )
+        return
+
+    thread_local = threading.local()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        iterator = iter(products)
+        pending: set[concurrent.futures.Future] = set()
+        max_pending = max_workers * 2
+
+        def submit_next() -> bool:
+            try:
+                product = next(iterator)
+            except StopIteration:
+                return False
+            pending.add(executor.submit(
+                _fetch_product_with_retry_queue,
+                product=product,
+                dest=args.dest,
+                args=args,
+                client_factory=client_factory,
+                thread_local=thread_local,
+                throttle=throttle,
+            ))
+            return True
+
+        for _ in range(max_pending):
+            if not submit_next():
+                break
+
+        while pending:
+            done, pending = concurrent.futures.wait(
+                pending,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+            for future in done:
+                yield future.result()
+                submit_next()
+
+
 def run_logistics(
     *,
     args: argparse.Namespace,
@@ -242,20 +398,29 @@ def run_logistics(
         logger.remove(log_handler_id)
         return run_dir
 
-    client = client_factory() if client_factory else WbLogisticsClient(
-        timeout_sec=args.timeout_sec,
-        retries=args.retries,
-        delay_ms=args.delay_ms,
+    throttle = AdaptiveDelay(
+        initial_ms=args.delay_ms,
+        enabled=bool(getattr(args, "adaptive_delay", False)),
     )
+    manifest.requested_scope["max_concurrent"] = max(1, int(getattr(args, "max_concurrent", 1) or 1))
+    manifest.requested_scope["retry_queue_passes"] = max(0, int(getattr(args, "retry_queue_passes", 0) or 0))
+    manifest.requested_scope["checkpoint_interval"] = max(1, int(getattr(args, "checkpoint_interval", 25) or 25))
+    manifest.requested_scope["adaptive_delay"] = throttle.snapshot()
+    manifest.write()
 
-    for product in work_items:
-        dest = args.dest or product.source_region_dest or ""
+    checkpoint_interval = max(1, int(getattr(args, "checkpoint_interval", 25) or 25))
+    for product, dest, result, retry_queue_attempts in _iter_fetch_results(
+        products=work_items,
+        args=args,
+        client_factory=client_factory,
+        throttle=throttle,
+    ):
         params = build_card_detail_params(wb_product_id=product.wb_product_id, dest=dest)
         fingerprint = request_fingerprint(endpoint=WB_CARD_DETAIL_ENDPOINT, params=params)
         try:
-            result = client.fetch_product(wb_product_id=product.wb_product_id, dest=dest)
             manifest.add_counter("network_attempts", result.attempts)
             manifest.add_counter("network_retries", result.retries)
+            manifest.add_counter("retry_queue_attempts", retry_queue_attempts)
             if result.status != "succeeded" or result.payload is None:
                 manifest.add_counter("products_failed")
                 manifest.record_error(
@@ -305,7 +470,6 @@ def run_logistics(
                 manifest.add_counter("warehouse_rows_written")
 
             manifest.add_counter("products_succeeded")
-            manifest.write()
         except Exception as exception:
             manifest.add_counter("products_failed")
             manifest.record_error(
@@ -318,6 +482,19 @@ def run_logistics(
                 retry_count=0,
                 is_transient=False,
             )
+        finally:
+            processed = manifest.counters["products_succeeded"] + manifest.counters["products_failed"]
+            if processed <= 5 or processed % checkpoint_interval == 0 or processed == len(work_items):
+                manifest.requested_scope["adaptive_delay"] = throttle.snapshot()
+                manifest.write()
+                logger.info(
+                    "Logistics progress products={}/{} succeeded={} failed={} delay={}ms",
+                    processed,
+                    len(work_items),
+                    manifest.counters["products_succeeded"],
+                    manifest.counters["products_failed"],
+                    throttle.snapshot()["current_delay_ms"],
+                )
 
     manifest.finish(_final_status(manifest, dry_run=False))
     manifest.write()
@@ -337,6 +514,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delay-ms", type=_non_negative_int, default=500)
     parser.add_argument("--timeout-sec", type=_positive_int, default=10)
     parser.add_argument("--retries", type=_non_negative_int, default=2)
+    parser.add_argument("--max-concurrent", type=_positive_int, default=1)
+    parser.add_argument("--checkpoint-interval", type=_positive_int, default=25)
+    parser.add_argument("--retry-queue-passes", type=_non_negative_int, default=1)
+    parser.add_argument("--adaptive-delay", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--marketplace", default="wb", choices=["wb"])

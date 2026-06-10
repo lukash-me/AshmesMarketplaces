@@ -237,18 +237,18 @@ function ratingTone(value: number | null): string {
         </h3>
       </div>
       <div class="review-controls" aria-label="Настройки отзывов">
-        <label :class="{ 'review-controls__field--active': sort !== '-createdAtOnMp' }">
+        <label class="app-select-field" :class="{ 'review-controls__field--active': sort !== '-createdAtOnMp' }">
           <span>Сортировка</span>
-          <select :value="sort" @change="updateSort">
+          <select class="app-select" :value="sort" @change="updateSort">
             <option value="-createdAtOnMp">Сначала новые</option>
             <option value="createdAtOnMp">Сначала старые</option>
             <option value="-rating">С высокой оценкой</option>
             <option value="rating">С низкой оценкой</option>
           </select>
         </label>
-        <label :class="{ 'review-controls__field--active': ratingFilter !== '' }">
+        <label class="app-select-field" :class="{ 'review-controls__field--active': ratingFilter !== '' }">
           <span>Оценка</span>
-          <select :value="ratingFilter" @change="updateRatingFilter">
+          <select class="app-select" :value="ratingFilter" @change="updateRatingFilter">
             <option value="">Все оценки</option>
             <option value="5">5 звёзд</option>
             <option value="4">4 звезды</option>
@@ -439,22 +439,6 @@ function ratingTone(value: number | null): string {
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.review-controls select {
-  min-height: 2.125rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-control-raised);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-  font: inherit;
-}
-
-.review-controls select:focus {
-  outline: none;
-  border-color: var(--accent-primary-border);
-  box-shadow: var(--focus-ring);
 }
 
 .review-controls__field--active span {

@@ -20,6 +20,7 @@ def _default_counters() -> dict[str, int]:
         "error_rows_written": 0,
         "network_attempts": 0,
         "network_retries": 0,
+        "retry_queue_attempts": 0,
     }
 
 
@@ -152,6 +153,10 @@ class LogisticsRunManifest:
         self.finished_at_utc = utc_now_iso()
 
     def write(self) -> None:
+        requested = int(self.counters.get("products_requested", 0) or 0)
+        succeeded = int(self.counters.get("products_succeeded", 0) or 0)
+        failed = int(self.counters.get("products_failed", 0) or 0)
+        attempted = succeeded + failed
         self.manifest_path.write_text(
             json.dumps(
                 {
@@ -169,6 +174,14 @@ class LogisticsRunManifest:
                     "input_products_file": self.input_products_file,
                     **self.counters,
                     "requested_scope": self.requested_scope,
+                    "coverage": {
+                        "products_requested": requested,
+                        "products_attempted": attempted,
+                        "products_succeeded": succeeded,
+                        "products_failed": failed,
+                        "attempted_percent": round((attempted / requested) * 100, 2) if requested else 0,
+                        "succeeded_percent": round((succeeded / requested) * 100, 2) if requested else 0,
+                    },
                     "output_files": self.output_files,
                     "counters": self.counters,
                     "error_counts": self.error_counts,

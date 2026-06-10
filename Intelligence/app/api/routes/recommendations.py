@@ -11,6 +11,8 @@ from app.models.recommendations import (
     ProductAdviceJobRequest,
     ProductAdviceRequest,
     ProductAdviceResponse,
+    WorkspaceProductAnalysisRequest,
+    WorkspaceProductAnalysisResponse,
 )
 
 
@@ -23,6 +25,7 @@ SUPPORTED_ENDPOINTS = [
     "GET /api/v1/health",
     "GET /api/v1/intelligence/metadata",
     "POST /api/v1/recommendations/hot-products",
+    "POST /api/v1/recommendations/workspace-product-analysis",
     "POST /api/v1/recommendations/product-advice",
     "POST /api/v1/jobs/product-advice",
     "GET /api/v1/jobs/{jobId}",
@@ -38,6 +41,7 @@ async def metadata(request: Request) -> MetadataResponse:
         contract_version=settings.contract_version,
         supported_algorithms=[
             "rule_based_hot_products_v1",
+            "workspace_product_analysis_v1",
             "contract_only_product_advice",
         ],
         supported_endpoints=SUPPORTED_ENDPOINTS,
@@ -58,6 +62,15 @@ async def product_advice(payload: ProductAdviceRequest, request: Request) -> Pro
         product=payload.product,
         options=payload.options,
     )
+
+
+@router.post("/recommendations/workspace-product-analysis", response_model=WorkspaceProductAnalysisResponse)
+async def workspace_product_analysis(
+    payload: WorkspaceProductAnalysisRequest,
+    request: Request,
+) -> WorkspaceProductAnalysisResponse:
+    request.state.request_id = payload.request_id
+    return request.app.state.product_advice_service.calculate_workspace_product_analysis(payload)
 
 
 @router.post("/jobs/product-advice", response_model=JobStatusResponse)

@@ -7,6 +7,21 @@ public sealed record HotProductsListResponse(
     int Page,
     int PageSize,
     int TotalCount,
+    IReadOnlyList<HotProductRecommendationListItemDto> Items,
+    IReadOnlyList<HotProductsGroupDto> Groups);
+
+public sealed record HotProductsGroupDto(
+    string Key,
+    string Title,
+    string Description,
+    int TotalCount,
+    IReadOnlyList<HotProductRecommendationListItemDto> Items,
+    IReadOnlyList<HotProductsDuplicateClusterDto> Clusters);
+
+public sealed record HotProductsDuplicateClusterDto(
+    string Key,
+    string Title,
+    int TotalCount,
     IReadOnlyList<HotProductRecommendationListItemDto> Items);
 
 public sealed record HotProductsRunSummaryDto(
@@ -25,6 +40,7 @@ public sealed record HotProductRecommendationListItemDto(
     string? ThumbnailUrl,
     string? WbProductId,
     string? WbRootId,
+    Guid? ParserProductRowId,
     string? BrandName,
     string? SellerName,
     string? SourceCategory,

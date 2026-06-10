@@ -432,6 +432,10 @@ def run_reviews(
     config: ReviewsParserConfig,
     args: argparse.Namespace,
 ) -> Path:
+    if getattr(args, "max_concurrent", None) is not None:
+        config = replace(config, max_concurrent=args.max_concurrent)
+        config.validate()
+
     resume_manifest = ReviewRunManifest.load(args.resume_run_dir) if args.resume_run_dir else None
     source = _resolve_products_source(args, resume_manifest)
     if resume_manifest:
@@ -570,6 +574,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--products-jsonl", type=Path, help="Explicit products.jsonl input path.")
     parser.add_argument("--limit-products", type=int, help="Limit selected products before root dedupe.")
     parser.add_argument("--source-subcategory", help="Optional product source_subcategory filter.")
+    parser.add_argument("--max-concurrent", type=int, help="Override PARSER_REVIEWS_MAX_CONCURRENT for this run.")
     parser.add_argument("--resume-run-dir", type=Path, help="Existing WB review run directory to resume.")
     parser.add_argument("--smoke-only", action="store_true", help="Run input and endpoint smoke checks only.")
     parser.add_argument("--fail-fast", action="store_true", help="Stop after a terminal root failure.")

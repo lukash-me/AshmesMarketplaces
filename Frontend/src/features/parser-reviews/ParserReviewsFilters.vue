@@ -106,17 +106,17 @@ function apply() {
     <div class="filters__grid">
       <Input v-model="form.sourceWbRootId" label="Source WB root id" />
       <Input v-model="form.rating" label="Rating" type="number" />
-      <label class="select-field">
+      <label class="select-field app-select-field">
         <span>Observed reply</span>
-        <select v-model="form.hasObservedReply" class="select">
+        <select v-model="form.hasObservedReply" class="select app-select">
           <option value="">Any</option>
           <option value="true">Observed</option>
           <option value="false">Not observed</option>
         </select>
       </label>
-      <label class="select-field">
+      <label class="select-field app-select-field">
         <span>Capped root payload</span>
-        <select v-model="form.cappedRootPayload" class="select">
+        <select v-model="form.cappedRootPayload" class="select app-select">
           <option value="">Any</option>
           <option value="true">Capped</option>
           <option value="false">Not flagged</option>
@@ -173,15 +173,6 @@ function apply() {
   font-size: 0.72rem;
   font-weight: 680;
   text-transform: uppercase;
-}
-
-.select {
-  height: 2.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
 }
 
 .filters__chips {

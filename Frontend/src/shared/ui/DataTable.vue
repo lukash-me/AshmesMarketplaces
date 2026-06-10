@@ -126,7 +126,8 @@ function isRowInteractive(row: T): boolean {
 .table {
   min-width: 980px;
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.8125rem;
 }
 

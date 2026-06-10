@@ -4,9 +4,11 @@ import { useRoute } from 'vue-router';
 import {
   BarChart3,
   Boxes,
+  BookmarkCheck,
   ChevronUp,
   CreditCard,
   LayoutDashboard,
+  Lightbulb,
   Moon,
   Radar,
   Settings,
@@ -51,7 +53,9 @@ const ordersSectionKeys = ordersSections.map((section) => section.key);
 
 const primaryNavItems = [
   { to: '/overview', label: 'Обзор', icon: LayoutDashboard },
-  { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 }
+  { to: '/workspace/market-products', label: 'Наблюдаемые товары', icon: BookmarkCheck },
+  { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 },
+  { to: '/market/opportunities', label: 'Перспективные товары', icon: Lightbulb }
 ];
 
 const secondaryNavItems = [

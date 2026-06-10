@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -34,11 +34,13 @@ class WbLogisticsClient:
         timeout_sec: int = 10,
         retries: int = 2,
         delay_ms: int = 500,
+        delay_provider: Callable[[], None] | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.timeout_sec = timeout_sec
         self.retries = retries
         self.delay_ms = delay_ms
+        self.delay_provider = delay_provider
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
@@ -129,6 +131,9 @@ class WbLogisticsClient:
         )
 
     def _delay(self) -> None:
+        if self.delay_provider is not None:
+            self.delay_provider()
+            return
         if self.delay_ms <= 0:
             return
         jitter = random.uniform(0.75, 1.25)

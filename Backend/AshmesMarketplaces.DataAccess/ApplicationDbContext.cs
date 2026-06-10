@@ -43,6 +43,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();
+    public DbSet<WorkspaceMarketProduct> WorkspaceMarketProducts => Set<WorkspaceMarketProduct>();
+    public DbSet<WorkspaceMarketProductAnalysisRun> WorkspaceMarketProductAnalysisRuns => Set<WorkspaceMarketProductAnalysisRun>();
+    public DbSet<WorkspaceMarketProductAnalysis> WorkspaceMarketProductAnalyses => Set<WorkspaceMarketProductAnalysis>();
     public DbSet<Expense> Expenses => Set<Expense>();
     public DbSet<ExpenseCategory> ExpenseCategories => Set<ExpenseCategory>();
     public DbSet<Campaign> Campaigns => Set<Campaign>();

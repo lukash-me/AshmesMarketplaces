@@ -184,20 +184,48 @@ class RecommendationContractTests(unittest.TestCase):
 
     def test_factor_labels_are_seller_friendly_and_reason_is_conservative(self) -> None:
         payload = self.post_hot_products(fixture_products(24)).json()
-        banned = ["parser", "staged", "root", "payload", "model", "доказывает", "гарантирует", "будет продаваться"]
+        banned = [
+            "parser",
+            "staged",
+            "root",
+            "payload",
+            "model",
+            "доказывает",
+            "гарантирует",
+            "будет продаваться",
+            "спрос",
+            "прибыль",
+            "прогноз",
+        ]
+        allowed_codes = {
+            "high_position_weak_card",
+            "high_position_weak_reviews",
+            "bad_recent_reviews",
+            "expensive_without_advantage",
+            "fast_position_growth",
+            "top_low_stock",
+            "duplicate_cards",
+            "repeated_review_complaint",
+            "weak_visible_description",
+            "weak_description",
+            "missing_key_specs",
+            "low_review_count_top_position",
+            "good_reviews_weak_visibility",
+        }
 
         for recommendation in payload["recommendations"]:
             text = f"{recommendation['title']} {recommendation['reason']}".lower()
-            self.assertIn("выглядит", text)
-            self.assertIn("требует", text)
+            self.assertIn("подборка", text)
+            self.assertIn("проверьте", text)
             for word in banned:
                 self.assertNotIn(word, text)
 
-            labels = {factor["label"] for factor in recommendation["factors"]}
-            self.assertEqual(labels, {"Позиция", "Рейтинг", "Отзывы", "Цена", "Остаток", "Полнота данных"})
+            codes = {factor["code"] for factor in recommendation["factors"]}
+            self.assertTrue(codes)
+            self.assertTrue(codes.issubset(allowed_codes))
             for factor in recommendation["factors"]:
                 factor_text = f"{factor['label']} {factor['value']}".lower()
-                for word in banned[:5]:
+                for word in banned:
                     self.assertNotIn(word, factor_text)
 
     def test_unidentified_products_are_not_recommended(self) -> None:
@@ -215,13 +243,11 @@ class RecommendationContractTests(unittest.TestCase):
 
     def test_capped_quantity_does_not_create_high_stock_claim(self) -> None:
         payload = self.post_hot_products(fixture_products(24)).json()
-        first = next(item for item in payload["recommendations"] if item["wbProductId"] == "202825367")
-        stock_factor = next(factor for factor in first["factors"] if factor["code"] == "stock")
+        serialized = str(payload).lower()
 
-        self.assertEqual(stock_factor["direction"], "neutral")
-        self.assertIn("ограничено", stock_factor["value"])
-        self.assertNotIn("высок", str(stock_factor["value"]).lower())
-        self.assertNotIn("high", str(stock_factor["value"]).lower())
+        self.assertNotIn("высокий остаток", serialized)
+        self.assertNotIn("high stock", serialized)
+        self.assertNotIn("stock advantage", serialized)
 
     def test_product_advice_returns_request_id_and_no_debug_by_default(self) -> None:
         response = self.client.post(
@@ -261,6 +287,72 @@ class RecommendationContractTests(unittest.TestCase):
         self.assertEqual(payload["requestId"], "req-advice-2")
         self.assertEqual(payload["status"], "not_enough_data")
         self.assertEqual(payload["advice"]["recommendations"], [])
+
+    def test_workspace_product_analysis_returns_signals_and_similar_products(self) -> None:
+        product = product_payload(
+            0,
+            position=8,
+            rating=4.2,
+            feedbackCount=12,
+            totalQuantity=3,
+            price=1900,
+            walletPrice=1800,
+        )
+        candidates = fixture_products(8)
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-1",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [
+                        {"observedAtUtc": now_iso(), "value": 1800},
+                        {"observedAtUtc": now_iso(), "value": 1600},
+                    ],
+                    "positionObservations": [
+                        {"observedAtUtc": now_iso(), "value": 8},
+                        {"observedAtUtc": now_iso(), "value": 14},
+                    ],
+                    "stockObservations": [
+                        {"observedAtUtc": now_iso(), "value": 3},
+                        {"observedAtUtc": now_iso(), "value": 9},
+                    ],
+                    "feedbackObservations": [
+                        {"observedAtUtc": now_iso(), "value": 12},
+                        {"observedAtUtc": now_iso(), "value": 10},
+                    ],
+                },
+                "candidates": candidates,
+                "options": {"maxSimilarProducts": 3},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["requestId"], "req-workspace-analysis-1")
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["algorithm"], "workspace_product_analysis_v1")
+        self.assertGreater(len(payload["signals"]), 0)
+        self.assertGreater(len(payload["similarProducts"]), 0)
+        self.assertGreater(len(payload["similarProductGroups"]), 0)
+        first_group = payload["similarProductGroups"][0]
+        self.assertIn("key", first_group)
+        self.assertIn("title", first_group)
+        self.assertIn("items", first_group)
+        self.assertGreater(len(first_group["items"]), 0)
+        self.assertIn("productKey", first_group["items"][0])
+        self.assertIn("facts", first_group["items"][0])
+        group_titles = {group["key"]: group["title"] for group in payload["similarProductGroups"]}
+        self.assertEqual(group_titles.get("price_disadvantage"), "Дешевле")
+        self.assertEqual(group_titles.get("position_disadvantage"), "Выше в выдаче")
+        self.assertNotIn("Цена хуже", group_titles.values())
+        self.assertNotIn("Позиция хуже", group_titles.values())
+
+        text = str(payload).lower()
+        for word in ("demand", "profit", "sales", "forecast", "risk"):
+            self.assertNotIn(word, text)
 
     def test_product_advice_job_generates_job_id_and_request_id_when_missing(self) -> None:
         response = self.client.post(

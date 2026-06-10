@@ -5,9 +5,11 @@ import AuthLayout from '@/layouts/AuthLayout.vue';
 import { useAuthStore } from '@/features/auth/auth.store';
 import LoginPage from '@/features/auth/LoginPage.vue';
 import MarketIntelligencePage from '@/features/market-intelligence/MarketIntelligencePage.vue';
+import MarketOpportunitiesPage from '@/features/market-opportunities/MarketOpportunitiesPage.vue';
 import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vue';
 import ParserReviewsPage from '@/features/parser-reviews/ParserReviewsPage.vue';
 import ProductsPage from '@/features/products/ProductsPage.vue';
+import WorkspaceMarketProductsPage from '@/features/workspace-market-products/WorkspaceMarketProductsPage.vue';
 import AccessSettingsPage from '@/pages/AccessSettingsPage.vue';
 import ExpensesPage from '@/pages/ExpensesPage.vue';
 import LogisticsPage from '@/pages/LogisticsPage.vue';
@@ -36,7 +38,9 @@ export const router = createRouter({
       children: [
         { path: '', redirect: '/overview' },
         { path: 'overview', name: 'overview', component: OverviewPage },
+        { path: 'workspace/market-products', name: 'workspace-market-products', component: WorkspaceMarketProductsPage },
         { path: 'market/products', name: 'market-products', component: ParserProductsPage },
+        { path: 'market/opportunities', name: 'market-opportunities', component: MarketOpportunitiesPage },
         { path: 'market/intelligence', name: 'market-intelligence', component: MarketIntelligencePage },
         { path: 'products', name: 'products', component: ProductsPage },
         { path: 'parser/products', redirect: { name: 'market-products' } },

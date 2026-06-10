@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, CircleHelp, ExternalLink, X } from 'lucide-vue-next';
+import { Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, CircleHelp, ExternalLink, X } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { getProblemMessage } from '@/shared/api/problemDetails';
+import { addWorkspaceMarketProduct, getWorkspaceMarketProducts } from '@/features/workspace-market-products/workspaceMarketProducts.api';
+import { useActiveWorkspace } from '@/features/workspace-market-products/useActiveWorkspace';
 import Badge from '@/shared/ui/Badge.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 
@@ -25,13 +27,18 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const workspace = useActiveWorkspace();
 const detail = ref<ParserProductDetail | null>(null);
 const loading = ref(false);
 const error = ref('');
 const activeImagePreview = ref<string | null>(null);
 const activeHelpTooltip = ref<{ text: string; style: Record<string, string> } | null>(null);
 const helpTooltipBubble = ref<HTMLElement | null>(null);
+const workspaceLoading = ref(false);
+const workspaceAdded = ref(false);
+const workspaceError = ref('');
 let loadVersion = 0;
+let workspaceVersion = 0;
 let lastTooltipTarget: HTMLElement | null = null;
 
 const currentPriceHelp = 'Текущая цена карточки.';
@@ -59,10 +66,24 @@ watch(
       detail.value = null;
       error.value = '';
       activeImagePreview.value = null;
+      workspaceAdded.value = false;
+      workspaceError.value = '';
       return;
     }
 
     await loadDetail(id);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [props.open, props.product?.id, workspace.activeWorkspaceId.value] as const,
+  ([open, id]) => {
+    if (!open || !id) {
+      return;
+    }
+
+    void checkWorkspaceState(id);
   },
   { immediate: true }
 );
@@ -103,6 +124,74 @@ async function loadDetail(id: string) {
 
 function close() {
   emit('close');
+}
+
+async function checkWorkspaceState(parserProductRowId: string) {
+  const workspaceId = workspace.activeWorkspaceId.value;
+  const version = ++workspaceVersion;
+
+  workspaceError.value = '';
+  workspaceAdded.value = false;
+
+  if (!workspaceId) {
+    return;
+  }
+
+  workspaceLoading.value = true;
+
+  try {
+    const response = await getWorkspaceMarketProducts(workspaceId, {
+      page: 1,
+      pageSize: 1,
+      parserProductRowId
+    });
+
+    if (version === workspaceVersion) {
+      workspaceAdded.value = response.totalCount > 0;
+    }
+  } catch {
+    if (version === workspaceVersion) {
+      workspaceError.value = 'Не удалось проверить рабочую область.';
+      workspaceAdded.value = false;
+    }
+  } finally {
+    if (version === workspaceVersion) {
+      workspaceLoading.value = false;
+    }
+  }
+}
+
+async function addToWorkspace() {
+  const parserProductRowId = displayProduct.value?.id;
+  const workspaceId = workspace.activeWorkspaceId.value;
+
+  if (!parserProductRowId || !workspaceId || workspaceAdded.value || workspaceLoading.value) {
+    return;
+  }
+
+  const version = ++workspaceVersion;
+  workspaceLoading.value = true;
+  workspaceError.value = '';
+
+  try {
+    await addWorkspaceMarketProduct(workspaceId, {
+      parserProductRowId,
+      tagKey: 'competitor',
+      note: null
+    });
+
+    if (version === workspaceVersion) {
+      workspaceAdded.value = true;
+    }
+  } catch {
+    if (version === workspaceVersion) {
+      workspaceError.value = 'Не удалось добавить товар в наблюдаемые.';
+    }
+  } finally {
+    if (version === workspaceVersion) {
+      workspaceLoading.value = false;
+    }
+  }
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -329,9 +418,23 @@ function positionLabel(position: ParserProductPosition): string {
             <h2 id="market-product-title">{{ displayProduct.name }}</h2>
             <p>WB {{ displayProduct.wbProductId }}</p>
           </div>
-          <button class="app-icon-button" type="button" aria-label="Закрыть карточку товара" @click="close">
-            <X :size="18" />
-          </button>
+          <div class="drawer__header-actions">
+            <button
+              v-if="workspace.activeWorkspaceId.value"
+              class="app-icon-button drawer__observe-button"
+              :class="{ 'drawer__observe-button--active': workspaceAdded }"
+              type="button"
+              :disabled="workspaceLoading"
+              :aria-label="workspaceAdded ? 'В наблюдаемых' : 'Добавить в наблюдаемые'"
+              :title="workspaceError || (workspaceAdded ? 'В наблюдаемых' : 'Добавить в наблюдаемые')"
+              @click="addToWorkspace"
+            >
+              <component :is="workspaceAdded ? BookmarkCheck : Bookmark" :size="18" />
+            </button>
+            <button class="app-icon-button" type="button" aria-label="Закрыть карточку товара" @click="close">
+              <X :size="18" />
+            </button>
+          </div>
         </header>
 
         <div v-if="displayProduct" class="drawer__body">
@@ -650,6 +753,35 @@ function positionLabel(position: ParserProductPosition): string {
   align-content: start;
   overflow-y: auto;
   padding: var(--space-3);
+}
+
+.drawer__header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.drawer__observe-button {
+  color: var(--color-text-muted);
+}
+
+.drawer__observe-button--active {
+  border-color: var(--accent-primary-border);
+  background: var(--button-primary-bg);
+  color: var(--text-on-fire);
+  box-shadow: 0 0 0 1px rgb(127 29 29 / 0.12);
+}
+
+.drawer__observe-button:hover:not(:disabled),
+.drawer__observe-button:focus-visible {
+  border-color: var(--accent-primary-hover-border);
+  color: var(--accent-ember-text-strong);
+}
+
+.drawer__observe-button--active:hover:not(:disabled),
+.drawer__observe-button--active:focus-visible {
+  background: var(--button-primary-bg-hover);
+  color: var(--text-on-fire);
 }
 
 .overview,

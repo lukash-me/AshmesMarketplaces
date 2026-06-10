@@ -1,16 +1,63 @@
 export interface HotProductsListParams {
   sourceCategory?: string;
   sourceSubcategory?: string;
+  groupKey?: string;
   wbProductId?: string;
   wbRootId?: string;
   page?: number;
   pageSize?: number;
 }
 
+export interface RecalculateHotProductsRequest {
+  sourceCategory?: string;
+  sourceSubcategory?: string;
+  productParserRunId?: string;
+  rankParserRunId?: string;
+  maxProducts?: number;
+  forceRecalculate?: boolean;
+  maxRecommendations?: number;
+  minConfidence?: number;
+  minProductsForScoring?: number;
+}
+
+export interface RecalculateHotProductsResponse {
+  runId: string;
+  status: string;
+  algorithm: string;
+  algorithmVersion: string;
+  modelVersion: string;
+  inputSnapshotHash: string;
+  productParserRunId: string | null;
+  rankParserRunId: string | null;
+  productCountSent: number;
+  recommendationsCount: number;
+  warningCount: number;
+  validUntilUtc: string | null;
+  createdAtUtc: string;
+  warnings: string[];
+}
+
 export interface HotProductsListResponse {
   run: HotProductsRunSummary | null;
   page: number;
   pageSize: number;
+  totalCount: number;
+  items: HotProductRecommendationItem[];
+  groups: HotProductsGroup[];
+}
+
+export interface HotProductsGroup {
+  key: string;
+  title: string;
+  description: string;
+  totalCount: number;
+  items: HotProductRecommendationItem[];
+  clusters: HotProductsDuplicateCluster[];
+}
+
+export interface HotProductsDuplicateCluster {
+  key: string;
+  title: string;
   totalCount: number;
   items: HotProductRecommendationItem[];
 }
@@ -32,6 +79,7 @@ export interface HotProductRecommendationItem {
   thumbnailUrl: string | null;
   wbProductId: string | null;
   wbRootId: string | null;
+  parserProductRowId: string | null;
   brandName: string | null;
   sellerName: string | null;
   sourceCategory: string | null;

@@ -5,6 +5,7 @@ public enum ServiceErrorType
     BadRequest,
     NotFound,
     Conflict,
+    Forbidden,
     Unauthorized,
     Unavailable
 }

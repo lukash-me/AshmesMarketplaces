@@ -19,9 +19,16 @@ import market_refresh_runner as runner  # noqa: E402
 
 
 class FakeExecutor:
-    def __init__(self, *, output_base_dir: Path, failures: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        output_base_dir: Path,
+        failures: set[str] | None = None,
+        partials: set[str] | None = None,
+    ) -> None:
         self.output_base_dir = output_base_dir
         self.failures = failures or set()
+        self.partials = partials or set()
         self.calls: list[list[str]] = []
         self.counters = {"rank": 0, "products": 0, "logistics": 0, "reviews": 0}
 
@@ -42,12 +49,13 @@ class FakeExecutor:
 
         run_dir = self.output_base_dir / "runs" / f"wb_{step}_{self.counters[step]}"
         run_dir.mkdir(parents=True, exist_ok=True)
+        status = "partial" if step in self.partials else "succeeded"
         (run_dir / "manifest.json").write_text(
             json.dumps(
                 {
                     "parser_run_id": run_dir.name,
                     "run_kind": "wb_search_rank" if step == "rank" else None,
-                    "status": "succeeded",
+                    "status": status,
                     "row_counts": {"rank_rows_written": 100} if step == "rank" else {"unique_rows": 10},
                     "counters": (
                         {"reviews_written": 1}
@@ -62,7 +70,15 @@ class FakeExecutor:
             encoding="utf-8",
         )
         if step == "products":
-            (run_dir / "products.jsonl").write_text("{}", encoding="utf-8")
+            product_rows = [
+                {"wb_product_id": "1001", "wb_root_id": "5001", "marketplace": "wildberries", "source_subcategory": "Storage"},
+                {"wb_product_id": "1002", "wb_root_id": "5002", "marketplace": "wildberries", "source_subcategory": "one"},
+                {"wb_product_id": "1003", "wb_root_id": "5003", "marketplace": "wildberries", "source_subcategory": "two"},
+            ]
+            (run_dir / "products.jsonl").write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in product_rows),
+                encoding="utf-8",
+            )
 
         marker = {
             "rank": "Rank run directory:",
@@ -175,7 +191,7 @@ class MarketRefreshRunnerTests(unittest.TestCase):
                     "reviews": {
                         "config": "Parser/presets/home_goods_demo.env",
                         "limit_products": 10,
-                        "source_subcategories": review_subcategories or ["Органайзеры для хранения вещей"],
+                        "source_subcategories": review_subcategories or ["Storage"],
                         "smoke_only": True,
                     },
                 }
@@ -238,6 +254,33 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(statuses["reviews"], "skipped")
         self.assertEqual(manifest["status"], "partial")
 
+    def test_product_partial_with_usable_rows_continues_logistics_reviews_and_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir, partials={"products"})
+            staging = FakeStagingExecutor()
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
+        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "logistics", "reviews"])
+        self.assertEqual(statuses["products"], "partial")
+        self.assertEqual(statuses["logistics"], "succeeded")
+        self.assertEqual(statuses["reviews"], "succeeded")
+        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "products", "logistics", "reviews"])
+        self.assertEqual(manifest["status"], "partial")
+        self.assertEqual(manifest["staging"]["status"], "succeeded")
+
     def test_rank_failure_does_not_block_products_logistics_and_reviews(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
@@ -254,7 +297,7 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(statuses["reviews"], "succeeded")
         self.assertEqual(manifest["status"], "partial")
 
-    def test_logistics_failure_blocks_reviews(self) -> None:
+    def test_logistics_failure_does_not_block_reviews(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
             config = self._config(temp_dir)
@@ -264,10 +307,10 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
 
         statuses = {step["step_name"]: step["status"] for step in manifest["steps"]}
-        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "logistics"])
+        self.assertEqual([fake._step_for(command) for command in fake.calls], ["rank", "products", "logistics", "reviews"])
         self.assertEqual(statuses["products"], "succeeded")
         self.assertEqual(statuses["logistics"], "failed")
-        self.assertEqual(statuses["reviews"], "skipped")
+        self.assertEqual(statuses["reviews"], "succeeded")
         self.assertEqual(manifest["status"], "partial")
 
     def test_skip_logistics_still_allows_reviews(self) -> None:

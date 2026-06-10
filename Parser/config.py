@@ -249,8 +249,8 @@ class ReviewsParserConfig:
         if not self.endpoint_base.strip():
             raise ValueError("PARSER_REVIEWS_ENDPOINT_BASE is required.")
 
-        if self.max_concurrent < 3 or self.max_concurrent > 5:
-            raise ValueError("PARSER_REVIEWS_MAX_CONCURRENT must be between 3 and 5.")
+        if self.max_concurrent < 1 or self.max_concurrent > 12:
+            raise ValueError("PARSER_REVIEWS_MAX_CONCURRENT must be between 1 and 12.")
 
         if self.timeout_seconds < 1:
             raise ValueError("PARSER_REVIEWS_TIMEOUT_SECONDS must be positive.")

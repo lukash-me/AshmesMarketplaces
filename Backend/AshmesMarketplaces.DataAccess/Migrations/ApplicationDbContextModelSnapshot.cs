@@ -3218,6 +3218,348 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.ToTable("Workspaces", (string)null);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProduct", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BrandName")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("brand_name");
+
+                    b.Property<DateTime>("DateCreate")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("date_create");
+
+                    b.Property<DateTime>("DateUpdate")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("date_update");
+
+                    b.Property<int?>("FeedbackCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("feedback_count");
+
+                    b.Property<Guid>("IdCreatedByUser")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_created_by_user");
+
+                    b.Property<Guid>("IdWorkspace")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_workspace");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("name");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("note");
+
+                    b.Property<Guid>("ParserProductRowId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parser_product_row_id");
+
+                    b.Property<int?>("PositionAbsolute")
+                        .HasColumnType("integer")
+                        .HasColumnName("position_absolute");
+
+                    b.Property<decimal?>("PriceDiscounted")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_discounted");
+
+                    b.Property<decimal?>("PriceRegular")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_regular");
+
+                    b.Property<decimal?>("PriceWbWallet")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_wb_wallet");
+
+                    b.Property<decimal?>("ReviewRating")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("review_rating");
+
+                    b.Property<string>("SellerName")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("seller_name");
+
+                    b.Property<string>("SourceCategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceQuery")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_query");
+
+                    b.Property<string>("SourceRegionDest")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("source_region_dest");
+
+                    b.Property<string>("SourceRegionDestKey")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("source_region_dest_key");
+
+                    b.Property<string>("SourceSubcategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<string>("SourceSubcategoryKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory_key");
+
+                    b.Property<string>("TagKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("tag_key");
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("thumbnail_url");
+
+                    b.Property<int?>("TotalQuantity")
+                        .HasColumnType("integer")
+                        .HasColumnName("total_quantity");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DateUpdate");
+
+                    b.HasIndex("IdCreatedByUser");
+
+                    b.HasIndex("IdWorkspace");
+
+                    b.HasIndex("ParserProductRowId");
+
+                    b.HasIndex("SourceSubcategory");
+
+                    b.HasIndex("TagKey");
+
+                    b.HasIndex("WbProductId");
+
+                    b.HasIndex("IdWorkspace", "WbProductId", "SourceSubcategoryKey", "SourceRegionDestKey")
+                        .IsUnique();
+
+                    b.ToTable("WorkspaceMarketProducts", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProductAnalysis", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("ComputedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("computed_at_utc");
+
+                    b.Property<int?>("CurrentFeedbackCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("current_feedback_count");
+
+                    b.Property<int?>("CurrentPosition")
+                        .HasColumnType("integer")
+                        .HasColumnName("current_position");
+
+                    b.Property<decimal?>("CurrentPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("current_price");
+
+                    b.Property<decimal?>("CurrentReviewRating")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("current_review_rating");
+
+                    b.Property<int?>("CurrentStock")
+                        .HasColumnType("integer")
+                        .HasColumnName("current_stock");
+
+                    b.Property<int?>("FeedbackDelta")
+                        .HasColumnType("integer")
+                        .HasColumnName("feedback_delta");
+
+                    b.Property<Guid>("IdAnalysisRun")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_analysis_run");
+
+                    b.Property<Guid>("IdWorkspaceMarketProduct")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_workspace_market_product");
+
+                    b.Property<DateTime?>("LatestObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("latest_observed_at_utc");
+
+                    b.Property<int?>("PositionDelta")
+                        .HasColumnType("integer")
+                        .HasColumnName("position_delta");
+
+                    b.Property<int?>("PreviousFeedbackCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("previous_feedback_count");
+
+                    b.Property<int?>("PreviousPosition")
+                        .HasColumnType("integer")
+                        .HasColumnName("previous_position");
+
+                    b.Property<decimal?>("PreviousPrice")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("previous_price");
+
+                    b.Property<decimal?>("PreviousReviewRating")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("previous_review_rating");
+
+                    b.Property<int?>("PreviousStock")
+                        .HasColumnType("integer")
+                        .HasColumnName("previous_stock");
+
+                    b.Property<decimal?>("PriceDelta")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price_delta");
+
+                    b.Property<decimal?>("ReviewRatingDelta")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("numeric(5,2)")
+                        .HasColumnName("review_rating_delta");
+
+                    b.Property<JsonDocument>("Signals")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("signals");
+
+                    b.Property<JsonDocument>("SimilarProductGroups")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("similar_product_groups");
+
+                    b.Property<JsonDocument>("SimilarProducts")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("similar_products");
+
+                    b.Property<int?>("StockDelta")
+                        .HasColumnType("integer")
+                        .HasColumnName("stock_delta");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdAnalysisRun");
+
+                    b.HasIndex("IdWorkspaceMarketProduct");
+
+                    b.HasIndex("IdAnalysisRun", "IdWorkspaceMarketProduct")
+                        .IsUnique();
+
+                    b.ToTable("WorkspaceMarketProductAnalyses", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProductAnalysisRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Algorithm")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("algorithm");
+
+                    b.Property<string>("AlgorithmVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("algorithm_version");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text")
+                        .HasColumnName("error_message");
+
+                    b.Property<Guid>("IdWorkspace")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_workspace");
+
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("model_version");
+
+                    b.Property<int>("ProductCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("product_count");
+
+                    b.Property<int>("SignalCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("signal_count");
+
+                    b.Property<int>("SimilarProductCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("similar_product_count");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("status");
+
+                    b.Property<JsonDocument>("Warnings")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("warnings");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdWorkspace", "CompletedAtUtc");
+
+                    b.HasIndex("IdWorkspace", "Status");
+
+                    b.ToTable("WorkspaceMarketProductAnalysisRuns", (string)null);
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Access.Permission", b =>
                 {
                     b.HasOne("AshmesMarketplaces.Domain.Entities.Access.PermissionCategory", null)
@@ -3709,6 +4051,51 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .WithMany()
                         .HasForeignKey("IdBrand")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProduct", b =>
+                {
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("IdCreatedByUser")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Workspaces.Workspace", null)
+                        .WithMany()
+                        .HasForeignKey("IdWorkspace")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductRow", null)
+                        .WithMany()
+                        .HasForeignKey("ParserProductRowId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProductAnalysis", b =>
+                {
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProductAnalysisRun", null)
+                        .WithMany()
+                        .HasForeignKey("IdAnalysisRun")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProduct", null)
+                        .WithMany()
+                        .HasForeignKey("IdWorkspaceMarketProduct")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Workspaces.WorkspaceMarketProductAnalysisRun", b =>
+                {
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Workspaces.Workspace", null)
+                        .WithMany()
+                        .HasForeignKey("IdWorkspace")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Product.Product", b =>

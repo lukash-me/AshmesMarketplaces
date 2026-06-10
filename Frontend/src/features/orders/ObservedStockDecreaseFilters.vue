@@ -132,7 +132,7 @@ function normalizeMinDecrease(value: string): string {
 </script>
 
 <template>
-  <form class="filters app-surface" @submit.prevent="apply">
+  <form class="filters app-surface app-operator-panel" @submit.prevent="apply">
     <div class="filters__top">
       <Input
         v-model="form.search"
@@ -142,9 +142,9 @@ function normalizeMinDecrease(value: string): string {
         placeholder="Название, WB id, бренд или продавец"
       />
 
-      <label class="select-field">
+      <label class="select-field app-select-field">
         <span>Сортировка</span>
-        <select v-model="form.sort" @change="applySort">
+        <select v-model="form.sort" class="app-select" @change="applySort">
           <option v-for="option in sortOptions" :key="option.value" :value="option.value">
             {{ option.label }}
           </option>
@@ -222,10 +222,8 @@ function normalizeMinDecrease(value: string): string {
   z-index: 3;
   display: grid;
   gap: var(--space-3);
-  border-color: rgb(249 115 22 / 0.18);
-  background:
-    linear-gradient(90deg, rgb(249 115 22 / 0.035), transparent 42%),
-    var(--surface-panel);
+  border-color: var(--operator-border-muted);
+  background: var(--operator-panel-bg);
   padding: var(--space-3);
 }
 
@@ -259,27 +257,8 @@ function normalizeMinDecrease(value: string): string {
   text-transform: uppercase;
 }
 
-.select-field select {
-  height: 2.25rem;
-  width: 100%;
-  border: 1px solid var(--accent-ember-border);
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
-    var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-  outline: none;
-}
-
-.select-field select:focus {
-  border-color: var(--accent-primary-hover-border);
-  background: var(--surface-control-focus);
-  box-shadow: var(--focus-ring);
-}
-
 .filter-control--active :deep(.field__control) {
-  border-color: var(--accent-ember-border);
+  border-color: var(--accent-primary-border);
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
     var(--surface-control-focus);
@@ -301,7 +280,7 @@ function normalizeMinDecrease(value: string): string {
   max-width: 100%;
   align-items: center;
   gap: var(--space-1);
-  border: 1px solid rgb(249 115 22 / 0.22);
+  border: 1px solid var(--accent-primary-border);
   border-radius: var(--radius-sm);
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.07), transparent),
@@ -312,7 +291,7 @@ function normalizeMinDecrease(value: string): string {
 }
 
 .filters__chip--sort {
-  border-color: var(--accent-ember-border);
+  border-color: var(--accent-primary-border);
   color: var(--accent-ember-text);
 }
 

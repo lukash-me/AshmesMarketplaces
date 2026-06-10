@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, type ComponentPublicInstance } from 'vue';
 
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
+
 import MarketProductImage from './MarketProductImage.vue';
 import type {
   HotProductRecommendationFactor,
@@ -1232,16 +1234,9 @@ onBeforeUnmount(() => {
     <header class="hot-products__header">
       <div class="hot-products__heading">
         <div class="hot-products__title-row">
-          <h2 id="hot-products-title">Перспективные товары</h2>
-          <span class="hot-products__badge">Рекомендуем обратить внимание</span>
-        </div>
-        <p>
-          <span>Товары, которые стоит изучить в первую очередь.</span>
-          <span>
-            Оценка учитывает рыночные признаки, но перед запуском всё равно проверьте маржинальность, поставщика и
-            конкуренцию.
-          </span>
-        </p>
+            <h2 id="hot-products-title">Перспективные товары</h2>
+            <HelpTooltip text="Товары, которые стоит изучить в первую очередь. Оценка учитывает рыночные признаки, но перед запуском всё равно проверьте маржинальность, поставщика и конкуренцию." />
+          </div>
       </div>
     </header>
 
@@ -1350,7 +1345,7 @@ onBeforeUnmount(() => {
               </div>
 
               <button
-                class="hot-card__why-link"
+                class="hot-card__why-link app-operator-link"
                 type="button"
                 :aria-expanded="expandedId === item.id"
                 @click.stop="toggleExplanation(item)"
@@ -1483,17 +1478,6 @@ onBeforeUnmount(() => {
   font-size: clamp(1.15rem, 1.55vw, 1.5rem);
   font-weight: 860;
   letter-spacing: 0;
-}
-
-.hot-products__badge {
-  border: 1px solid rgb(249 115 22 / 0.34);
-  border-radius: var(--radius-sm);
-  background: rgb(249 115 22 / 0.1);
-  color: var(--accent-ember-text-strong);
-  padding: 0.28rem 0.48rem;
-  font-size: 0.74rem;
-  font-weight: 760;
-  line-height: 1;
 }
 
 .hot-products__heading p {
@@ -2022,10 +2006,10 @@ onBeforeUnmount(() => {
   max-width: 100%;
   border: 0;
   background: transparent;
-  color: rgb(255 167 89);
+  color: var(--operator-link);
   cursor: pointer;
   font: inherit;
-  font-size: 0.86rem;
+  font-size: var(--operator-body-size);
   font-weight: 820;
   line-height: 1.2;
   padding: 0.04rem 0;
@@ -2035,7 +2019,7 @@ onBeforeUnmount(() => {
 
 .hot-card__why-link:hover,
 .hot-card__why-link:focus-visible {
-  color: rgb(255 214 170);
+  color: var(--operator-link-hover);
   text-decoration: underline;
   text-underline-offset: 0.18rem;
   outline: none;
@@ -2178,6 +2162,97 @@ onBeforeUnmount(() => {
 .hot-card__calm-note {
   border-left: 2px solid var(--state-warning-border);
   padding-left: var(--space-2);
+}
+
+:global([data-theme='ash'] .hot-products__showcase) {
+  padding-top: var(--space-3);
+}
+
+:global([data-theme='ash'] .hot-card) {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 62%),
+    var(--background-card-soft);
+  box-shadow: var(--shadow-panel);
+}
+
+:global([data-theme='ash'] .hot-card::after) {
+  border-color: color-mix(in srgb, var(--accent-ember-border) 72%, transparent);
+  background: linear-gradient(90deg, var(--accent-ember-soft), transparent 5.5rem);
+  opacity: 0.86;
+}
+
+:global([data-theme='ash'] .hot-card:hover) {
+  border-color: var(--accent-primary-hover-border);
+}
+
+:global([data-theme='ash'] .hot-card__content) {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.72), transparent 68%),
+    var(--surface-panel-raised);
+}
+
+:global([data-theme='ash'] .hot-card__main::before) {
+  background: linear-gradient(90deg, var(--accent-ember-soft), rgb(255 255 255 / 0.42) 38%, transparent 76%);
+}
+
+:global([data-theme='ash'] .hot-card__image-wrap),
+:global([data-theme='ash'] .hot-card__metric),
+:global([data-theme='ash'] .hot-card__confidence),
+:global([data-theme='ash'] .hot-card__factor) {
+  border-color: var(--color-border);
+  background: var(--surface-control);
+}
+
+:global([data-theme='ash'] .hot-card:hover .hot-card__metric),
+:global([data-theme='ash'] .hot-card:focus-within .hot-card__metric) {
+  border-color: var(--accent-ember-border);
+  background: var(--color-surface-hover);
+}
+
+:global([data-theme='ash'] .hot-card__metric--price),
+:global([data-theme='ash'] .hot-card:hover .hot-card__metric--price),
+:global([data-theme='ash'] .hot-card:focus-within .hot-card__metric--price) {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 82%),
+    var(--surface-control);
+}
+
+:global([data-theme='ash'] .hot-card__side) {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 74%),
+    var(--surface-control-raised);
+}
+
+:global([data-theme='ash'] .hot-card:hover .hot-card__side),
+:global([data-theme='ash'] .hot-card:focus-within .hot-card__side) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, var(--accent-ember-hover-bg), transparent 78%),
+    var(--color-surface-hover);
+}
+
+:global([data-theme='ash'] .hot-card__locate) {
+  color: var(--operator-link);
+}
+
+:global([data-theme='ash'] .hot-card__details) {
+  border-top-color: var(--accent-ember-border);
+  background: var(--background-card-soft);
+}
+
+:global([data-theme='ash'] .hot-card__details-section) {
+  border-color: var(--color-border);
+  background: var(--surface-panel-raised);
+}
+
+:global([data-theme='ash'] .hot-card__locate) {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 80%),
+    var(--surface-control-raised);
 }
 
 @media (max-width: 1180px) {

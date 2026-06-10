@@ -309,8 +309,8 @@ function formatDateTime(value: string | null | undefined): string {
 </script>
 
 <template>
-  <div class="market-products-table app-surface">
-    <header class="table-toolbar">
+  <div class="market-products-table app-surface app-operator-table">
+    <header class="table-toolbar app-operator-toolbar">
       <div class="table-toolbar__heading">
         <h2>
           <span>Аналитика товаров</span>
@@ -475,16 +475,17 @@ function formatDateTime(value: string | null | undefined): string {
 .market-products-table {
   position: relative;
   overflow: visible;
-  border-color: var(--color-border-strong);
-  background: var(--background-card-soft);
+  border-color: var(--operator-border-muted);
+  background: var(--operator-panel-bg);
   box-shadow: var(--shadow-panel);
 }
 
-.market-products-table::before {
+.market-products-table::after {
   position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(249 115 22 / 0.42), transparent);
+  z-index: 10;
+  inset: 0;
+  border: 1px solid var(--operator-border-muted);
+  border-radius: inherit;
   content: '';
   pointer-events: none;
 }
@@ -501,11 +502,11 @@ function formatDateTime(value: string | null | undefined): string {
   position: relative;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid var(--color-border-strong);
+  border-bottom: 1px solid var(--operator-border-muted);
   background: var(--surface-table-header-strong);
   color: var(--color-text-muted);
   padding: var(--space-3);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
 }
 
 .table-toolbar__heading {
@@ -756,6 +757,21 @@ function formatDateTime(value: string | null | undefined): string {
 
 :deep(.table) {
   min-width: 1180px;
+}
+
+:deep(.table-wrap) {
+  position: relative;
+  isolation: isolate;
+}
+
+:deep(.table-wrap)::after {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: inherit;
+  content: '';
+  pointer-events: none;
 }
 
 :deep(th) {

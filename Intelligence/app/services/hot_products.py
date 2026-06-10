@@ -38,6 +38,22 @@ FACTOR_WEIGHTS = {
     "completeness": 0.10,
 }
 
+OPPORTUNITY_FACTOR_WEIGHTS = {
+    "high_position_weak_card": 1.00,
+    "high_position_weak_reviews": 0.92,
+    "bad_recent_reviews": 0.90,
+    "expensive_without_advantage": 0.84,
+    "fast_position_growth": 0.88,
+    "top_low_stock": 0.80,
+    "duplicate_cards": 0.72,
+    "repeated_review_complaint": 0.86,
+    "weak_visible_description": 0.70,
+    "weak_description": 0.70,
+    "missing_key_specs": 0.68,
+    "low_review_count_top_position": 0.78,
+    "good_reviews_weak_visibility": 0.74,
+}
+
 
 @dataclass(frozen=True)
 class FactorScore:
@@ -410,6 +426,227 @@ def _completeness_factor(item: EligibleProduct) -> FactorScore:
     )
 
 
+def _format_money(value: float) -> str:
+    return f"{value:.0f} ₽"
+
+
+def _median_or_none(values: list[float]) -> float | None:
+    clean = [value for value in values if math.isfinite(value)]
+    return median(clean) if clean else None
+
+
+def _top_position_limit(item: EligibleProduct, all_positions: list[int]) -> int:
+    observed_limit = item.observed_range_limit or (max(all_positions) if all_positions else 100)
+    return max(20, min(30, math.ceil(observed_limit * 0.2)))
+
+
+def _normalized_name(value: str | None) -> str:
+    if not value:
+        return ""
+    letters = [char.lower() if char.isalnum() else " " for char in value]
+    tokens = [token for token in "".join(letters).split() if len(token) > 2]
+    return " ".join(tokens[:8])
+
+
+def _name_tokens(value: str | None) -> list[str]:
+    if not value:
+        return []
+    letters = [char.lower() if char.isalnum() else " " for char in value]
+    return [token for token in "".join(letters).split() if len(token) > 2]
+
+
+def _is_top_visible(item: EligibleProduct, all_positions: list[int]) -> bool:
+    return item.position is not None and item.position <= _top_position_limit(item, all_positions)
+
+
+def _opportunity_factors(
+    *,
+    item: EligibleProduct,
+    all_positions: list[int],
+    all_prices: list[float],
+    all_review_counts: list[int],
+    all_items: list[EligibleProduct],
+    subcategory_prices: list[float],
+    subcategory_review_counts: list[int],
+) -> list[FactorScore]:
+    factors: list[FactorScore] = []
+    top_visible = _is_top_visible(item, all_positions)
+    median_price = _median_or_none(subcategory_prices) or _median_or_none(all_prices)
+    median_reviews = _median_or_none([float(value) for value in subcategory_review_counts]) or _median_or_none(
+        [float(value) for value in all_review_counts]
+    )
+
+    weak_rating = item.rating is not None and item.rating < 4.5
+    weak_reviews = item.review_count is not None and item.review_count < 25
+    low_stock = item.total_quantity is not None and item.total_quantity <= 5
+    title_tokens = _name_tokens(item.product.name)
+    has_spec_tokens = any(
+        any(char.isdigit() for char in token)
+        or token in {"см", "мм", "вт", "led", "ip", "комплект", "набор"}
+        for token in title_tokens
+    )
+
+    if top_visible and (weak_rating or weak_reviews or low_stock):
+        parts: list[str] = []
+        if weak_rating:
+            parts.append(f"оценка {item.rating:g}")
+        if weak_reviews:
+            parts.append(f"отзывов {item.review_count}")
+        if low_stock:
+            parts.append(f"остаток {item.total_quantity}")
+        factors.append(FactorScore(
+            code="high_position_weak_card",
+            label="Высоко в выдаче, но слабая карточка",
+            value=", ".join(parts),
+            score=92,
+            confidence=0.86,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["high_position_weak_card"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"position": item.position, "rating": item.rating, "reviewCount": item.review_count, "stock": item.total_quantity},
+        ))
+
+    if top_visible and (weak_rating or weak_reviews):
+        parts = []
+        if weak_rating:
+            parts.append(f"оценка ниже 4,5: {item.rating:g}")
+        if weak_reviews:
+            parts.append(f"мало отзывов: {item.review_count}")
+        factors.append(FactorScore(
+            code="high_position_weak_reviews",
+            label="Высоко в выдаче, но слабые отзывы",
+            value=", ".join(parts),
+            score=88,
+            confidence=0.84,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["high_position_weak_reviews"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"position": item.position, "rating": item.rating, "reviewCount": item.review_count},
+        ))
+
+    if (
+        item.product.parsed_review_count is not None
+        and item.product.parsed_review_count > 0
+        and item.rating is not None
+        and item.rating < 4.4
+    ):
+        factors.append(FactorScore(
+            code="bad_recent_reviews",
+            label="Плохие последние отзывы",
+            value=f"оценка {item.rating:g}, проверено отзывов {item.product.parsed_review_count}",
+            score=86,
+            confidence=0.78,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["bad_recent_reviews"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"rating": item.rating, "parsedReviewCount": item.product.parsed_review_count},
+        ))
+
+    if top_visible and item.review_count is not None and item.review_count < 100:
+        factors.append(FactorScore(
+            code="low_review_count_top_position",
+            label="Мало отзывов в топе",
+            value=f"позиция #{item.position}, отзывов {item.review_count}",
+            score=76,
+            confidence=0.74,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["low_review_count_top_position"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"position": item.position, "reviewCount": item.review_count},
+        ))
+
+    if (
+        not top_visible
+        and item.rating is not None
+        and item.rating >= 4.8
+        and item.review_count is not None
+        and item.review_count >= 100
+        and item.position is not None
+    ):
+        factors.append(FactorScore(
+            code="good_reviews_weak_visibility",
+            label="Хорошие отзывы, слабая видимость",
+            value=f"оценка {item.rating:g}, отзывов {item.review_count}, позиция #{item.position}",
+            score=74,
+            confidence=0.70,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["good_reviews_weak_visibility"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"position": item.position, "rating": item.rating, "reviewCount": item.review_count},
+        ))
+
+    if len(title_tokens) < 4:
+        factors.append(FactorScore(
+            code="weak_description",
+            label="Слабое описание",
+            value="короткое название: мало признаков товара",
+            score=70,
+            confidence=0.58,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["weak_description"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"nameTokenCount": len(title_tokens)},
+        ))
+
+    if title_tokens and not has_spec_tokens:
+        factors.append(FactorScore(
+            code="missing_key_specs",
+            label="Нет важных характеристик",
+            value="в названии не видно размера, мощности, комплекта или других характеристик",
+            score=68,
+            confidence=0.56,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["missing_key_specs"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"nameTokenCount": len(title_tokens)},
+        ))
+
+    if (
+        item.price is not None
+        and median_price is not None
+        and item.price >= median_price * 1.25
+        and (item.rating is None or item.rating < 4.7)
+        and (item.review_count is None or median_reviews is None or item.review_count <= median_reviews)
+    ):
+        factors.append(FactorScore(
+            code="expensive_without_advantage",
+            label="Высокая цена без явного преимущества",
+            value=f"{_format_money(item.price)} против медианы {_format_money(median_price)}",
+            score=82,
+            confidence=0.78,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["expensive_without_advantage"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"price": item.price, "medianPrice": median_price, "rating": item.rating, "reviewCount": item.review_count},
+        ))
+
+    if top_visible and low_stock:
+        factors.append(FactorScore(
+            code="top_low_stock",
+            label="В топе, но низкий остаток",
+            value=f"остаток {item.total_quantity}",
+            score=80,
+            confidence=0.82,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["top_low_stock"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"position": item.position, "stock": item.total_quantity},
+        ))
+
+    same_root_count = 0
+    if item.product.wb_root_id:
+        same_root_count = sum(1 for peer in all_items if peer.product.wb_root_id == item.product.wb_root_id)
+    normalized_name = _normalized_name(item.product.name)
+    same_name_count = 0
+    if normalized_name:
+        same_name_count = sum(1 for peer in all_items if _normalized_name(peer.product.name) == normalized_name)
+    duplicate_count = max(same_root_count, same_name_count)
+    if duplicate_count >= 3:
+        factors.append(FactorScore(
+            code="duplicate_cards",
+            label="Много одинаковых карточек",
+            value=f"похожих карточек: {duplicate_count}",
+            score=72,
+            confidence=0.72,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["duplicate_cards"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"sameRootCount": same_root_count, "sameNameCount": same_name_count},
+        ))
+
+    return factors
+
+
 def _snapshot_hash(request: HotProductsRequest, item: EligibleProduct) -> str:
     product = item.product
     payload = {
@@ -451,6 +688,7 @@ def _score_product(
     *,
     request: HotProductsRequest,
     item: EligibleProduct,
+    all_items: list[EligibleProduct],
     all_positions: list[int],
     all_prices: list[float],
     all_review_counts: list[int],
@@ -460,16 +698,17 @@ def _score_product(
     valid_for_hours: int,
     include_debug: bool,
 ) -> HotProductRecommendationDto:
-    factors = [
-        _position_factor(item, all_positions),
-        _rating_factor(item),
-        _reviews_factor(item, subcategory_review_counts or all_review_counts),
-        _price_factor(item, subcategory_prices, all_prices),
-        _stock_factor(item),
-        _completeness_factor(item),
-    ]
-    score = _clamp(sum(factor.score * factor.weight for factor in factors), 0, 100)
-    confidence = _clamp(sum(factor.confidence * factor.weight for factor in factors), 0, 1)
+    factors = _opportunity_factors(
+        item=item,
+        all_positions=all_positions,
+        all_prices=all_prices,
+        all_review_counts=all_review_counts,
+        all_items=all_items,
+        subcategory_prices=subcategory_prices,
+        subcategory_review_counts=subcategory_review_counts,
+    )
+    score = 0.0 if not factors else _clamp(max(factor.score for factor in factors), 0, 100)
+    confidence = 0.0 if not factors else _clamp(sum(factor.confidence for factor in factors) / len(factors), 0, 1)
     snapshot_hash = _snapshot_hash(request, item)
     dto_factors = [
         RecommendationFactorDto(
@@ -504,11 +743,10 @@ def _score_product(
         wb_root_id=item.product.wb_root_id,
         score=round(score, 2),
         confidence=round(confidence, 4),
-        title="Карточка выглядит перспективной для анализа",
+        title=factors[0].label if factors else "Карточка требует проверки",
         reason=(
-            "У карточки есть несколько рыночных признаков: позиция, рейтинг, отзывы, цена "
-            "и доступность выглядят достаточно сильными для дальнейшей проверки. Результат требует "
-            "проверить маржинальность, поставщика и конкуренцию."
+            "Подборка основана на наблюдаемых рыночных признаках. Перед запуском проверьте "
+            "маржинальность, поставщика и конкуренцию."
         ),
         factors=dto_factors,
         input_snapshot_hash=snapshot_hash,
@@ -590,6 +828,7 @@ class HotProductsService:
             recommendation = _score_product(
                 request=request,
                 item=item,
+                all_items=eligible,
                 all_positions=all_positions,
                 all_prices=all_prices,
                 all_review_counts=all_review_counts,

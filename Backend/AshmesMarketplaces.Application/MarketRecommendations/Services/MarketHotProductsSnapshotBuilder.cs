@@ -17,7 +17,8 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
     private const string PositionStateObserved = "observed";
     private const string PositionStateBeyondObservedRange = "beyondObservedRange";
     private const string PositionStateUnknown = "unknown";
-    private const int DefaultBoundedProducts = 100;
+    private const int DefaultBoundedProducts = 1000;
+    private const int MaxProductsPerRun = 100_000;
 
     private readonly ApplicationDbContext _dbContext;
 
@@ -31,12 +32,11 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         IntelligenceOptions options,
         CancellationToken cancellationToken)
     {
-        var maxConfiguredProducts = Math.Max(options.MaxProductsPerRequest, 1);
-        var maxProducts = request.MaxProducts ?? Math.Min(DefaultBoundedProducts, maxConfiguredProducts);
-        if (maxProducts > maxConfiguredProducts)
+        var maxProducts = request.MaxProducts ?? DefaultBoundedProducts;
+        if (maxProducts > MaxProductsPerRun)
         {
             return ServiceResult<MarketHotProductsSnapshot>.BadRequest(
-                $"Requested maxProducts exceeds configured Intelligence maximum of {maxConfiguredProducts}.");
+                $"Requested maxProducts exceeds supported run maximum of {MaxProductsPerRun}.");
         }
 
         var productRunId = string.IsNullOrWhiteSpace(request.ProductParserRunId)

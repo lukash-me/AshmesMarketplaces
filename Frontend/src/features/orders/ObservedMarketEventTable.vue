@@ -143,8 +143,8 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 </script>
 
 <template>
-  <div class="observed-events-table app-surface">
-    <header class="table-toolbar">
+  <div class="observed-events-table app-surface app-operator-table">
+    <header class="table-toolbar app-operator-toolbar">
       <div class="table-toolbar__heading">
         <h2>
           <span>Наблюдаемые события WB</span>
@@ -277,23 +277,9 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 .observed-events-table {
   position: relative;
   overflow: visible;
-  border-color: rgb(249 115 22 / 0.2);
-  background:
-    linear-gradient(180deg, rgb(249 115 22 / 0.035), transparent 10rem),
-    var(--surface-panel);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.035),
-    inset 0 0 0 1px rgb(249 115 22 / 0.035),
-    var(--shadow-panel);
-}
-
-.observed-events-table::before {
-  position: absolute;
-  inset: 0 0 auto;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(249 115 22 / 0.42), transparent);
-  content: '';
-  pointer-events: none;
+  border-color: var(--operator-border-muted);
+  background: var(--operator-panel-bg);
+  box-shadow: var(--shadow-panel);
 }
 
 .table-toolbar,
@@ -306,10 +292,10 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 .table-toolbar {
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgb(249 115 22 / 0.18);
+  border-bottom: 1px solid var(--operator-border-muted);
   color: var(--color-text-muted);
   padding: var(--space-3);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
 }
 
 .table-toolbar__heading {
@@ -362,7 +348,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   max-width: 28rem;
   overflow: hidden;
   color: var(--color-text);
-  font-size: 0.95rem;
+  font-size: var(--operator-value-size);
   font-weight: 740;
   line-height: 1.28;
   -webkit-box-orient: vertical;
@@ -374,7 +360,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 .stack-cell small,
 .period-cell {
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
 }
 
 .stack-cell strong {
@@ -384,7 +370,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 
 .category-cell strong,
 .category-cell span {
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -395,7 +381,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   align-items: center;
   gap: var(--space-1);
   color: var(--accent-ember-text);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   font-weight: 700;
 }
 
@@ -407,7 +393,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   background: rgb(249 115 22 / 0.08);
   color: var(--accent-ember-text-strong);
   padding: 0.25rem 0.45rem;
-  font-size: 0.72rem;
+  font-size: var(--operator-label-size);
   font-weight: 760;
   white-space: nowrap;
 }
@@ -466,7 +452,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   border-bottom: 1px solid var(--border-table-header);
   background: var(--surface-table-header-strong);
   color: var(--text-table-header);
-  font-size: 0.75rem;
+  font-size: var(--operator-meta-size);
   font-weight: 840;
   letter-spacing: 0.035em;
   line-height: 1.1;
@@ -538,7 +524,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   border-top: 1px solid var(--color-border);
   color: var(--color-text-muted);
   padding: var(--space-3);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
 }
 
 .pager {
@@ -561,11 +547,11 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
-  font-size: 0.8125rem;
+  font-size: var(--operator-body-size);
 }
 
 .pager__page {
-  border: 1px solid rgb(249 115 22 / 0.18);
+  border: 1px solid var(--color-border);
   background: var(--surface-control);
   color: var(--color-text-muted);
 }

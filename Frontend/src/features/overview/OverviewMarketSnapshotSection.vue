@@ -449,10 +449,10 @@ function formatDateTime(value: string | null | undefined): string {
 <template>
   <section class="market-snapshot" aria-labelledby="overview-market-title">
     <header class="market-snapshot__header">
-      <label class="market-snapshot__field">
+      <label class="market-snapshot__field app-select-field">
         <span>Ниша</span>
         <span v-if="initialMarketLoading" class="market-snapshot__select-skeleton" aria-hidden="true" />
-        <select v-else :value="selectedNiche" :disabled="marketUnavailable" @change="onNicheChange">
+        <select v-else class="app-select" :value="selectedNiche" :disabled="marketUnavailable" @change="onNicheChange">
           <option v-for="niche in niches" :key="niche" :value="niche">{{ niche }}</option>
         </select>
       </label>
@@ -765,20 +765,6 @@ function formatDateTime(value: string | null | undefined): string {
   color: var(--color-text-muted);
   font-size: 0.75rem;
   font-weight: 760;
-}
-
-.market-snapshot__field select {
-  height: 2.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-}
-
-.market-snapshot__field select:focus {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 .market-snapshot__select-skeleton {

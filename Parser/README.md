@@ -158,6 +158,23 @@ Parser/output/runs/<wb_reviews_run_id>/
 
 Use `--resume-run-dir <pipeline-dir>` to skip succeeded child steps and retry failed or skipped dependency steps. Use `--force-step rank|products|reviews` only when a child step must be rerun intentionally.
 
+For a larger selected-niche opportunity run, use the dedicated preset. Start with smoke, then bounded, and run full only after manifests and coverage look sane:
+
+```powershell
+& .\Parser\.venv\Scripts\python.exe .\Parser\market_refresh_runner.py `
+  --config .\Parser\presets\market_refresh_selected_niches_100k.json `
+  --mode smoke `
+  --dry-run
+
+& .\Parser\.venv\Scripts\python.exe .\Parser\market_refresh_runner.py `
+  --config .\Parser\presets\market_refresh_selected_niches_100k.json `
+  --mode bounded
+
+& .\Parser\.venv\Scripts\python.exe .\Parser\market_refresh_runner.py `
+  --config .\Parser\presets\market_refresh_selected_niches_100k.json `
+  --mode full
+```
+
 ## Future Backend Handoff
 
 Future ingestion should read canonical JSONL into raw/staging first. The reviewed upsert key should be `marketplace + wb_product_id`, preserving `parser_run_id`, `parsed_at_utc`, source category/query, and source region for traceability. Product, brand, category, seller, image, and app-managed field ownership mappings need a separate reviewed backend schema/ingestion task.

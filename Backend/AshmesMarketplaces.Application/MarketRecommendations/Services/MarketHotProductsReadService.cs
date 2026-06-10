@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.DataAccess;
@@ -11,6 +12,24 @@ namespace AshmesMarketplaces.Application.MarketRecommendations.Services;
 public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
 {
     private const string StatusCompleted = "completed";
+    private const string DuplicateCardsKey = "duplicate_cards";
+    private static readonly IReadOnlyList<HotProductsGroupDefinition> GroupDefinitions =
+    [
+        new("high_position_weak_reviews", "Слабые отзывы", "Карточка заметна в выдаче, но отзывы или оценка выглядят слабо."),
+        new("bad_recent_reviews", "Плохие последние отзывы", "Последние отзывы требуют проверки перед выбором товара."),
+        new("repeated_review_complaint", "Повторяющаяся жалоба", "В отзывах повторяется один и тот же повод для проверки."),
+        new("weak_description", "Слабое описание", "Описание карточки выглядит коротким или неполным."),
+        new("weak_visible_description", "Слабое описание", "У видимых карточек есть признаки слабого описания."),
+        new("missing_key_specs", "Нет важных характеристик", "В карточке не хватает значимых характеристик для ниши."),
+        new("expensive_without_advantage", "Высокая цена", "Цена выше выборки, а явного преимущества по отзывам или рейтингу не видно."),
+        new("top_low_stock", "Низкий остаток", "Товар виден в выдаче, но наблюдаемый остаток низкий."),
+        new("fast_position_growth", "Быстрый рост", "Товар заметно улучшил позицию между наблюдениями."),
+        new("duplicate_cards", "Одинаковые карточки", "В нише есть несколько очень похожих карточек."),
+        new("high_position_weak_card", "Слабая карточка в топе", "Карточка заметна в выдаче, но у нее есть слабые параметры."),
+        new("low_review_count_top_position", "Мало отзывов в топе", "Товар высоко в выдаче, но отзывов пока мало."),
+        new("good_reviews_weak_visibility", "Хорошие отзывы, слабая видимость", "У товара хорошие отзывы, но позиция в выдаче слабая.")
+    ];
+
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<MarketHotProductsReadService> _logger;
 
@@ -54,7 +73,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         if (run is null)
         {
             return ServiceResult<HotProductsListResponse>.Success(
-                new HotProductsListResponse(null, page, pageSize, 0, []));
+                new HotProductsListResponse(null, page, pageSize, 0, [], []));
         }
 
         var itemsQuery = ApplyItemFilters(
@@ -63,20 +82,26 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
                 .Where(x => x.IdMarketRecommendationRun == run.Id),
             query);
 
-        var totalCount = await itemsQuery.CountAsync(cancellationToken);
-        if (totalCount == 0)
-        {
-            return ServiceResult<HotProductsListResponse>.Success(
-                new HotProductsListResponse(null, page, pageSize, 0, []));
-        }
-
-        var itemRows = await itemsQuery
+        var allItemRows = await itemsQuery
             .OrderBy(x => x.RankOrder)
             .ThenByDescending(x => x.Score)
+            .ToListAsync(cancellationToken);
+        if (allItemRows.Count == 0)
+        {
+            return ServiceResult<HotProductsListResponse>.Success(
+                new HotProductsListResponse(null, page, pageSize, 0, [], []));
+        }
+
+        var thumbnailUrls = await LoadThumbnailUrlsAsync(allItemRows, cancellationToken);
+        var allRunItems = allItemRows.Select(item => MapItem(item, thumbnailUrls)).ToList();
+        var groupedItems = ApplyGroupFilter(allRunItems, query.GroupKey);
+        var totalCount = groupedItems.Count;
+        var itemRows = allItemRows
+            .Where(row => groupedItems.Any(item => item.Id == row.Id))
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .ToListAsync(cancellationToken);
-        var thumbnailUrls = await LoadThumbnailUrlsAsync(itemRows, cancellationToken);
+            .ToList();
+        var pageItems = itemRows.Select(item => MapItem(item, thumbnailUrls)).ToList();
 
         var response = new HotProductsListResponse(
             new HotProductsRunSummaryDto(
@@ -90,7 +115,8 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             page,
             pageSize,
             totalCount,
-            itemRows.Select(item => MapItem(item, thumbnailUrls)).ToList());
+            pageItems,
+            BuildGroups(allRunItems));
 
         return ServiceResult<HotProductsListResponse>.Success(response);
     }
@@ -178,6 +204,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             thumbnailUrl,
             item.WbProductId,
             item.WbRootId,
+            item.IdParserProductRow,
             item.BrandName,
             item.SellerName,
             item.SourceCategory,
@@ -199,6 +226,113 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             item.Reason,
             MapFactors(item),
             item.ValidUntilUtc);
+    }
+
+    private static IReadOnlyList<HotProductRecommendationListItemDto> ApplyGroupFilter(
+        IReadOnlyList<HotProductRecommendationListItemDto> items,
+        string? groupKey)
+    {
+        if (string.IsNullOrWhiteSpace(groupKey))
+            return items;
+
+        var value = groupKey.Trim();
+        return items
+            .Where(item => item.Factors.Any(factor =>
+                string.Equals(factor.Code, value, StringComparison.Ordinal)))
+            .ToList();
+    }
+
+    private static IReadOnlyList<HotProductsGroupDto> BuildGroups(
+        IReadOnlyList<HotProductRecommendationListItemDto> items)
+    {
+        var groups = new List<HotProductsGroupDto>();
+        foreach (var definition in GroupDefinitions)
+        {
+            var groupItems = items
+                .Where(item => item.Factors.Any(factor =>
+                    string.Equals(factor.Code, definition.Key, StringComparison.Ordinal)))
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.RankOrder)
+                .ToList();
+
+            if (groupItems.Count == 0)
+                continue;
+
+            groups.Add(new HotProductsGroupDto(
+                definition.Key,
+                definition.Title,
+                definition.Description,
+                groupItems.Count,
+                groupItems,
+                definition.Key == DuplicateCardsKey ? BuildDuplicateClusters(groupItems) : []));
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<HotProductsDuplicateClusterDto> BuildDuplicateClusters(
+        IReadOnlyList<HotProductRecommendationListItemDto> items)
+    {
+        var clusters = items
+            .Select(item => new
+            {
+                Item = item,
+                Key = GetDuplicateClusterKey(item)
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.Key))
+            .GroupBy(x => x.Key!, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var clusterItems = group
+                    .Select(x => x.Item)
+                    .OrderBy(x => x.Position ?? int.MaxValue)
+                    .ThenByDescending(x => x.FeedbackCount ?? 0)
+                    .ThenBy(x => x.RankOrder)
+                    .ToList();
+
+                return new HotProductsDuplicateClusterDto(
+                    group.Key,
+                    GetDuplicateClusterTitle(clusterItems[0]),
+                    clusterItems.Count,
+                    clusterItems);
+            })
+            .Where(x => x.TotalCount >= 2)
+            .OrderByDescending(x => x.TotalCount)
+            .ThenBy(x => x.Title, StringComparer.Ordinal)
+            .ToList();
+
+        return clusters;
+    }
+
+    private static string? GetDuplicateClusterKey(HotProductRecommendationListItemDto item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.WbRootId))
+            return $"root:{item.WbRootId.Trim()}";
+
+        var normalized = NormalizeProductName(item.ProductName);
+        return string.IsNullOrWhiteSpace(normalized) ? null : $"name:{normalized}";
+    }
+
+    private static string GetDuplicateClusterTitle(HotProductRecommendationListItemDto item)
+    {
+        var name = item.ProductName.Trim();
+        if (name.Length <= 80)
+            return name;
+
+        return $"{name[..77]}...";
+    }
+
+    private static string NormalizeProductName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var tokens = Regex
+            .Split(value.ToLowerInvariant(), @"[^\p{L}\p{N}]+")
+            .Where(token => token.Length > 2)
+            .Take(8);
+
+        return string.Join(" ", tokens);
     }
 
     private static string? GetFirstImageUrl(JsonDocument? imageUrls)
@@ -305,4 +439,9 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             return false;
         }
     }
+
+    private sealed record HotProductsGroupDefinition(
+        string Key,
+        string Title,
+        string Description);
 }

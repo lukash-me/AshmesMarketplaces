@@ -9,6 +9,7 @@ public sealed class RecalculateHotProductsRequestValidator : AbstractValidator<R
     {
         RuleFor(x => x.MaxProducts)
             .GreaterThan(0)
+            .LessThanOrEqualTo(100_000)
             .When(x => x.MaxProducts.HasValue);
 
         RuleFor(x => x.MaxRecommendations)

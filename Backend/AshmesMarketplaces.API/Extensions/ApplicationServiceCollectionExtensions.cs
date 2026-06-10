@@ -32,6 +32,8 @@ using AshmesMarketplaces.Application.Rules.Services;
 using AshmesMarketplaces.Application.Users.Services;
 using AshmesMarketplaces.Application.UserWorkspaces.Services;
 using AshmesMarketplaces.Application.Warehouses.Services;
+using AshmesMarketplaces.Application.WorkspaceMarketProducts.Services;
+using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.Application.Workspaces.Services;
 using FluentValidation;
 
@@ -63,6 +65,8 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IExpenseCategoryService, ExpenseCategoryService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IWorkspaceService, WorkspaceService>();
+        services.AddScoped<IWorkspaceMarketProductService, WorkspaceMarketProductService>();
+        services.AddScoped<IWorkspaceOverviewService, WorkspaceOverviewService>();
         services.AddScoped<IUserWorkspaceService, UserWorkspaceService>();
         services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IPermissionCategoryService, PermissionCategoryService>();

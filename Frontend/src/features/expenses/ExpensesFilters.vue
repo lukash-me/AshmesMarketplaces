@@ -177,9 +177,9 @@ function apply() {
       aria-label="Дополнительные фильтры расходов"
     >
       <div class="filters__grid">
-        <label class="select-field filter-control" :class="{ 'filter-control--active': form.idCategory }">
+        <label class="select-field filter-control app-select-field" :class="{ 'filter-control--active': form.idCategory }">
           <span>Категория</span>
-          <select v-model="form.idCategory">
+          <select v-model="form.idCategory" class="app-select">
             <option value="">Все категории</option>
             <option v-for="category in categories" :key="category.id" :value="category.id">
               {{ category.name }}
@@ -187,9 +187,9 @@ function apply() {
           </select>
         </label>
 
-        <label class="select-field filter-control" :class="{ 'filter-control--active': form.statusKey }">
+        <label class="select-field filter-control app-select-field" :class="{ 'filter-control--active': form.statusKey }">
           <span>Статус</span>
-          <select v-model="form.statusKey">
+          <select v-model="form.statusKey" class="app-select">
             <option value="">Все статусы</option>
             <option v-for="status in expenseStatusOptions" :key="status.key" :value="status.key">
               {{ status.label }}
@@ -197,9 +197,9 @@ function apply() {
           </select>
         </label>
 
-        <label class="select-field filter-control" :class="{ 'filter-control--active': form.idResponsible }">
+        <label class="select-field filter-control app-select-field" :class="{ 'filter-control--active': form.idResponsible }">
           <span>Ответственный</span>
-          <select v-model="form.idResponsible">
+          <select v-model="form.idResponsible" class="app-select">
             <option value="">Все ответственные</option>
             <option v-for="user in users" :key="user.id" :value="user.id">
               {{ user.login || user.email || 'Пользователь' }}
@@ -279,8 +279,8 @@ function apply() {
 
 .filters__popover {
   padding: var(--space-3);
-  border-color: var(--color-border);
-  background: rgb(17 21 29);
+  border-color: var(--operator-border-muted);
+  background: var(--operator-panel-bg);
   box-shadow: var(--shadow-panel);
   backdrop-filter: none;
 }
@@ -296,23 +296,6 @@ function apply() {
   font-weight: 680;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-.select-field select {
-  height: 2.25rem;
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-  outline: none;
-}
-
-.select-field select:focus {
-  border-color: var(--color-primary);
-  background: var(--surface-control-focus);
-  box-shadow: var(--focus-ring);
 }
 
 .filter-control--active :deep(.field__control),

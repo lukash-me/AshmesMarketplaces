@@ -136,6 +136,7 @@ class PipelineStepPlan:
     env_overrides: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
     timeout_seconds: int | None = None
+    preflight_error: str | None = None
 
 
 @dataclass
@@ -228,6 +229,7 @@ def _manifest_summary(run_dir: Path) -> dict[str, Any]:
         "row_counts": payload.get("row_counts"),
         "page_counts": payload.get("page_counts"),
         "counters": payload.get("counters"),
+        "coverage": payload.get("coverage"),
         "error_counts": payload.get("error_counts"),
     }
 
@@ -236,6 +238,65 @@ def _child_status(run_dir: Path) -> str | None:
     summary = _manifest_summary(run_dir)
     status = summary.get("status")
     return str(status) if status is not None else None
+
+
+def _count_jsonl_rows(path: Path, *, limit: int = 1) -> int:
+    if not path.exists():
+        return 0
+    count = 0
+    with path.open(encoding="utf-8") as file:
+        for line in file:
+            if line.strip():
+                count += 1
+                if count >= limit:
+                    break
+    return count
+
+
+def _summary_has_usable_artifact(step_name: str, summary: dict[str, Any]) -> bool:
+    run_dir_value = summary.get("run_dir")
+    run_dir = Path(run_dir_value) if run_dir_value else None
+    row_counts = summary.get("row_counts") or {}
+    counters = summary.get("counters") or {}
+
+    if step_name == "products":
+        unique_rows = row_counts.get("unique_rows") or row_counts.get("rows_written")
+        if isinstance(unique_rows, int) and unique_rows > 0:
+            return True
+        return bool(run_dir and _count_jsonl_rows(run_dir / "products.jsonl") > 0)
+
+    if step_name == "rank":
+        rank_rows = row_counts.get("rank_rows_written") or row_counts.get("rank_rows")
+        return isinstance(rank_rows, int) and rank_rows > 0
+
+    if step_name == "logistics":
+        return any(
+            int(counters.get(name) or 0) > 0
+            for name in ("products_succeeded", "snapshot_rows_written", "warehouse_rows_written")
+        )
+
+    if step_name == "reviews":
+        return any(
+            int(counters.get(name) or 0) > 0
+            for name in ("roots_processed", "roots_succeeded", "roots_empty", "reviews_written", "replies_written")
+        )
+
+    return False
+
+
+def _record_has_usable_artifact(record: dict[str, Any]) -> bool:
+    step_name = str(record.get("step_name") or "")
+    return any(
+        _summary_has_usable_artifact(step_name, summary)
+        for summary in record.get("child_manifest_summaries") or []
+    )
+
+
+def _step_is_stageable(step: dict[str, Any]) -> bool:
+    status = step.get("status")
+    if status == "succeeded":
+        return True
+    return status == "partial" and bool(step.get("output_run_dirs")) and _record_has_usable_artifact(step)
 
 
 def _latest_output_run_dir(before: set[Path], output_base_dir: Path) -> Path | None:
@@ -337,6 +398,14 @@ def _build_logistics_plan(
         command.extend(["--timeout-sec", str(logistics["timeout_sec"])])
     if logistics.get("retries") is not None:
         command.extend(["--retries", str(logistics["retries"])])
+    if logistics.get("max_concurrent") is not None:
+        command.extend(["--max-concurrent", str(logistics["max_concurrent"])])
+    if logistics.get("checkpoint_interval") is not None:
+        command.extend(["--checkpoint-interval", str(logistics["checkpoint_interval"])])
+    if logistics.get("retry_queue_passes") is not None:
+        command.extend(["--retry-queue-passes", str(logistics["retry_queue_passes"])])
+    if logistics.get("adaptive_delay"):
+        command.append("--adaptive-delay")
 
     for product_id in logistics.get("product_ids") or []:
         command.extend(["--product-id", str(product_id)])
@@ -346,6 +415,48 @@ def _build_logistics_plan(
         commands=[command],
         enabled=bool(logistics.get("enabled", True)),
         timeout_seconds=logistics.get("timeout_seconds"),
+    )
+
+
+def _available_source_subcategories(product_run_dir: Path) -> set[str]:
+    products_jsonl = product_run_dir / "products.jsonl"
+    if not products_jsonl.exists():
+        return set()
+
+    values: set[str] = set()
+    with products_jsonl.open(encoding="utf-8") as file:
+        for line in file:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            value = row.get("source_subcategory")
+            if isinstance(value, str) and value.strip():
+                values.add(value.strip())
+    return values
+
+
+def _review_scope_preflight_error(product_run_dir: Path, source_subcategories: list[Any]) -> str | None:
+    requested = [str(value).strip() for value in source_subcategories if value]
+    if not requested:
+        return None
+    if not (product_run_dir / "products.jsonl").exists():
+        return None
+
+    available = _available_source_subcategories(product_run_dir)
+    if not available:
+        return f"Review scope preflight failed: no source_subcategory values found in {product_run_dir / 'products.jsonl'}."
+
+    missing = [value for value in requested if value not in available]
+    if not missing:
+        return None
+
+    sample_available = ", ".join(sorted(available)[:10])
+    return (
+        "Review scope preflight failed: configured source_subcategories are absent from products.jsonl. "
+        f"missing={missing}; available_sample=[{sample_available}]"
     )
 
 
@@ -363,6 +474,7 @@ def _build_reviews_plan(
         return PipelineStepPlan(step_name="reviews", commands=[], enabled=True)
 
     source_subcategories = reviews.get("source_subcategories") or [None]
+    preflight_error = _review_scope_preflight_error(product_run_dir, source_subcategories)
     commands: list[list[str]] = []
     for source_subcategory in source_subcategories:
         command = [
@@ -375,6 +487,8 @@ def _build_reviews_plan(
         ]
         if reviews.get("limit_products") is not None:
             command.extend(["--limit-products", str(reviews["limit_products"])])
+        if reviews.get("max_concurrent") is not None:
+            command.extend(["--max-concurrent", str(reviews["max_concurrent"])])
         if source_subcategory:
             command.extend(["--source-subcategory", str(source_subcategory)])
         if reviews.get("smoke_only"):
@@ -392,6 +506,7 @@ def _build_reviews_plan(
         commands=commands,
         enabled=True,
         timeout_seconds=reviews.get("timeout_seconds"),
+        preflight_error=preflight_error,
     )
 
 
@@ -424,14 +539,14 @@ def _useful_artifact_count(manifest: dict[str, Any]) -> int:
     return sum(
         1
         for step in manifest["steps"]
-        if step.get("status") == "succeeded" and step.get("output_run_dirs")
+        if _step_is_stageable(step) and step.get("output_run_dirs")
     )
 
 
 def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
     commands: list[list[str]] = []
     for step in manifest["steps"]:
-        if step.get("step_name") == "rank" and step.get("status") == "succeeded":
+        if step.get("step_name") == "rank" and _step_is_stageable(step):
             for run_dir in step.get("output_run_dirs") or []:
                 commands.append([
                     "dotnet",
@@ -444,7 +559,7 @@ def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
                     "--connection-string",
                     "<connection-string>",
                 ])
-        if step.get("step_name") == "products" and step.get("status") == "succeeded":
+        if step.get("step_name") == "products" and _step_is_stageable(step):
             for run_dir in step.get("output_run_dirs") or []:
                 commands.append([
                     "dotnet",
@@ -457,7 +572,7 @@ def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
                     "--connection-string",
                     "<connection-string>",
                 ])
-        if step.get("step_name") == "logistics" and step.get("status") == "succeeded":
+        if step.get("step_name") == "logistics" and _step_is_stageable(step):
             for run_dir in step.get("output_run_dirs") or []:
                 commands.append([
                     "dotnet",
@@ -470,7 +585,7 @@ def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
                     "--connection-string",
                     "<connection-string>",
                 ])
-        if step.get("step_name") == "reviews" and step.get("status") == "succeeded":
+        if step.get("step_name") == "reviews" and _step_is_stageable(step):
             for run_dir in step.get("output_run_dirs") or []:
                 commands.append([
                     "dotnet",
@@ -682,7 +797,7 @@ def _staging_command_specs(manifest: dict[str, Any], connection_string: str) -> 
             continue
 
         step = _record_for(manifest, step_name)
-        if step.get("status") != "succeeded":
+        if not _step_is_stageable(step):
             continue
 
         kind, cli_command = kind_command
@@ -728,7 +843,7 @@ def _run_staging(
         _emit_pipeline(pipeline_run_dir, "STAGING SKIPPED: dry-run is active")
         return
 
-    if parser_status != "succeeded":
+    if parser_status not in {"succeeded", "partial"}:
         staging["status"] = "skipped"
         staging["enabled"] = False
         staging["skip_reason"] = f"parser_status={parser_status}"
@@ -875,6 +990,10 @@ def _summary_text(summary: dict[str, Any]) -> str:
     ):
         if key in counters:
             parts.append(f"{key}={counters[key]}")
+    coverage = summary.get("coverage") or {}
+    for key in ("attempted_percent", "succeeded_percent", "roots_attempted_percent", "products_attempted_percent"):
+        if key in coverage:
+            parts.append(f"{key}={coverage[key]}")
     return ", ".join(parts) if parts else "no counters"
 
 
@@ -893,6 +1012,12 @@ def _run_step(
     record["command"] = plan.commands
     record["cwd"] = str(repo_root)
     record["env_overrides"] = plan.env_overrides
+
+    if plan.preflight_error:
+        record["status"] = "failed"
+        record["error_summary"] = plan.preflight_error
+        _emit_pipeline(pipeline_run_dir, f"FAIL {plan.step_name}: {plan.preflight_error}")
+        return
 
     if not plan.enabled:
         record["status"] = "skipped"
@@ -920,6 +1045,7 @@ def _run_step(
     output_run_dirs: list[str] = []
     child_manifest_summaries: list[dict[str, Any]] = []
     exit_codes: list[int] = []
+    had_partial_child = False
 
     for index, command in enumerate(plan.commands, start=1):
         before = _existing_run_dirs(output_base_dir)
@@ -960,9 +1086,18 @@ def _run_step(
             _emit_pipeline(pipeline_run_dir, f"FAIL {plan.step_name} {index}/{len(plan.commands)}: exit_code={result.exit_code}")
             break
 
-        if run_dir is not None and _child_status(run_dir) not in {None, "succeeded"}:
+        child_status = _child_status(run_dir) if run_dir is not None else None
+        if run_dir is not None and child_status not in {None, "succeeded"}:
+            summary = child_manifest_summaries[-1] if child_manifest_summaries else _manifest_summary(run_dir)
+            if child_status == "partial" and _summary_has_usable_artifact(plan.step_name, summary):
+                had_partial_child = True
+                _emit_pipeline(
+                    pipeline_run_dir,
+                    f"PARTIAL {plan.step_name} {index}/{len(plan.commands)}: child artifact is usable",
+                )
+                continue
             record["status"] = "failed"
-            record["error_summary"] = f"Child manifest status is {_child_status(run_dir)}."
+            record["error_summary"] = f"Child manifest status is {child_status}."
             _emit_pipeline(pipeline_run_dir, f"FAIL {plan.step_name} {index}/{len(plan.commands)}: {record['error_summary']}")
             break
 
@@ -971,7 +1106,7 @@ def _run_step(
     record["output_run_dirs"] = output_run_dirs
     record["child_manifest_summaries"] = child_manifest_summaries
     if record["status"] == "running":
-        record["status"] = "succeeded"
+        record["status"] = "partial" if had_partial_child else "succeeded"
     _emit_pipeline(
         pipeline_run_dir,
         f"FINISH {plan.step_name}: status={record['status']} duration={_format_duration(record['started_at_utc'], record['finished_at_utc'])}",
@@ -1131,7 +1266,7 @@ def run_pipeline(
                 _write_manifest(pipeline_run_dir, manifest)
                 continue
 
-            if resume_run_dir and record.get("status") == "succeeded" and force_step != step_name:
+            if resume_run_dir and _step_is_stageable(record) and force_step != step_name:
                 _emit_pipeline(pipeline_run_dir, f"SKIP {step_name}: already succeeded in resumed pipeline")
                 if step_name == "products" and record.get("output_run_dirs"):
                     product_run_dir = Path(record["output_run_dirs"][-1])
@@ -1148,19 +1283,6 @@ def run_pipeline(
                 _write_manifest(pipeline_run_dir, manifest)
                 continue
 
-            logistics_record = _record_for(manifest, "logistics")
-            if (
-                step_name == "reviews"
-                and not dry_run
-                and not skip_logistics
-                and logistics_record.get("status") not in {"succeeded", "skipped"}
-            ):
-                record["status"] = "skipped"
-                record["error_summary"] = "Skipped because logistics step did not succeed."
-                _emit_pipeline(pipeline_run_dir, "SKIP reviews: logistics step did not succeed")
-                _write_manifest(pipeline_run_dir, manifest)
-                continue
-
             _run_step(
                 manifest=manifest,
                 pipeline_run_dir=pipeline_run_dir,
@@ -1173,23 +1295,18 @@ def run_pipeline(
             _write_manifest(pipeline_run_dir, manifest)
 
             updated_record = _record_for(manifest, step_name)
-            if step_name == "products" and updated_record.get("status") == "succeeded" and updated_record.get("output_run_dirs"):
+            if step_name == "products" and _step_is_stageable(updated_record) and updated_record.get("output_run_dirs"):
                 product_run_dir = Path(updated_record["output_run_dirs"][-1])
 
-            if not dry_run and updated_record.get("status") != "succeeded":
+            if not dry_run and updated_record.get("status") not in {"succeeded", "partial"}:
                 if step_name == "products":
                     _record_for(manifest, "logistics")["status"] = "skipped"
-                    _record_for(manifest, "logistics")["error_summary"] = "Skipped because products step failed."
-                    _emit_pipeline(pipeline_run_dir, "SKIP logistics: products step failed")
+                    _record_for(manifest, "logistics")["error_summary"] = "Skipped because products step did not produce usable artifacts."
+                    _emit_pipeline(pipeline_run_dir, "SKIP logistics: products step did not produce usable artifacts")
                     _record_for(manifest, "reviews")["status"] = "skipped"
-                    _record_for(manifest, "reviews")["error_summary"] = "Skipped because products step failed."
-                    _emit_pipeline(pipeline_run_dir, "SKIP reviews: products step failed")
+                    _record_for(manifest, "reviews")["error_summary"] = "Skipped because products step did not produce usable artifacts."
+                    _emit_pipeline(pipeline_run_dir, "SKIP reviews: products step did not produce usable artifacts")
                     blocked_steps.update({"logistics", "reviews"})
-                if step_name == "logistics":
-                    _record_for(manifest, "reviews")["status"] = "skipped"
-                    _record_for(manifest, "reviews")["error_summary"] = "Skipped because logistics step failed."
-                    _emit_pipeline(pipeline_run_dir, "SKIP reviews: logistics step failed")
-                    blocked_steps.add("reviews")
                 if effective_fail_fast:
                     _emit_pipeline(pipeline_run_dir, f"STOP: fail-fast after {step_name}")
                     break
@@ -1231,7 +1348,7 @@ def parse_args() -> argparse.Namespace:
         default=BASE_DIR / "presets" / "market_refresh_home_goods_demo.json",
         help="Pipeline preset JSON path.",
     )
-    parser.add_argument("--mode", choices=["smoke", "bounded", "full"], default="smoke")
+    parser.add_argument("--mode", default="smoke")
     parser.add_argument("--skip-rank", action="store_true")
     parser.add_argument("--skip-products", action="store_true")
     parser.add_argument("--skip-logistics", action="store_true")

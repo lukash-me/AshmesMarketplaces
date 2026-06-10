@@ -111,9 +111,9 @@ function getSortLabel(value: string): string {
     <div class="filters__toolbar">
       <Input v-model="form.search" label="Search" placeholder="Name, seller SKU, marketplace SKU, barcode" />
 
-      <label class="filters__select-field">
+      <label class="filters__select-field app-select-field">
         <span>Status</span>
-        <select v-model="form.status" class="filters__select">
+        <select v-model="form.status" class="filters__select app-select">
           <option value="">Any status</option>
           <option v-for="option in PRODUCT_STATUS_OPTIONS" :key="option.value" :value="String(option.value)">
             {{ option.label }}
@@ -181,23 +181,6 @@ function getSortLabel(value: string): string {
   font-weight: 680;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-.filters__select {
-  height: 2.25rem;
-  width: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: 0 var(--space-3);
-  outline: none;
-}
-
-.filters__select:focus {
-  border-color: var(--color-primary);
-  background: var(--surface-control-focus);
-  box-shadow: var(--focus-ring);
 }
 
 .filters__chips {

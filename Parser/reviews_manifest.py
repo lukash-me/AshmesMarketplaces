@@ -168,6 +168,13 @@ class ReviewRunManifest:
         self.finished_at_utc = utc_now_iso()
 
     def write(self) -> None:
+        roots_selected = int(self.counters.get("roots_selected", 0) or 0)
+        roots_processed = int(self.counters.get("roots_processed", 0) or 0)
+        roots_succeeded = int(self.counters.get("roots_succeeded", 0) or 0)
+        roots_empty = int(self.counters.get("roots_empty", 0) or 0)
+        roots_failed = int(self.counters.get("roots_failed", 0) or 0)
+        products_selected = int(self.counters.get("products_selected", 0) or 0)
+        products_processed = int(self.counters.get("products_processed", 0) or 0)
         self.manifest_path.write_text(
             json.dumps(
                 {
@@ -178,6 +185,17 @@ class ReviewRunManifest:
                     "status": self.status,
                     "marketplace": self.marketplace,
                     "requested_scope": self.requested_scope,
+                    "coverage": {
+                        "roots_selected": roots_selected,
+                        "roots_processed": roots_processed,
+                        "roots_succeeded": roots_succeeded,
+                        "roots_empty": roots_empty,
+                        "roots_failed": roots_failed,
+                        "roots_attempted_percent": round((roots_processed / roots_selected) * 100, 2) if roots_selected else 0,
+                        "products_selected": products_selected,
+                        "products_processed": products_processed,
+                        "products_attempted_percent": round((products_processed / products_selected) * 100, 2) if products_selected else 0,
+                    },
                     "output_files": self.output_files,
                     "counters": self.counters,
                     "error_counts": self.error_counts,

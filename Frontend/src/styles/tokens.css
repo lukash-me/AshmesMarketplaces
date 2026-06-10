@@ -43,6 +43,49 @@
   --border-ember-muted: rgb(249 115 22 / 0.14);
   --border-skeleton-button: rgb(255 255 255 / 0.06);
 
+  --operator-border: var(--accent-ember-border);
+  --operator-border-muted: var(--accent-primary-border);
+  --operator-panel-bg: var(--background-card-soft);
+  --operator-card-bg: var(--color-surface-muted);
+  --operator-card-hover-bg:
+    linear-gradient(90deg, var(--accent-ember-soft), transparent 42%),
+    var(--color-surface-hover);
+  --operator-metric-bg: var(--surface-control);
+  --operator-link: #fed7aa;
+  --operator-link-hover: #ffedd5;
+  --operator-title-size: 1rem;
+  --operator-body-size: 0.8125rem;
+  --operator-meta-size: 0.75rem;
+  --operator-label-size: 0.72rem;
+  --operator-value-size: 0.95rem;
+  --select-control-bg: var(--surface-control-raised);
+  --select-control-bg-hover:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 86%),
+    var(--surface-control-raised);
+  --select-control-bg-focus: var(--surface-control-focus);
+  --select-control-border: var(--color-border);
+  --select-control-border-hover: var(--accent-primary-border);
+  --select-control-border-focus: var(--accent-primary-hover-border);
+  --select-control-text: var(--color-text);
+  --select-label-text: var(--color-text-muted);
+  --select-menu-bg:
+    linear-gradient(180deg, rgb(249 115 22 / 0.075), transparent 42%),
+    rgb(8 11 18 / 0.985);
+  --select-menu-border: var(--accent-primary-border);
+  --select-menu-shadow: 0 20px 56px rgb(0 0 0 / 0.52), 0 0 0 1px rgb(255 255 255 / 0.025);
+  --select-search-bg: rgb(5 8 13 / 0.78);
+  --select-option-bg: var(--surface-panel-raised);
+  --select-option-text: var(--color-text);
+  --select-option-hover-bg:
+    linear-gradient(90deg, rgb(249 115 22 / 0.14), transparent),
+    var(--color-surface-hover);
+  --select-option-hover-bg-solid: rgb(47 24 17);
+  --select-option-active-bg:
+    linear-gradient(90deg, rgb(249 115 22 / 0.22), transparent),
+    var(--surface-control-raised);
+  --select-option-active-bg-solid: rgb(66 32 18);
+  --select-option-active-text: var(--accent-ember-text-strong);
+
   --text-primary: #eef2f8;
   --text-muted: #9aa6b8;
   --text-subtle: #687487;
@@ -237,6 +280,49 @@
   --border-ember-subtle: rgb(71 85 105 / 0.34);
   --border-ember-muted: rgb(71 85 105 / 0.28);
   --border-skeleton-button: rgb(15 23 42 / 0.08);
+
+  --operator-border: var(--accent-ember-border);
+  --operator-border-muted: var(--accent-primary-border);
+  --operator-panel-bg: var(--background-card-soft);
+  --operator-card-bg: var(--color-surface-muted);
+  --operator-card-hover-bg:
+    linear-gradient(90deg, var(--accent-ember-soft), transparent 42%),
+    var(--color-surface-hover);
+  --operator-metric-bg: var(--surface-control);
+  --operator-link: #9a3412;
+  --operator-link-hover: #7f1d1d;
+  --operator-title-size: 1rem;
+  --operator-body-size: 0.8125rem;
+  --operator-meta-size: 0.75rem;
+  --operator-label-size: 0.72rem;
+  --operator-value-size: 0.95rem;
+  --select-control-bg: var(--surface-control-raised);
+  --select-control-bg-hover:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 86%),
+    var(--surface-control-raised);
+  --select-control-bg-focus: var(--surface-control-focus);
+  --select-control-border: var(--color-border-strong);
+  --select-control-border-hover: var(--accent-primary-border);
+  --select-control-border-focus: var(--accent-primary-hover-border);
+  --select-control-text: var(--color-text);
+  --select-label-text: var(--color-text-muted);
+  --select-menu-bg:
+    linear-gradient(180deg, rgb(249 115 22 / 0.05), transparent 50%),
+    var(--surface-panel-raised);
+  --select-menu-border: var(--accent-primary-border);
+  --select-menu-shadow: 0 20px 48px rgb(15 23 42 / 0.16), 0 0 0 1px rgb(255 255 255 / 0.72);
+  --select-search-bg: var(--surface-control);
+  --select-option-bg: var(--surface-panel-raised);
+  --select-option-text: var(--color-text);
+  --select-option-hover-bg:
+    linear-gradient(90deg, rgb(249 115 22 / 0.1), transparent),
+    var(--color-surface-hover);
+  --select-option-hover-bg-solid: #fff1e7;
+  --select-option-active-bg:
+    linear-gradient(90deg, rgb(153 27 27 / 0.12), transparent),
+    var(--surface-control-raised);
+  --select-option-active-bg-solid: #fee2e2;
+  --select-option-active-text: var(--operator-link-hover);
 
   --text-primary: #172033;
   --text-muted: #64748b;
