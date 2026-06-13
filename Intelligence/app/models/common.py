@@ -64,6 +64,6 @@ class FactorDirection(str, Enum):
 class RecommendationFactorDto(ContractModel):
     code: str
     label: str
-    value: str | int | float | bool | None = None
+    value: Any | None = None
     weight: float
     direction: FactorDirection

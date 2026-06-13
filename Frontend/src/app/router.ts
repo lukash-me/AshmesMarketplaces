@@ -9,6 +9,7 @@ import MarketOpportunitiesPage from '@/features/market-opportunities/MarketOppor
 import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vue';
 import ParserReviewsPage from '@/features/parser-reviews/ParserReviewsPage.vue';
 import ProductsPage from '@/features/products/ProductsPage.vue';
+import WorkspaceMarketProductClustersPage from '@/features/workspace-market-products/WorkspaceMarketProductClustersPage.vue';
 import WorkspaceMarketProductsPage from '@/features/workspace-market-products/WorkspaceMarketProductsPage.vue';
 import AccessSettingsPage from '@/pages/AccessSettingsPage.vue';
 import ExpensesPage from '@/pages/ExpensesPage.vue';
@@ -38,6 +39,7 @@ export const router = createRouter({
       children: [
         { path: '', redirect: '/overview' },
         { path: 'overview', name: 'overview', component: OverviewPage },
+        { path: 'workspace/market-products/clusters', name: 'workspace-market-product-clusters', component: WorkspaceMarketProductClustersPage },
         { path: 'workspace/market-products', name: 'workspace-market-products', component: WorkspaceMarketProductsPage },
         { path: 'market/products', name: 'market-products', component: ParserProductsPage },
         { path: 'market/opportunities', name: 'market-opportunities', component: MarketOpportunitiesPage },

@@ -4,6 +4,7 @@ using System.Text.Json;
 using AshmesMarketplaces.DataAccess;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AshmesMarketplaces.DataAccess.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260611234248_WorkspaceMarketProductUserReadState")]
+    partial class WorkspaceMarketProductUserReadState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1043,155 +1046,6 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("WbRootId", "ObservedAtUtc");
 
                     b.ToTable("ParserLogisticsSnapshotRows", (string)null);
-                });
-
-            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductDetailRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<JsonDocument>("Characteristics")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("characteristics");
-
-                    b.Property<string>("Description")
-                        .HasColumnType("text")
-                        .HasColumnName("description");
-
-                    b.Property<JsonDocument>("GroupedOptions")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("grouped_options");
-
-                    b.Property<Guid>("IdParserFile")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id_parser_file");
-
-                    b.Property<Guid>("IdParserRun")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id_parser_run");
-
-                    b.Property<string>("InputProductsJsonl")
-                        .HasMaxLength(4096)
-                        .HasColumnType("character varying(4096)")
-                        .HasColumnName("input_products_jsonl");
-
-                    b.Property<string>("InputProductsParserRunId")
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)")
-                        .HasColumnName("input_products_parser_run_id");
-
-                    b.Property<string>("Marketplace")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("marketplace");
-
-                    b.Property<int?>("MediaCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("media_count");
-
-                    b.Property<DateTime>("ParsedAtUtc")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("parsed_at_utc");
-
-                    b.Property<string>("ParserRunId")
-                        .IsRequired()
-                        .HasMaxLength(160)
-                        .HasColumnType("character varying(160)")
-                        .HasColumnName("parser_run_id");
-
-                    b.Property<JsonDocument>("RawDetailFields")
-                        .HasColumnType("jsonb")
-                        .HasColumnName("raw_detail_fields");
-
-                    b.Property<string>("RequestFingerprint")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("request_fingerprint");
-
-                    b.Property<string>("RowHash")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("row_hash");
-
-                    b.Property<int>("SchemaVersion")
-                        .HasColumnType("integer")
-                        .HasColumnName("schema_version");
-
-                    b.Property<string>("SourceCategory")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("source_category");
-
-                    b.Property<string>("SourceEndpoint")
-                        .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)")
-                        .HasColumnName("source_endpoint");
-
-                    b.Property<long>("SourceLineNumber")
-                        .HasColumnType("bigint")
-                        .HasColumnName("source_line_number");
-
-                    b.Property<string>("SourceQuery")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("source_query");
-
-                    b.Property<string>("SourceRegionDest")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("source_region_dest");
-
-                    b.Property<string>("SourceRequestFamily")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("source_request_family");
-
-                    b.Property<string>("SourceSubcategory")
-                        .HasMaxLength(512)
-                        .HasColumnType("character varying(512)")
-                        .HasColumnName("source_subcategory");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("status");
-
-                    b.Property<string>("WbProductId")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("wb_product_id");
-
-                    b.Property<string>("WbRootId")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("wb_root_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IdParserRun");
-
-                    b.HasIndex("InputProductsParserRunId");
-
-                    b.HasIndex("ParserRunId");
-
-                    b.HasIndex("WbProductId");
-
-                    b.HasIndex("WbRootId");
-
-                    b.HasIndex("IdParserFile", "SourceLineNumber")
-                        .IsUnique();
-
-                    b.HasIndex("WbProductId", "ParsedAtUtc");
-
-                    b.ToTable("ParserProductDetailRows", (string)null);
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductRow", b =>
@@ -3945,21 +3799,6 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserLogisticsSnapshotRow", b =>
-                {
-                    b.HasOne("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserFile", null)
-                        .WithMany()
-                        .HasForeignKey("IdParserFile")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserRun", null)
-                        .WithMany()
-                        .HasForeignKey("IdParserRun")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductDetailRow", b =>
                 {
                     b.HasOne("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserFile", null)
                         .WithMany()

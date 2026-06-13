@@ -29,6 +29,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserImportExecution> ParserImportExecutions => Set<ParserImportExecution>();
     public DbSet<ParserImportError> ParserImportErrors => Set<ParserImportError>();
     public DbSet<ParserProductRow> ParserProductRows => Set<ParserProductRow>();
+    public DbSet<ParserProductDetailRow> ParserProductDetailRows => Set<ParserProductDetailRow>();
     public DbSet<ParserReviewRootFetch> ParserReviewRootFetches => Set<ParserReviewRootFetch>();
     public DbSet<ParserReviewRow> ParserReviewRows => Set<ParserReviewRow>();
     public DbSet<ParserReviewReplyRow> ParserReviewReplyRows => Set<ParserReviewReplyRow>();
@@ -44,6 +45,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();
     public DbSet<WorkspaceMarketProduct> WorkspaceMarketProducts => Set<WorkspaceMarketProduct>();
+    public DbSet<WorkspaceMarketProductUserReadState> WorkspaceMarketProductUserReadStates => Set<WorkspaceMarketProductUserReadState>();
     public DbSet<WorkspaceMarketProductAnalysisRun> WorkspaceMarketProductAnalysisRuns => Set<WorkspaceMarketProductAnalysisRun>();
     public DbSet<WorkspaceMarketProductAnalysis> WorkspaceMarketProductAnalyses => Set<WorkspaceMarketProductAnalysis>();
     public DbSet<Expense> Expenses => Set<Expense>();

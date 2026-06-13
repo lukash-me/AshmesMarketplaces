@@ -13,21 +13,39 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
 {
     private const string StatusCompleted = "completed";
     private const string DuplicateCardsKey = "duplicate_cards";
+    private const string FactorModeAll = "all";
+
+    private static readonly HashSet<string> DeprecatedFactorCodes = new(StringComparer.Ordinal)
+    {
+        "high_position_weak_reviews"
+    };
+
+    private static readonly HashSet<string> ContentEvidenceFactorCodes = new(StringComparer.Ordinal)
+    {
+        "high_position_weak_card",
+        "good_reviews_weak_card",
+        "weak_description",
+        "weak_visible_description",
+        "missing_key_specs"
+    };
+
     private static readonly IReadOnlyList<HotProductsGroupDefinition> GroupDefinitions =
     [
-        new("high_position_weak_reviews", "Слабые отзывы", "Карточка заметна в выдаче, но отзывы или оценка выглядят слабо."),
-        new("bad_recent_reviews", "Плохие последние отзывы", "Последние отзывы требуют проверки перед выбором товара."),
+        new("bad_recent_reviews", "Плохие последние отзывы", "Низкие оценки или негативный текст в последних отзывах."),
         new("repeated_review_complaint", "Повторяющаяся жалоба", "В отзывах повторяется один и тот же повод для проверки."),
-        new("weak_description", "Слабое описание", "Описание карточки выглядит коротким или неполным."),
-        new("weak_visible_description", "Слабое описание", "У видимых карточек есть признаки слабого описания."),
-        new("missing_key_specs", "Нет важных характеристик", "В карточке не хватает значимых характеристик для ниши."),
-        new("expensive_without_advantage", "Высокая цена", "Цена выше выборки, а явного преимущества по отзывам или рейтингу не видно."),
-        new("top_low_stock", "Низкий остаток", "Товар виден в выдаче, но наблюдаемый остаток низкий."),
+        new("weak_description", "Слабое описание", "Описание карточки короткое или неполное. Показывается только если описание получено."),
+        new("weak_visible_description", "Слабое описание", "У видимых карточек есть проверяемые признаки слабого описания."),
+        new("missing_key_specs", "Проверьте характеристики", "В полученных характеристиках не хватает значимых параметров для ниши."),
+        new("expensive_without_advantage", "Высокая цена", "Цена выше похожих товаров без видимого преимущества по оценке или отзывам."),
+        new("top_low_stock", "Низкий остаток", "Товар заметен в выдаче, но наблюдаемый остаток низкий."),
         new("fast_position_growth", "Быстрый рост", "Товар заметно улучшил позицию между наблюдениями."),
         new("duplicate_cards", "Одинаковые карточки", "В нише есть несколько очень похожих карточек."),
-        new("high_position_weak_card", "Слабая карточка в топе", "Карточка заметна в выдаче, но у нее есть слабые параметры."),
-        new("low_review_count_top_position", "Мало отзывов в топе", "Товар высоко в выдаче, но отзывов пока мало."),
-        new("good_reviews_weak_visibility", "Хорошие отзывы, слабая видимость", "У товара хорошие отзывы, но позиция в выдаче слабая.")
+        new("high_position_weak_card", "Слабая карточка в топе", "Товар высоко в выдаче, но карточка слаба по визуалу, описанию или характеристикам."),
+        new("low_review_count_top_position", "Мало отзывов в топе", "Товар высоко в выдаче, но отзывов меньше, чем у похожих товаров."),
+        new("good_reviews_weak_visibility", "Хорошие отзывы, слабая видимость", "У товара хорошие отзывы, но позиция в выдаче слабая."),
+        new("good_reviews_weak_card", "Хороший товар, слабая карточка", "Отзывы хорошие, но карточка выглядит неполной."),
+        new("good_reviews_low_stock", "Хорошие отзывы, низкий остаток", "Покупатели оценивают товар хорошо, но наблюдаемый остаток низкий."),
+        new("good_reviews_high_price", "Хорошие отзывы, высокая цена", "Отзывы хорошие, но цена выше похожих товаров.")
     ];
 
     private readonly ApplicationDbContext _dbContext;
@@ -76,16 +94,15 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
                 new HotProductsListResponse(null, page, pageSize, 0, [], []));
         }
 
-        var itemsQuery = ApplyItemFilters(
-            _dbContext.MarketHotProductRecommendations
-                .AsNoTracking()
-                .Where(x => x.IdMarketRecommendationRun == run.Id),
-            query);
-
-        var allItemRows = await itemsQuery
+        var allItemRows = await ApplyItemFilters(
+                _dbContext.MarketHotProductRecommendations
+                    .AsNoTracking()
+                    .Where(x => x.IdMarketRecommendationRun == run.Id),
+                query)
             .OrderBy(x => x.RankOrder)
             .ThenByDescending(x => x.Score)
             .ToListAsync(cancellationToken);
+
         if (allItemRows.Count == 0)
         {
             return ServiceResult<HotProductsListResponse>.Success(
@@ -95,13 +112,17 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         var thumbnailUrls = await LoadThumbnailUrlsAsync(allItemRows, cancellationToken);
         var allRunItems = allItemRows.Select(item => MapItem(item, thumbnailUrls)).ToList();
         var groupedItems = ApplyGroupFilter(allRunItems, query.GroupKey);
-        var totalCount = groupedItems.Count;
-        var itemRows = allItemRows
-            .Where(row => groupedItems.Any(item => item.Id == row.Id))
+        var filteredItems = ApplyFactorFilter(groupedItems, query);
+        var totalCount = filteredItems.Count;
+        var pageItemIds = filteredItems
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(x => x.Id)
+            .ToHashSet();
+        var pageItems = allItemRows
+            .Where(row => pageItemIds.Contains(row.Id))
+            .Select(item => MapItem(item, thumbnailUrls))
             .ToList();
-        var pageItems = itemRows.Select(item => MapItem(item, thumbnailUrls)).ToList();
 
         var response = new HotProductsListResponse(
             new HotProductsRunSummaryDto(
@@ -137,11 +158,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         var rows = await _dbContext.ParserProductRows
             .AsNoTracking()
             .Where(x => parserProductRowIds.Contains(x.Id))
-            .Select(x => new
-            {
-                x.Id,
-                x.ImageUrls
-            })
+            .Select(x => new { x.Id, x.ImageUrls })
             .ToListAsync(cancellationToken);
 
         return rows.ToDictionary(x => x.Id, x => GetFirstImageUrl(x.ImageUrls));
@@ -242,6 +259,32 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             .ToList();
     }
 
+    private static IReadOnlyList<HotProductRecommendationListItemDto> ApplyFactorFilter(
+        IReadOnlyList<HotProductRecommendationListItemDto> items,
+        HotProductsListQuery query)
+    {
+        var factorKeys = query.FactorKeys
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (factorKeys.Count == 0)
+            return items;
+
+        var requireAll = string.Equals(query.FactorMode?.Trim(), FactorModeAll, StringComparison.OrdinalIgnoreCase);
+        return items
+            .Where(item =>
+            {
+                var itemCodes = item.Factors
+                    .Select(x => x.Code)
+                    .ToHashSet(StringComparer.Ordinal);
+                return requireAll
+                    ? factorKeys.All(itemCodes.Contains)
+                    : factorKeys.Any(itemCodes.Contains);
+            })
+            .ToList();
+    }
+
     private static IReadOnlyList<HotProductsGroupDto> BuildGroups(
         IReadOnlyList<HotProductRecommendationListItemDto> items)
     {
@@ -258,13 +301,14 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             if (groupItems.Count == 0)
                 continue;
 
+            var clusters = definition.Key == DuplicateCardsKey ? BuildDuplicateClusters(groupItems) : [];
             groups.Add(new HotProductsGroupDto(
                 definition.Key,
                 definition.Title,
                 definition.Description,
                 groupItems.Count,
-                groupItems,
-                definition.Key == DuplicateCardsKey ? BuildDuplicateClusters(groupItems) : []));
+                definition.Key == DuplicateCardsKey && clusters.Count > 0 ? [] : groupItems,
+                clusters));
         }
 
         return groups;
@@ -273,7 +317,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
     private static IReadOnlyList<HotProductsDuplicateClusterDto> BuildDuplicateClusters(
         IReadOnlyList<HotProductRecommendationListItemDto> items)
     {
-        var clusters = items
+        return items
             .Select(item => new
             {
                 Item = item,
@@ -300,8 +344,6 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             .OrderByDescending(x => x.TotalCount)
             .ThenBy(x => x.Title, StringComparer.Ordinal)
             .ToList();
-
-        return clusters;
     }
 
     private static string? GetDuplicateClusterKey(HotProductRecommendationListItemDto item)
@@ -316,10 +358,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
     private static string GetDuplicateClusterTitle(HotProductRecommendationListItemDto item)
     {
         var name = item.ProductName.Trim();
-        if (name.Length <= 80)
-            return name;
-
-        return $"{name[..77]}...";
+        return name.Length <= 80 ? name : $"{name[..77]}...";
     }
 
     private static string NormalizeProductName(string? value)
@@ -362,8 +401,18 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             var factors = new List<HotProductRecommendationFactorDto>();
             foreach (var element in item.Factors.RootElement.EnumerateArray())
             {
-                if (TryMapFactor(element, out var factor))
+                if (TryMapFactor(element, out var factor)
+                    && !DeprecatedFactorCodes.Contains(factor.Code)
+                    && !IsUnsupportedLegacyContentFactor(factor))
+                {
+                    if (IsInvalidBadRecentReviewsFactor(factor)
+                        || IsInvalidLowReviewCountFactor(factor))
+                    {
+                        continue;
+                    }
+
                     factors.Add(factor);
+                }
             }
 
             return factors;
@@ -407,16 +456,8 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
                 return false;
             }
 
-            decimal weight;
-            if (weightElement.ValueKind == JsonValueKind.Number)
-            {
-                if (!weightElement.TryGetDecimal(out weight))
-                    return false;
-            }
-            else
-            {
+            if (weightElement.ValueKind != JsonValueKind.Number || !weightElement.TryGetDecimal(out var weight))
                 return false;
-            }
 
             JsonElement? value = null;
             if (element.TryGetProperty("value", out var valueElement))
@@ -437,6 +478,94 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         catch (InvalidOperationException)
         {
             return false;
+        }
+    }
+
+    private static bool IsUnsupportedLegacyContentFactor(HotProductRecommendationFactorDto factor)
+    {
+        return ContentEvidenceFactorCodes.Contains(factor.Code)
+            && (!factor.Value.HasValue || factor.Value.Value.ValueKind != JsonValueKind.Object);
+    }
+
+    private static bool IsInvalidBadRecentReviewsFactor(HotProductRecommendationFactorDto factor)
+    {
+        if (!string.Equals(factor.Code, "bad_recent_reviews", StringComparison.Ordinal))
+            return false;
+
+        var serialized = $"{factor.Label} {GetFactorValueText(factor)}".ToLowerInvariant();
+        if (serialized.Contains("оценка 0", StringComparison.Ordinal)
+            || serialized.Contains("averagerating\":0", StringComparison.Ordinal)
+            || serialized.Contains("reviewrating\":0", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!factor.Value.HasValue || factor.Value.Value.ValueKind != JsonValueKind.Object)
+            return true;
+
+        var value = factor.Value.Value;
+        if (ReadOptionalDecimal(value, "averageRating") == 0m
+            || ReadOptionalDecimal(value, "reviewRating") == 0m)
+        {
+            return true;
+        }
+
+        var lowRatingReviews = ReadOptionalInt(value, "lowRatingReviews") ?? 0;
+        var negativeTextReviews = ReadOptionalInt(value, "negativeTextReviews") ?? 0;
+        return lowRatingReviews <= 0 && negativeTextReviews <= 0;
+    }
+
+    private static bool IsInvalidLowReviewCountFactor(HotProductRecommendationFactorDto factor)
+    {
+        if (!string.Equals(factor.Code, "low_review_count_top_position", StringComparison.Ordinal))
+            return false;
+
+        if (!factor.Value.HasValue || factor.Value.Value.ValueKind != JsonValueKind.Object)
+            return true;
+
+        var value = factor.Value.Value;
+        var reviewCount = ReadOptionalInt(value, "reviewCount");
+        var peerMedianReviewCount = ReadOptionalInt(value, "peerMedianReviewCount");
+        var peerSampleSize = ReadOptionalInt(value, "peerSampleSize");
+        return reviewCount is null or < 0
+            || peerMedianReviewCount is null or <= 0
+            || peerSampleSize is null or < 5;
+    }
+
+    private static int? ReadOptionalInt(JsonElement value, string propertyName)
+    {
+        if (!value.TryGetProperty(propertyName, out var property))
+            return null;
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var intValue))
+            return intValue;
+
+        return null;
+    }
+
+    private static decimal? ReadOptionalDecimal(JsonElement value, string propertyName)
+    {
+        if (!value.TryGetProperty(propertyName, out var property))
+            return null;
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetDecimal(out var decimalValue))
+            return decimalValue;
+
+        return null;
+    }
+
+    private static string GetFactorValueText(HotProductRecommendationFactorDto factor)
+    {
+        if (!factor.Value.HasValue)
+            return string.Empty;
+
+        try
+        {
+            return factor.Value.Value.GetRawText();
+        }
+        catch (InvalidOperationException)
+        {
+            return string.Empty;
         }
     }
 

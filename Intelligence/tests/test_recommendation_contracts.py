@@ -228,6 +228,141 @@ class RecommendationContractTests(unittest.TestCase):
                 for word in banned:
                     self.assertNotIn(word, factor_text)
 
+    def test_zero_review_rating_without_negative_signal_is_not_bad_recent_review(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 1,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 1,
+            "averageRating": 0,
+            "lowRatingReviewCount": 0,
+            "negativeTextReviewCount": 0,
+            "latestReviewRunId": "wb_reviews_test",
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("bad_recent_reviews", codes)
+
+    def test_empty_positive_review_text_is_not_bad_recent_review(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 1,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 1,
+            "averageRating": 4,
+            "lowRatingReviewCount": 0,
+            "negativeTextReviewCount": 0,
+            "latestReviewRunId": "wb_reviews_test",
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("bad_recent_reviews", codes)
+
+    def test_low_rating_review_signal_creates_bad_recent_review_factor(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 5,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 5,
+            "averageRating": 2.6,
+            "lowRatingReviewCount": 3,
+            "negativeTextReviewCount": 0,
+            "latestReviewRunId": "wb_reviews_test",
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertIn("bad_recent_reviews", codes)
+
+    def test_low_review_count_top_position_uses_peer_cluster_comparison(self) -> None:
+        products = fixture_products(24)
+        products[0].update({
+            "feedbackCount": 9,
+            "parsedReviewCount": 3,
+            "position": 5,
+            "price": 760,
+            "walletPrice": 740,
+            "rating": 4.8,
+        })
+        for index in range(1, 12):
+            products[index].update({
+                "feedbackCount": 140 + index * 10,
+                "parsedReviewCount": 80 + index * 5,
+                "price": 730 + index * 5,
+                "walletPrice": 710 + index * 5,
+                "position": 6 + index,
+                "rating": 4.7,
+            })
+
+        payload = self.post_hot_products(
+            products,
+            {"maxRecommendations": 24, "minProductsForScoring": 5},
+        ).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        factor = next(
+            factor for factor in target["factors"]
+            if factor["code"] == "low_review_count_top_position"
+        )
+
+        self.assertEqual(factor["value"]["reviewCount"], 9)
+        self.assertGreaterEqual(factor["value"]["peerMedianReviewCount"], 100)
+        self.assertGreaterEqual(factor["value"]["peerSampleSize"], 5)
+        self.assertIn("против", factor["value"]["label"])
+
+    def test_low_review_count_top_position_requires_enough_peers(self) -> None:
+        products = fixture_products(6)
+        products[0].update({
+            "feedbackCount": 9,
+            "parsedReviewCount": 3,
+            "position": 5,
+            "price": 760,
+            "walletPrice": 740,
+            "rating": 4.8,
+        })
+        for index in range(1, 5):
+            products[index].update({
+                "feedbackCount": 160,
+                "parsedReviewCount": 90,
+                "price": 730 + index * 5,
+                "walletPrice": 710 + index * 5,
+                "position": 6 + index,
+                "rating": 4.7,
+            })
+        products[5]["price"] = 3000
+        products[5]["walletPrice"] = 3000
+
+        payload = self.post_hot_products(
+            products,
+            {"maxRecommendations": 6, "minProductsForScoring": 5},
+        ).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("low_review_count_top_position", codes)
+
     def test_unidentified_products_are_not_recommended(self) -> None:
         products = fixture_products(24)
         products[0]["productKey"] = None

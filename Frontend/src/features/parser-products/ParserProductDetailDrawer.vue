@@ -58,6 +58,9 @@ const activeImageIndex = computed(() =>
 );
 const productUrl = computed(() => getWildberriesProductUrl(displayProduct.value?.wbProductId));
 const positionSummary = computed(() => positionFor(displayProduct.value));
+const productDescription = computed(() => detail.value?.description?.trim() ?? '');
+const characteristicRows = computed(() => flattenCharacteristics(detail.value?.characteristics ?? null));
+const visualFacts = computed(() => detail.value?.visualAnalysis?.facts ?? []);
 
 watch(
   () => [props.open, props.product?.id] as const,
@@ -405,6 +408,52 @@ function positionLabel(position: ParserProductPosition): string {
   return 'Нет данных';
 }
 
+function flattenCharacteristics(value: ParserProductDetail['characteristics']): Array<{ name: string; value: string }> {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry, index) => normalizeCharacteristicEntry(entry, `Параметр ${index + 1}`))
+      .filter((entry): entry is { name: string; value: string } => Boolean(entry));
+  }
+
+  return Object.entries(value)
+    .map(([key, entry]) => normalizeCharacteristicEntry(entry, key))
+    .filter((entry): entry is { name: string; value: string } => Boolean(entry));
+}
+
+function normalizeCharacteristicEntry(entry: unknown, fallbackName: string): { name: string; value: string } | null {
+  if (entry === null || entry === undefined || entry === '') {
+    return null;
+  }
+
+  if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+    return { name: fallbackName, value: String(entry) };
+  }
+
+  if (Array.isArray(entry)) {
+    const value = entry.map((item) => String(item ?? '').trim()).filter(Boolean).join(', ');
+    return value ? { name: fallbackName, value } : null;
+  }
+
+  if (typeof entry === 'object') {
+    const record = entry as Record<string, unknown>;
+    const name = String(record.name ?? record.title ?? record.key ?? fallbackName).trim();
+    const rawValue = record.value ?? record.values ?? record.text;
+    if (Array.isArray(rawValue)) {
+      const value = rawValue.map((item) => String(item ?? '').trim()).filter(Boolean).join(', ');
+      return value ? { name, value } : null;
+    }
+
+    const value = String(rawValue ?? '').trim();
+    return value ? { name, value } : null;
+  }
+
+  return null;
+}
+
 </script>
 
 <template>
@@ -548,6 +597,37 @@ function positionLabel(position: ParserProductPosition): string {
           </section>
 
           <MarketProductObservedReviews :product="displayProduct" />
+
+          <section class="drawer__section">
+            <div class="drawer__section-title">
+              <h3>Описание</h3>
+            </div>
+            <p v-if="productDescription" class="drawer__text-block">{{ productDescription }}</p>
+            <p v-else class="drawer__empty">Описание товара не получено в текущем сборе данных.</p>
+          </section>
+
+          <section class="drawer__section">
+            <div class="drawer__section-title">
+              <h3>Характеристики</h3>
+            </div>
+            <dl v-if="characteristicRows.length" class="drawer__fields drawer__fields--two">
+              <div v-for="row in characteristicRows" :key="`${row.name}:${row.value}`">
+                <dt>{{ row.name }}</dt>
+                <dd>{{ row.value }}</dd>
+              </div>
+            </dl>
+            <p v-else class="drawer__empty">Характеристики товара не получены в текущем сборе данных.</p>
+          </section>
+
+          <section class="drawer__section">
+            <div class="drawer__section-title">
+              <h3>Визуальная карточка</h3>
+            </div>
+            <ul v-if="visualFacts.length" class="drawer__fact-list">
+              <li v-for="fact in visualFacts" :key="fact">{{ fact }}</li>
+            </ul>
+            <p v-else class="drawer__empty">Визуальный анализ изображений пока не рассчитан.</p>
+          </section>
 
           <section class="drawer__section">
             <h3>Цены и наличие</h3>
@@ -753,6 +833,24 @@ function positionLabel(position: ParserProductPosition): string {
   align-content: start;
   overflow-y: auto;
   padding: var(--space-3);
+}
+
+.drawer__text-block,
+.drawer__fact-list {
+  margin: 0;
+  border: 1px solid var(--operator-border-muted);
+  border-radius: var(--radius-md);
+  background: var(--operator-metric-bg);
+  color: var(--color-text);
+  font-size: var(--operator-body-size);
+  line-height: 1.55;
+  padding: var(--space-3);
+}
+
+.drawer__fact-list {
+  display: grid;
+  gap: var(--space-2);
+  padding-left: calc(var(--space-3) + 1rem);
 }
 
 .drawer__header-actions {

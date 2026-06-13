@@ -4,6 +4,7 @@ import { Eye, History, RefreshCw } from 'lucide-vue-next';
 
 import {
   getWorkspaceOverview,
+  markWorkspaceOverviewViewed,
   recalculateWorkspaceOverview
 } from '@/features/overview/workspaceOverview.api';
 import type {
@@ -43,13 +44,14 @@ const recalculating = ref(false);
 const error = ref('');
 const selectedProduct = ref<ParserProductListItem | null>(null);
 const activeSimilarGroups = ref<Record<string, string>>({});
+const markingViewedIds = ref<Set<string>>(new Set());
+const markingAllViewed = ref(false);
 let requestVersion = 0;
 
 const activeWorkspaceId = computed(() => workspace.activeWorkspaceId.value);
 const hasProducts = computed(() => (overview.value?.workspaceProductCount ?? 0) > 0);
-const hasAnalysis = computed(() => Boolean(overview.value?.lastAnalysis));
 const groups = computed<WorkspaceOverviewGroup[]>(() =>
-  overview.value ? [overview.value.competitors, overview.value.ideas] : []
+  overview.value ? [overview.value.newItems] : []
 );
 
 watch(
@@ -107,6 +109,55 @@ async function recalculate(): Promise<void> {
   } finally {
     recalculating.value = false;
   }
+}
+
+async function markViewed(product: WorkspaceOverviewProduct): Promise<void> {
+  const workspaceId = activeWorkspaceId.value;
+  if (!workspaceId || markingViewedIds.value.has(product.id)) {
+    return;
+  }
+
+  setMarkingViewed(product.id, true);
+  error.value = '';
+
+  try {
+    await markWorkspaceOverviewViewed(workspaceId, { productIds: [product.id] });
+    await loadOverview();
+  } catch (requestError) {
+    error.value = getProblemMessage(requestError, 'Не удалось отметить изменения просмотренными.');
+  } finally {
+    setMarkingViewed(product.id, false);
+  }
+}
+
+async function markAllViewed(): Promise<void> {
+  const workspaceId = activeWorkspaceId.value;
+  const productIds = overview.value?.newItems.products.map((product) => product.id) ?? [];
+  if (!workspaceId || productIds.length === 0 || markingAllViewed.value) {
+    return;
+  }
+
+  markingAllViewed.value = true;
+  error.value = '';
+
+  try {
+    await markWorkspaceOverviewViewed(workspaceId, { productIds });
+    await loadOverview();
+  } catch (requestError) {
+    error.value = getProblemMessage(requestError, 'Не удалось отметить все изменения просмотренными.');
+  } finally {
+    markingAllViewed.value = false;
+  }
+}
+
+function setMarkingViewed(id: string, marking: boolean): void {
+  const next = new Set(markingViewedIds.value);
+  if (marking) {
+    next.add(id);
+  } else {
+    next.delete(id);
+  }
+  markingViewedIds.value = next;
 }
 
 function formatNumber(value: number | null | undefined): string {
@@ -585,17 +636,6 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
       </RouterLink>
     </EmptyState>
 
-    <EmptyState
-      v-else-if="!hasAnalysis"
-      title="Анализ еще не рассчитан"
-      description="Запустите обновление, чтобы увидеть изменения, сигналы и похожие товары по выбранным карточкам."
-    >
-      <Button variant="primary" :loading="recalculating" @click="recalculate">
-        <RefreshCw :size="16" />
-        Обновить анализ
-      </Button>
-    </EmptyState>
-
     <template v-else>
       <section
         v-for="group in groups"
@@ -607,12 +647,20 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
             <h2>{{ group.label }}</h2>
             <span>{{ group.count }} товаров</span>
           </div>
+          <Button
+            v-if="group.key === 'new' && group.products.length > 0"
+            variant="primary"
+            :loading="markingAllViewed"
+            @click="markAllViewed"
+          >
+            Отметить все просмотренными
+          </Button>
         </header>
 
         <EmptyState
           v-if="group.products.length === 0"
-          title="В этой группе нет товаров"
-          description="Изменить тег можно на странице наблюдаемых товаров."
+          :title="group.key === 'new' ? 'Новых изменений нет' : 'В этой группе нет товаров'"
+          :description="group.key === 'new' ? 'Когда по наблюдаемым товарам появятся изменения после вашего последнего просмотра, они появятся здесь.' : 'Изменить тег можно на странице наблюдаемых товаров.'"
         />
 
         <div v-else class="overview-list">
@@ -743,6 +791,14 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
             </div>
 
             <footer class="overview-card__actions">
+              <Button
+                v-if="group.key === 'new'"
+                variant="primary"
+                :loading="markingViewedIds.has(product.id)"
+                @click="markViewed(product)"
+              >
+                Отметить просмотренным
+              </Button>
               <button class="app-operator-link" type="button" @click="openProduct(product)">
                 <Eye :size="15" />
                 Карточка

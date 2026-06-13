@@ -41,7 +41,15 @@ export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbn
   sourceFileSha256: string;
   sourceLineNumber: number;
   rowHash: string;
+  description: string | null;
+  characteristics: Record<string, unknown> | unknown[] | null;
+  visualAnalysis: ParserProductVisualAnalysis | null;
   logisticsDetail?: ParserProductLogisticsDetail | null;
+}
+
+export interface ParserProductVisualAnalysis {
+  state: string;
+  facts: string[];
 }
 
 export interface ParserProductLogisticsSummary {

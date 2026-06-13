@@ -216,7 +216,10 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertIn("[market-refresh] DRY-RUN rank", output.getvalue())
         self.assertIn("[market-refresh] PLAN products", output.getvalue())
         self.assertIn("[market-refresh] PLAN logistics", output.getvalue())
-        self.assertEqual([step["step_name"] for step in manifest["steps"]], ["rank", "products", "logistics", "reviews"])
+        self.assertEqual(
+            [step["step_name"] for step in manifest["steps"]],
+            ["rank", "products", "logistics", "reviews", "product_details"],
+        )
         self.assertEqual({step["status"] for step in manifest["steps"]}, {"skipped"})
         self.assertEqual(manifest["status"], "succeeded")
         self.assertTrue(manifest["dry_run"])

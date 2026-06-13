@@ -18,7 +18,7 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
     private const string AlgorithmVersionFallback = "0.1.0";
     private const string ModelVersionFallback = "rules";
     private const int MaxCandidatesPerProduct = 80;
-    private const int MaxSimilarProducts = 5;
+    private const int MaxSimilarProducts = 12;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -57,7 +57,18 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                 .Where(x => x.IdAnalysisRun == run.Id)
                 .ToDictionaryAsync(x => x.IdWorkspaceMarketProduct, cancellationToken);
 
-        return ServiceResult<WorkspaceOverviewResponse>.Success(MapOverview(products, run, analyses));
+        var productIds = products.Select(x => x.Id).ToHashSet();
+        var readStates = await _dbContext.WorkspaceMarketProductUserReadStates
+            .AsNoTracking()
+            .Where(x => x.IdUser == _currentUser.UserId!.Value && productIds.Contains(x.IdWorkspaceMarketProduct))
+            .ToDictionaryAsync(x => x.IdWorkspaceMarketProduct, cancellationToken);
+        var currentSnapshots = new Dictionary<Guid, CurrentSnapshot>();
+        foreach (var product in products)
+        {
+            currentSnapshots[product.Id] = await LoadCurrentSnapshotAsync(product, cancellationToken);
+        }
+
+        return ServiceResult<WorkspaceOverviewResponse>.Success(MapOverview(products, run, analyses, readStates, currentSnapshots));
     }
 
     public async Task<ServiceResult<WorkspaceOverviewRecalculateResponse>> RecalculateAsync(
@@ -205,6 +216,74 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                 runDto.Warnings));
     }
 
+    public async Task<ServiceResult<WorkspaceOverviewMarkViewedResponse>> MarkViewedAsync(
+        Guid workspaceId,
+        WorkspaceOverviewMarkViewedRequest request,
+        CancellationToken cancellationToken)
+    {
+        var access = await EnsureWorkspaceAccessAsync(workspaceId, cancellationToken);
+        if (!access.IsSuccess)
+            return PropagateError<WorkspaceOverviewMarkViewedResponse>(access.Error!);
+
+        if (request.ProductIds.Count == 0)
+            return ServiceResult<WorkspaceOverviewMarkViewedResponse>.BadRequest("At least one product id is required.");
+
+        var requestedProductIds = request.ProductIds
+            .Where(x => x != Guid.Empty)
+            .Distinct()
+            .ToArray();
+
+        if (requestedProductIds.Length == 0)
+            return ServiceResult<WorkspaceOverviewMarkViewedResponse>.BadRequest("At least one valid product id is required.");
+
+        var products = await _dbContext.WorkspaceMarketProducts
+            .Where(x => x.IdWorkspace == workspaceId && requestedProductIds.Contains(x.Id))
+            .ToListAsync(cancellationToken);
+
+        if (products.Count != requestedProductIds.Length)
+            return ServiceResult<WorkspaceOverviewMarkViewedResponse>.NotFound("One or more workspace market products were not found.");
+
+        var userId = _currentUser.UserId!.Value;
+        var existingStates = await _dbContext.WorkspaceMarketProductUserReadStates
+            .Where(x => x.IdUser == userId && requestedProductIds.Contains(x.IdWorkspaceMarketProduct))
+            .ToDictionaryAsync(x => x.IdWorkspaceMarketProduct, cancellationToken);
+        var viewedAt = DateTime.UtcNow;
+
+        foreach (var product in products)
+        {
+            var snapshot = await LoadCurrentSnapshotAsync(product, cancellationToken);
+            if (existingStates.TryGetValue(product.Id, out var state))
+            {
+                state.Update(
+                    viewedAt,
+                    snapshot.ObservedAtUtc,
+                    snapshot.Price,
+                    snapshot.Position,
+                    snapshot.Stock,
+                    snapshot.FeedbackCount,
+                    snapshot.ReviewRating);
+            }
+            else
+            {
+                _dbContext.WorkspaceMarketProductUserReadStates.Add(new WorkspaceMarketProductUserReadState(
+                    product.Id,
+                    userId,
+                    viewedAt,
+                    snapshot.ObservedAtUtc,
+                    snapshot.Price,
+                    snapshot.Position,
+                    snapshot.Stock,
+                    snapshot.FeedbackCount,
+                    snapshot.ReviewRating));
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return ServiceResult<WorkspaceOverviewMarkViewedResponse>.Success(
+            new WorkspaceOverviewMarkViewedResponse(products.Count, viewedAt));
+    }
+
     private async Task<WorkspaceMarketProductAnalysisRun?> LoadLatestRunAsync(Guid workspaceId, CancellationToken cancellationToken)
     {
         return await _dbContext.WorkspaceMarketProductAnalysisRuns
@@ -218,13 +297,30 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
     private WorkspaceOverviewResponse MapOverview(
         IReadOnlyList<WorkspaceMarketProduct> products,
         WorkspaceMarketProductAnalysisRun? run,
-        IReadOnlyDictionary<Guid, WorkspaceMarketProductAnalysis> analyses)
+        IReadOnlyDictionary<Guid, WorkspaceMarketProductAnalysis> analyses,
+        IReadOnlyDictionary<Guid, WorkspaceMarketProductUserReadState> readStates,
+        IReadOnlyDictionary<Guid, CurrentSnapshot> currentSnapshots)
     {
         var items = products.Select(product =>
         {
             analyses.TryGetValue(product.Id, out var analysis);
             return MapProduct(product, analysis);
         }).ToList();
+        var newItems = products
+            .Select(product =>
+            {
+                analyses.TryGetValue(product.Id, out var analysis);
+                readStates.TryGetValue(product.Id, out var readState);
+                currentSnapshots.TryGetValue(product.Id, out var currentSnapshot);
+                currentSnapshot ??= CurrentSnapshot.FromWorkspaceProduct(product);
+                var viewedChanges = BuildViewedChanges(product, currentSnapshot, readState);
+                return HasVisibleChange(viewedChanges)
+                    ? MapProduct(product, analysis, viewedChanges, currentSnapshot)
+                    : null;
+            })
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .ToList();
         var signalCount = items.Sum(x => x.Signals.Count);
         var similarCount = items.Sum(x => x.SimilarProducts.Count);
 
@@ -233,6 +329,11 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             products.Count,
             signalCount,
             similarCount,
+            new WorkspaceOverviewGroupDto(
+                "new",
+                "Новое",
+                newItems.Count,
+                newItems),
             new WorkspaceOverviewGroupDto(
                 WorkspaceMarketProduct.CompetitorTag,
                 "Конкуренты",
@@ -245,7 +346,11 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                 items.Where(x => x.TagKey == WorkspaceMarketProduct.IdeaTag).ToList()));
     }
 
-    private WorkspaceOverviewProductDto MapProduct(WorkspaceMarketProduct product, WorkspaceMarketProductAnalysis? analysis)
+    private WorkspaceOverviewProductDto MapProduct(
+        WorkspaceMarketProduct product,
+        WorkspaceMarketProductAnalysis? analysis,
+        ViewedChanges? viewedChanges = null,
+        CurrentSnapshot? currentSnapshot = null)
     {
         var signals = analysis is null ? [] : DeserializeSignals(analysis.Signals);
         var similar = analysis is null ? [] : DeserializeSimilarProducts(analysis.SimilarProducts);
@@ -257,27 +362,82 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             product.WbProductId,
             product.WbRootId,
             product.TagKey,
+            product.Note,
             product.Name,
             product.BrandName,
             product.SellerName,
             product.ThumbnailUrl,
             product.SourceCategory,
             product.SourceSubcategory,
-            analysis?.CurrentPrice ?? CurrentPrice(product),
-            analysis?.CurrentPosition ?? product.PositionAbsolute,
-            analysis?.CurrentStock ?? product.TotalQuantity,
-            analysis?.CurrentFeedbackCount ?? product.FeedbackCount,
-            analysis?.CurrentReviewRating ?? product.ReviewRating,
-            analysis?.LatestObservedAtUtc,
-            Change("price", "Цена", analysis?.CurrentPrice, analysis?.PreviousPrice, analysis?.PriceDelta, "₽"),
-            Change("position", "Позиция", analysis?.CurrentPosition, analysis?.PreviousPosition, analysis?.PositionDelta, null, lowerIsBetter: true),
-            Change("stock", "Остатки", analysis?.CurrentStock, analysis?.PreviousStock, analysis?.StockDelta, null),
-            Change("feedbacks", "Отзывы", analysis?.CurrentFeedbackCount, analysis?.PreviousFeedbackCount, analysis?.FeedbackDelta, null),
-            Change("reviewRating", "Оценка", analysis?.CurrentReviewRating, analysis?.PreviousReviewRating, analysis?.ReviewRatingDelta, null),
+            viewedChanges?.Price.CurrentValue ?? currentSnapshot?.Price ?? analysis?.CurrentPrice ?? CurrentPrice(product),
+            ToInt(viewedChanges?.Position.CurrentValue) ?? currentSnapshot?.Position ?? analysis?.CurrentPosition ?? product.PositionAbsolute,
+            ToInt(viewedChanges?.Stock.CurrentValue) ?? currentSnapshot?.Stock ?? analysis?.CurrentStock ?? product.TotalQuantity,
+            ToInt(viewedChanges?.Feedback.CurrentValue) ?? currentSnapshot?.FeedbackCount ?? analysis?.CurrentFeedbackCount ?? product.FeedbackCount,
+            viewedChanges?.ReviewRating.CurrentValue ?? currentSnapshot?.ReviewRating ?? analysis?.CurrentReviewRating ?? product.ReviewRating,
+            currentSnapshot?.ObservedAtUtc ?? analysis?.LatestObservedAtUtc,
+            viewedChanges?.Price ?? Change("price", "Цена", analysis?.CurrentPrice, analysis?.PreviousPrice, analysis?.PriceDelta, "₽"),
+            viewedChanges?.Position ?? Change("position", "Позиция", analysis?.CurrentPosition, analysis?.PreviousPosition, analysis?.PositionDelta, null, lowerIsBetter: true),
+            viewedChanges?.Stock ?? Change("stock", "Остатки", analysis?.CurrentStock, analysis?.PreviousStock, analysis?.StockDelta, null),
+            viewedChanges?.Feedback ?? Change("feedbacks", "Отзывы", analysis?.CurrentFeedbackCount, analysis?.PreviousFeedbackCount, analysis?.FeedbackDelta, null),
+            viewedChanges?.ReviewRating ?? Change("reviewRating", "Оценка", analysis?.CurrentReviewRating, analysis?.PreviousReviewRating, analysis?.ReviewRatingDelta, null),
             signals,
             similar,
             similarGroups);
     }
+
+    private async Task<CurrentSnapshot> LoadCurrentSnapshotAsync(
+        WorkspaceMarketProduct product,
+        CancellationToken cancellationToken)
+    {
+        var history = await LoadHistoryAsync(product, cancellationToken);
+
+        return new CurrentSnapshot(
+            history.Price.Current ?? CurrentPrice(product),
+            ToInt(history.Position.Current) ?? product.PositionAbsolute,
+            ToInt(history.Stock.Current) ?? product.TotalQuantity,
+            ToInt(history.Feedback.Current) ?? product.FeedbackCount,
+            history.ReviewRating.Current ?? product.ReviewRating,
+            history.LatestObservedAtUtc ?? product.DateUpdate);
+    }
+
+    private static ViewedChanges BuildViewedChanges(
+        WorkspaceMarketProduct product,
+        CurrentSnapshot current,
+        WorkspaceMarketProductUserReadState? readState)
+    {
+        var baseline = readState is null
+            ? CurrentSnapshot.FromWorkspaceProduct(product)
+            : new CurrentSnapshot(
+                readState.BaselinePrice,
+                readState.BaselinePosition,
+                readState.BaselineStock,
+                readState.BaselineFeedbackCount,
+                readState.BaselineReviewRating,
+                readState.BaselineObservedAtUtc);
+
+        return new ViewedChanges(
+            Change("price", "Цена", current.Price, baseline.Price, Delta(current.Price, baseline.Price), "₽"),
+            Change("position", "Позиция", current.Position, baseline.Position, Delta(current.Position, baseline.Position), null, lowerIsBetter: true),
+            Change("stock", "Остатки", current.Stock, baseline.Stock, Delta(current.Stock, baseline.Stock), null),
+            Change("feedbacks", "Отзывы", current.FeedbackCount, baseline.FeedbackCount, Delta(current.FeedbackCount, baseline.FeedbackCount), null),
+            Change("reviewRating", "Оценка", current.ReviewRating, baseline.ReviewRating, Delta(current.ReviewRating, baseline.ReviewRating), null));
+    }
+
+    private static bool HasVisibleChange(ViewedChanges changes) =>
+        HasChange(changes.Price)
+        || HasChange(changes.Position)
+        || HasChange(changes.Stock)
+        || HasChange(changes.Feedback)
+        || HasChange(changes.ReviewRating);
+
+    private static bool HasChange(WorkspaceOverviewChangeDto change) =>
+        change.Delta.HasValue && change.Delta.Value != 0;
+
+    private static decimal? Delta(decimal? current, decimal? previous) =>
+        current.HasValue && previous.HasValue ? current - previous : null;
+
+    private static int? Delta(int? current, int? previous) =>
+        current.HasValue && previous.HasValue ? current - previous : null;
 
     private static WorkspaceOverviewChangeDto Change(
         string key,
@@ -466,7 +626,11 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             null,
             null,
             ToInt(history.Stock.Current) ?? product.TotalQuantity,
-            history.LatestObservedAtUtc);
+            history.LatestObservedAtUtc,
+            Description: null,
+            Characteristics: null,
+            ImageCount: null,
+            ReviewSignals: null);
 
     private static MarketProductFeatureDto BuildFeature(ParserProductRow row) =>
         new(
@@ -489,7 +653,11 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             null,
             null,
             row.TotalQuantity,
-            row.ParsedAtUtc);
+            row.ParsedAtUtc,
+            Description: null,
+            Characteristics: null,
+            ImageCount: row.ImageCount,
+            ReviewSignals: null);
 
     private static WorkspaceProductHistoryDto BuildIntelligenceHistory(ProductHistory history) =>
         new(
@@ -813,6 +981,31 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
     private sealed record ProductChange(decimal? Current, decimal? Previous, decimal? Delta);
 
     private sealed record HistoryPoint(DateTime ObservedAtUtc, decimal? Value);
+
+    private sealed record CurrentSnapshot(
+        decimal? Price,
+        int? Position,
+        int? Stock,
+        int? FeedbackCount,
+        decimal? ReviewRating,
+        DateTime? ObservedAtUtc)
+    {
+        public static CurrentSnapshot FromWorkspaceProduct(WorkspaceMarketProduct product) =>
+            new(
+                CurrentPrice(product),
+                product.PositionAbsolute,
+                product.TotalQuantity,
+                product.FeedbackCount,
+                product.ReviewRating,
+                product.DateUpdate);
+    }
+
+    private sealed record ViewedChanges(
+        WorkspaceOverviewChangeDto Price,
+        WorkspaceOverviewChangeDto Position,
+        WorkspaceOverviewChangeDto Stock,
+        WorkspaceOverviewChangeDto Feedback,
+        WorkspaceOverviewChangeDto ReviewRating);
 
     private sealed record CandidateFeature(ParserProductRow Row, MarketProductFeatureDto Feature, int? Position);
 

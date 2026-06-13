@@ -48,6 +48,21 @@ public sealed class WorkspaceOverviewController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpPost("new/mark-viewed")]
+    [ProducesResponseType(typeof(WorkspaceOverviewMarkViewedResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<WorkspaceOverviewMarkViewedResponse>> MarkViewed(
+        Guid workspaceId,
+        [FromBody] WorkspaceOverviewMarkViewedRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _service.MarkViewedAsync(workspaceId, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
     private ActionResult<T> ToActionResult<T>(ServiceResult<T> result)
     {
         if (result.IsSuccess)

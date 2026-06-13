@@ -24,6 +24,11 @@ public interface IParserIngestionService
         ParserIngestionOptions options,
         CancellationToken cancellationToken);
 
+    Task<ParserIngestionResult> ValidateProductDetailsAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken);
+
     Task<ParserIngestionResult> StageProductsAsync(
         string runDirectory,
         ParserIngestionOptions options,
@@ -40,6 +45,11 @@ public interface IParserIngestionService
         CancellationToken cancellationToken);
 
     Task<ParserIngestionResult> StageLogisticsAsync(
+        string runDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken);
+
+    Task<ParserIngestionResult> StageProductDetailsAsync(
         string runDirectory,
         ParserIngestionOptions options,
         CancellationToken cancellationToken);

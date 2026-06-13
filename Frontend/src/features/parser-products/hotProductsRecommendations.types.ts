@@ -2,6 +2,8 @@ export interface HotProductsListParams {
   sourceCategory?: string;
   sourceSubcategory?: string;
   groupKey?: string;
+  factorKeys?: string[];
+  factorMode?: 'any' | 'all';
   wbProductId?: string;
   wbRootId?: string;
   page?: number;
@@ -106,7 +108,7 @@ export interface HotProductRecommendationItem {
 export interface HotProductRecommendationFactor {
   code: string;
   label: string;
-  value: string | number | boolean | null;
+  value: string | number | boolean | Record<string, unknown> | null;
   weight: number;
   direction: 'positive' | 'negative' | 'neutral' | string;
 }

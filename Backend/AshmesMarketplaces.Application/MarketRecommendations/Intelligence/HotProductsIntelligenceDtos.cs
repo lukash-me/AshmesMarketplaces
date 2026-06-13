@@ -43,7 +43,20 @@ public sealed record MarketProductFeatureDto(
     string? PositionState,
     int? ObservedRangeLimit,
     int? TotalQuantity,
-    DateTime? SnapshotAtUtc);
+    DateTime? SnapshotAtUtc,
+    string? Description,
+    JsonElement? Characteristics,
+    int? ImageCount,
+    MarketProductReviewSignalDto? ReviewSignals);
+
+public sealed record MarketProductReviewSignalDto(
+    int ParsedReviewCount,
+    int ParsedReplyCount,
+    int RatedReviewCount,
+    decimal? AverageRating,
+    int LowRatingReviewCount,
+    int NegativeTextReviewCount,
+    string? LatestReviewRunId);
 
 public sealed record HotProductsIntelligenceResponse(
     string RequestId,

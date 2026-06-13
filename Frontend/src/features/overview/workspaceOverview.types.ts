@@ -1,4 +1,5 @@
 export type WorkspaceOverviewTagKey = 'competitor' | 'idea';
+export type WorkspaceOverviewGroupKey = WorkspaceOverviewTagKey | 'new';
 export type WorkspaceOverviewChangeState = 'positive' | 'negative' | 'neutral' | 'unknown';
 
 export interface WorkspaceOverviewRun {
@@ -70,6 +71,7 @@ export interface WorkspaceOverviewProduct {
   wbProductId: string;
   wbRootId: string | null;
   tagKey: WorkspaceOverviewTagKey;
+  note: string | null;
   name: string;
   brandName: string | null;
   sellerName: string | null;
@@ -93,7 +95,7 @@ export interface WorkspaceOverviewProduct {
 }
 
 export interface WorkspaceOverviewGroup {
-  key: WorkspaceOverviewTagKey;
+  key: WorkspaceOverviewGroupKey;
   label: string;
   count: number;
   products: WorkspaceOverviewProduct[];
@@ -104,6 +106,7 @@ export interface WorkspaceOverview {
   workspaceProductCount: number;
   signalCount: number;
   similarProductCount: number;
+  newItems: WorkspaceOverviewGroup;
   competitors: WorkspaceOverviewGroup;
   ideas: WorkspaceOverviewGroup;
 }
@@ -114,4 +117,13 @@ export interface WorkspaceOverviewRecalculateResponse {
   signalCount: number;
   similarProductCount: number;
   warnings: string[];
+}
+
+export interface WorkspaceOverviewMarkViewedRequest {
+  productIds: string[];
+}
+
+export interface WorkspaceOverviewMarkViewedResponse {
+  updatedCount: number;
+  viewedAtUtc: string;
 }

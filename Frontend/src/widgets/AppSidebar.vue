@@ -33,6 +33,8 @@ type OrdersSection = 'all' | 'assumed-orders' | 'new-products' | 'restocks';
 const route = useRoute();
 const theme = useThemeStore();
 const themeMenuOpen = ref(false);
+const workspaceMarketProductsPath = '/workspace/market-products';
+const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
 const marketIntelligencePath = '/market/intelligence';
 const ordersPath = '/orders';
 const marketIntelligenceSections: Array<{ key: MarketIntelligenceSection; label: string }> = [
@@ -52,8 +54,10 @@ const ordersSections: Array<{ key: OrdersSection; label: string }> = [
 const ordersSectionKeys = ordersSections.map((section) => section.key);
 
 const primaryNavItems = [
-  { to: '/overview', label: 'Обзор', icon: LayoutDashboard },
-  { to: '/workspace/market-products', label: 'Наблюдаемые товары', icon: BookmarkCheck },
+  { to: '/overview', label: 'Обзор', icon: LayoutDashboard }
+];
+
+const marketNavItems = [
   { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 },
   { to: '/market/opportunities', label: 'Перспективные товары', icon: Lightbulb }
 ];
@@ -65,6 +69,8 @@ const secondaryNavItems = [
 ];
 
 const isMarketIntelligenceRoute = computed(() => route.path === marketIntelligencePath);
+const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(workspaceMarketProductsPath));
+const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
 const isOrdersRoute = computed(() => route.path === ordersPath);
 const activeMarketIntelligenceSection = computed(() =>
   isMarketIntelligenceRoute.value ? normalizeMarketIntelligenceSection(route.query.section) : null
@@ -151,6 +157,40 @@ function selectTheme(value: 'obsidian' | 'ash') {
     <nav class="sidebar__nav">
       <RouterLink
         v-for="item in primaryNavItems"
+        :key="item.to"
+        class="sidebar__link"
+        :to="item.to"
+        @click="$emit('close')"
+      >
+        <component :is="item.icon" :size="17" />
+        <span>{{ item.label }}</span>
+      </RouterLink>
+
+      <div class="sidebar__group">
+        <RouterLink
+          class="sidebar__link"
+          :class="{ 'sidebar__link--active': isWorkspaceMarketProductsRoute }"
+          :to="{ path: workspaceMarketProductsPath }"
+          @click="$emit('close')"
+        >
+          <BookmarkCheck :size="17" />
+          <span>Наблюдаемые товары</span>
+        </RouterLink>
+
+        <div class="sidebar__subnav" aria-label="Разделы наблюдаемых товаров">
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isWorkspaceMarketProductClustersRoute }"
+            :to="{ path: workspaceMarketProductClustersPath }"
+            @click="$emit('close')"
+          >
+            Кластерный анализ
+          </RouterLink>
+        </div>
+      </div>
+
+      <RouterLink
+        v-for="item in marketNavItems"
         :key="item.to"
         class="sidebar__link"
         :to="item.to"

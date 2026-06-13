@@ -5,6 +5,7 @@ public sealed record WorkspaceOverviewResponse(
     int WorkspaceProductCount,
     int SignalCount,
     int SimilarProductCount,
+    WorkspaceOverviewGroupDto NewItems,
     WorkspaceOverviewGroupDto Competitors,
     WorkspaceOverviewGroupDto Ideas);
 
@@ -31,6 +32,7 @@ public sealed record WorkspaceOverviewProductDto(
     string WbProductId,
     string? WbRootId,
     string TagKey,
+    string? Note,
     string Name,
     string? BrandName,
     string? SellerName,
@@ -104,3 +106,10 @@ public sealed record WorkspaceOverviewRecalculateResponse(
     int SignalCount,
     int SimilarProductCount,
     IReadOnlyList<string> Warnings);
+
+public sealed record WorkspaceOverviewMarkViewedRequest(
+    IReadOnlyList<Guid> ProductIds);
+
+public sealed record WorkspaceOverviewMarkViewedResponse(
+    int UpdatedCount,
+    DateTime ViewedAtUtc);

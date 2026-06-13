@@ -184,8 +184,9 @@ public sealed class ParserProductReadService : IParserProductReadService
             .AsNoTracking()
             .FirstAsync(x => x.Id == row.IdParserFile, cancellationToken);
         var evidence = await LoadEvidenceAsync([row], includeLogisticsDetail: true, cancellationToken);
+        var details = await LoadProductDetailAsync(row, cancellationToken);
 
-        return ServiceResult<ParserProductDetailDto>.Success(MapToDetail(row, sourceFile, evidence));
+        return ServiceResult<ParserProductDetailDto>.Success(MapToDetail(row, sourceFile, evidence, details));
     }
 
     private async Task<IQueryable<ParserProductRow>?> BuildEffectiveProductRowsAsync(
@@ -284,6 +285,22 @@ public sealed class ParserProductReadService : IParserProductReadService
             .ThenByDescending(x => x.DateRegisteredUtc)
             .ThenByDescending(x => x.StartedAtUtc)
             .Select(x => x.ParserRunId)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<ParserProductDetailRow?> LoadProductDetailAsync(
+        ParserProductRow product,
+        CancellationToken cancellationToken)
+    {
+        return await _dbContext.ParserProductDetailRows
+            .AsNoTracking()
+            .Where(x =>
+                x.WbProductId == product.WbProductId
+                && x.Status == "succeeded"
+                && (x.InputProductsParserRunId == product.ParserRunId || x.InputProductsParserRunId == null))
+            .OrderByDescending(x => x.InputProductsParserRunId == product.ParserRunId)
+            .ThenByDescending(x => x.ParsedAtUtc)
+            .ThenByDescending(x => x.SourceLineNumber)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -1520,7 +1537,8 @@ public sealed class ParserProductReadService : IParserProductReadService
     private static ParserProductDetailDto MapToDetail(
         ParserProductRow row,
         ParserFile sourceFile,
-        ProductEvidenceLookup evidence)
+        ProductEvidenceLookup evidence,
+        ParserProductDetailRow? details)
     {
         return new ParserProductDetailDto(
             row.Id,
@@ -1561,7 +1579,10 @@ public sealed class ParserProductReadService : IParserProductReadService
             evidence.GetPosition(row.Id),
             evidence.GetLogisticsSummary(row.Id),
             evidence.GetLogisticsDetail(row.Id),
-            evidence.GetReviewEvidence(row.Id));
+            Description: details?.Description,
+            Characteristics: details?.Characteristics?.RootElement.Clone(),
+            VisualAnalysis: null,
+            ParsedReviewEvidence: evidence.GetReviewEvidence(row.Id));
     }
 
     private static IReadOnlyList<string> GetImageUrls(JsonDocument? imageUrls)

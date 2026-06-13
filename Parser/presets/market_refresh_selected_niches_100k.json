@@ -47,6 +47,18 @@
         "retry_queue_passes": 1,
         "adaptive_delay": true,
         "timeout_seconds": 300
+      },
+      "product_details": {
+        "enabled": true,
+        "limit_products": 30,
+        "delay_ms": 300,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 2,
+        "checkpoint_interval": 25,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 300
       }
     },
     "bounded": {
@@ -86,6 +98,18 @@
         "retry_queue_passes": 1,
         "adaptive_delay": true,
         "timeout_seconds": 3600
+      },
+      "product_details": {
+        "enabled": true,
+        "limit_products": 500,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 4,
+        "checkpoint_interval": 100,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 3600
       }
     },
     "full": {
@@ -95,7 +119,14 @@
         "env": {
           "PARSER_PRODUCT_FETCH_MODE": "price_split",
           "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "0",
-          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334"
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334",
+          "PARSER_INCLUDE_XLSX": "false",
+          "PARSER_MAX_CONCURRENT": "2",
+          "PARSER_BATCH_SIZE": "10",
+          "PARSER_REQUEST_DELAY_MIN_SECONDS": "0.3",
+          "PARSER_REQUEST_DELAY_MAX_SECONDS": "0.9",
+          "PARSER_BATCH_DELAY_MIN_SECONDS": "2",
+          "PARSER_BATCH_DELAY_MAX_SECONDS": "5"
         }
       },
       "rank": {
@@ -123,6 +154,17 @@
         "retry_queue_passes": 1,
         "adaptive_delay": true,
         "timeout_seconds": 172800
+      },
+      "product_details": {
+        "enabled": true,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 6,
+        "checkpoint_interval": 500,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 172800
       }
     },
     "full_enrichment": {
@@ -132,7 +174,14 @@
         "env": {
           "PARSER_PRODUCT_FETCH_MODE": "price_split",
           "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "0",
-          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334"
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334",
+          "PARSER_INCLUDE_XLSX": "false",
+          "PARSER_MAX_CONCURRENT": "2",
+          "PARSER_BATCH_SIZE": "10",
+          "PARSER_REQUEST_DELAY_MIN_SECONDS": "0.3",
+          "PARSER_REQUEST_DELAY_MAX_SECONDS": "0.9",
+          "PARSER_BATCH_DELAY_MIN_SECONDS": "2",
+          "PARSER_BATCH_DELAY_MAX_SECONDS": "5"
         }
       },
       "rank": {
@@ -153,6 +202,17 @@
         "enabled": true,
         "dest": "12354108",
         "delay_ms": 300,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 6,
+        "checkpoint_interval": 500,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 172800
+      },
+      "product_details": {
+        "enabled": true,
+        "delay_ms": 250,
         "timeout_sec": 10,
         "retries": 1,
         "max_concurrent": 6,

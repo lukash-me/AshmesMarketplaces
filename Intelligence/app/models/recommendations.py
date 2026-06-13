@@ -54,6 +54,16 @@ class QuantityObservationDto(ContractModel):
     total_quantity: int | None = Field(default=None, alias="totalQuantity")
 
 
+class MarketProductReviewSignalDto(ContractModel):
+    parsed_review_count: int = Field(default=0, alias="parsedReviewCount")
+    parsed_reply_count: int = Field(default=0, alias="parsedReplyCount")
+    rated_review_count: int = Field(default=0, alias="ratedReviewCount")
+    average_rating: float | None = Field(default=None, alias="averageRating")
+    low_rating_review_count: int = Field(default=0, alias="lowRatingReviewCount")
+    negative_text_review_count: int = Field(default=0, alias="negativeTextReviewCount")
+    latest_review_run_id: str | None = Field(default=None, alias="latestReviewRunId")
+
+
 class ProductHistoryDto(ContractModel):
     rank_observations: list[RankObservationDto] = Field(default_factory=list, alias="rankObservations")
     price_observations: list[PriceObservationDto] = Field(default_factory=list, alias="priceObservations")
@@ -82,6 +92,10 @@ class MarketProductFeatureDto(ContractModel):
     observed_range_limit: int | None = Field(default=None, alias="observedRangeLimit")
     total_quantity: int | None = Field(default=None, alias="totalQuantity")
     snapshot_at_utc: datetime | None = Field(default=None, alias="snapshotAtUtc")
+    description: str | None = None
+    characteristics: dict[str, Any] | list[Any] | None = None
+    image_count: int | None = Field(default=None, alias="imageCount")
+    review_signals: MarketProductReviewSignalDto | None = Field(default=None, alias="reviewSignals")
     history: ProductHistoryDto | None = None
 
 

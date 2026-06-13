@@ -140,7 +140,18 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                     position.PositionState,
                     position.ObservedRangeLimit,
                     product.TotalQuantity,
-                    product.ParsedAtUtc);
+                    product.ParsedAtUtc,
+                    Description: null,
+                    Characteristics: null,
+                    ImageCount: product.ImageCount,
+                    ReviewSignals: new MarketProductReviewSignalDto(
+                        review.ParsedReviewCount,
+                        review.ParsedReplyCount,
+                        review.RatedReviewCount,
+                        review.AverageRating,
+                        review.LowRatingReviewCount,
+                        review.NegativeTextReviewCount,
+                        review.LatestReviewRunId));
 
                 return new MarketProductFeatureSnapshot(
                     product.Id,
@@ -326,21 +337,27 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
+        var reviewRows = await _dbContext.ParserReviewRows
+            .AsNoTracking()
+            .Where(x => rootIds.Contains(x.SourceWbRootId) || productIds.Contains(x.WbProductId))
+            .Select(x => new ReviewSignalRow(
+                x.SourceWbRootId,
+                x.WbProductId,
+                x.Rating,
+                x.Text,
+                x.Pros,
+                x.Cons,
+                x.ParserRunId,
+                x.ParsedAtUtc,
+                x.SourceLineNumber))
+            .ToListAsync(cancellationToken);
+
         var reviewByRoot = rootIds.Count == 0
             ? new Dictionary<string, ReviewAggregate>(StringComparer.Ordinal)
-            : await _dbContext.ParserReviewRows
-                .AsNoTracking()
+            : reviewRows
                 .Where(x => rootIds.Contains(x.SourceWbRootId))
-                .GroupBy(x => x.SourceWbRootId)
-                .Select(x => new ReviewAggregate(
-                    x.Key,
-                    x.Count(),
-                    0,
-                    x.OrderByDescending(row => row.ParsedAtUtc)
-                        .ThenByDescending(row => row.SourceLineNumber)
-                        .Select(row => row.ParserRunId)
-                        .FirstOrDefault()))
-                .ToDictionaryAsync(x => x.Key, StringComparer.Ordinal, cancellationToken);
+                .GroupBy(x => x.SourceWbRootId, StringComparer.Ordinal)
+                .ToDictionary(x => x.Key, x => BuildReviewAggregate(x.Key, x), StringComparer.Ordinal);
         var replyByRoot = rootIds.Count == 0
             ? new Dictionary<string, int>(StringComparer.Ordinal)
             : await _dbContext.ParserReviewReplyRows
@@ -349,19 +366,10 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 .GroupBy(x => x.SourceWbRootId)
                 .Select(x => new { x.Key, Count = x.Count() })
                 .ToDictionaryAsync(x => x.Key, x => x.Count, StringComparer.Ordinal, cancellationToken);
-        var reviewByProduct = await _dbContext.ParserReviewRows
-            .AsNoTracking()
+        var reviewByProduct = reviewRows
             .Where(x => productIds.Contains(x.WbProductId))
-            .GroupBy(x => x.WbProductId)
-            .Select(x => new ReviewAggregate(
-                x.Key,
-                x.Count(),
-                0,
-                x.OrderByDescending(row => row.ParsedAtUtc)
-                    .ThenByDescending(row => row.SourceLineNumber)
-                    .Select(row => row.ParserRunId)
-                    .FirstOrDefault()))
-            .ToDictionaryAsync(x => x.Key, StringComparer.Ordinal, cancellationToken);
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => BuildReviewAggregate(x.Key, x), StringComparer.Ordinal);
         var replyByProduct = await _dbContext.ParserReviewReplyRows
             .AsNoTracking()
             .Where(x => productIds.Contains(x.WbProductId))
@@ -389,10 +397,76 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
 
             result[product.Id] = reviewAggregate is null
                 ? ReviewEvidence.Empty
-                : new ReviewEvidence(reviewAggregate.ParsedReviewCount, replyCount, reviewAggregate.LatestReviewRunId);
+                : new ReviewEvidence(
+                    reviewAggregate.ParsedReviewCount,
+                    replyCount,
+                    reviewAggregate.RatedReviewCount,
+                    reviewAggregate.AverageRating,
+                    reviewAggregate.LowRatingReviewCount,
+                    reviewAggregate.NegativeTextReviewCount,
+                    reviewAggregate.LatestReviewRunId);
         }
 
         return result;
+    }
+
+    private static ReviewAggregate BuildReviewAggregate(
+        string key,
+        IEnumerable<ReviewSignalRow> rows)
+    {
+        var materialized = rows.ToList();
+        var validRatings = materialized
+            .Select(x => x.Rating)
+            .Where(x => x is >= 1 and <= 5)
+            .Select(x => x!.Value)
+            .ToList();
+        var latestRunId = materialized
+            .OrderByDescending(x => x.ParsedAtUtc)
+            .ThenByDescending(x => x.SourceLineNumber)
+            .Select(x => x.ParserRunId)
+            .FirstOrDefault();
+
+        return new ReviewAggregate(
+            key,
+            materialized.Count,
+            RatedReviewCount: validRatings.Count,
+            AverageRating: validRatings.Count == 0
+                ? null
+                : decimal.Round((decimal)validRatings.Average(), 2, MidpointRounding.AwayFromZero),
+            LowRatingReviewCount: validRatings.Count(x => x <= 3),
+            NegativeTextReviewCount: materialized.Count(ContainsNegativeReviewText),
+            latestRunId);
+    }
+
+    private static bool ContainsNegativeReviewText(ReviewSignalRow row)
+    {
+        var text = string.Join(
+            ' ',
+            new[] { row.Text, row.Pros, row.Cons }
+                .Where(x => !string.IsNullOrWhiteSpace(x)))
+            .Trim()
+            .ToLowerInvariant();
+        if (text.Length == 0)
+            return false;
+
+        string[] markers =
+        [
+            "плохо",
+            "ужас",
+            "слом",
+            "брак",
+            "не работает",
+            "не подош",
+            "возврат",
+            "гряз",
+            "царап",
+            "мят",
+            "запах",
+            "не совет",
+            "разочар"
+        ];
+
+        return markers.Any(text.Contains);
     }
 
     private static RankRow BestRank(IEnumerable<RankRow> rows)
@@ -434,14 +508,32 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
     private sealed record ReviewAggregate(
         string Key,
         int ParsedReviewCount,
-        int ParsedReplyCount,
+        int RatedReviewCount,
+        decimal? AverageRating,
+        int LowRatingReviewCount,
+        int NegativeTextReviewCount,
         string? LatestReviewRunId);
 
     private sealed record ReviewEvidence(
         int ParsedReviewCount,
         int ParsedReplyCount,
+        int RatedReviewCount,
+        decimal? AverageRating,
+        int LowRatingReviewCount,
+        int NegativeTextReviewCount,
         string? LatestReviewRunId)
     {
-        public static readonly ReviewEvidence Empty = new(0, 0, null);
+        public static readonly ReviewEvidence Empty = new(0, 0, 0, null, 0, 0, null);
     }
+
+    private sealed record ReviewSignalRow(
+        string SourceWbRootId,
+        string WbProductId,
+        int? Rating,
+        string? Text,
+        string? Pros,
+        string? Cons,
+        string ParserRunId,
+        DateTime ParsedAtUtc,
+        long SourceLineNumber);
 }

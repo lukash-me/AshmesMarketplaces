@@ -40,7 +40,6 @@ FACTOR_WEIGHTS = {
 
 OPPORTUNITY_FACTOR_WEIGHTS = {
     "high_position_weak_card": 1.00,
-    "high_position_weak_reviews": 0.92,
     "bad_recent_reviews": 0.90,
     "expensive_without_advantage": 0.84,
     "fast_position_growth": 0.88,
@@ -52,6 +51,9 @@ OPPORTUNITY_FACTOR_WEIGHTS = {
     "missing_key_specs": 0.68,
     "low_review_count_top_position": 0.78,
     "good_reviews_weak_visibility": 0.74,
+    "good_reviews_weak_card": 0.73,
+    "good_reviews_low_stock": 0.73,
+    "good_reviews_high_price": 0.72,
 }
 
 
@@ -59,7 +61,7 @@ OPPORTUNITY_FACTOR_WEIGHTS = {
 class FactorScore:
     code: str
     label: str
-    value: str | int | float | bool | None
+    value: Any | None
     score: float
     confidence: float
     weight: float
@@ -108,7 +110,7 @@ def _valid_position(value: int | None) -> int | None:
 
 
 def _valid_rating(value: float | None) -> float | None:
-    if value is None or not math.isfinite(value) or value < 0 or value > 5:
+    if value is None or not math.isfinite(value) or value <= 0 or value > 5:
         return None
     return float(value)
 
@@ -459,6 +461,39 @@ def _is_top_visible(item: EligibleProduct, all_positions: list[int]) -> bool:
     return item.position is not None and item.position <= _top_position_limit(item, all_positions)
 
 
+def _peer_review_counts_for_item(item: EligibleProduct, all_items: list[EligibleProduct]) -> list[int]:
+    counts: list[int] = []
+    item_price = item.price
+    item_position = item.position
+
+    for peer in all_items:
+        if peer.product_key == item.product_key:
+            continue
+        if peer.source_subcategory != item.source_subcategory:
+            continue
+        if peer.review_count is None:
+            continue
+
+        if item_price is not None:
+            if peer.price is None:
+                continue
+            lower_price = item_price * 0.70
+            upper_price = item_price * 1.30
+            if peer.price < lower_price or peer.price > upper_price:
+                continue
+
+        if item_position is not None:
+            if peer.position is None:
+                continue
+            max_peer_position = max(50, item_position * 2)
+            if peer.position > max_peer_position:
+                continue
+
+        counts.append(peer.review_count)
+
+    return counts
+
+
 def _opportunity_factors(
     *,
     item: EligibleProduct,
@@ -671,6 +706,10 @@ def _snapshot_hash(request: HotProductsRequest, item: EligibleProduct) -> str:
             "positionState": product.position_state,
             "observedRangeLimit": product.observed_range_limit,
             "totalQuantity": product.total_quantity,
+            "description": product.description,
+            "characteristics": product.characteristics,
+            "imageCount": product.image_count,
+            "reviewSignals": product.review_signals.model_dump(by_alias=True, mode="json") if product.review_signals else None,
             "snapshotAtUtc": product.snapshot_at_utc.isoformat() if product.snapshot_at_utc else None,
         },
     }
@@ -748,6 +787,364 @@ def _score_product(
             "Подборка основана на наблюдаемых рыночных признаках. Перед запуском проверьте "
             "маржинальность, поставщика и конкуренцию."
         ),
+        factors=dto_factors,
+        input_snapshot_hash=snapshot_hash,
+        valid_until_utc=computed_at + timedelta(hours=valid_for_hours),
+        debug=debug,
+    )
+
+
+def _characteristics_count(value: Any | None) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, dict):
+        return len([key for key, entry in value.items() if str(key).strip() and entry not in (None, "", [])])
+    if isinstance(value, list):
+        return len([entry for entry in value if entry not in (None, "", {})])
+    return 0
+
+
+def _card_content_value(
+    weak_description: bool,
+    weak_characteristics: bool,
+    weak_visual: bool,
+) -> dict[str, Any]:
+    parts: list[str] = []
+    if weak_description:
+        parts.append("описание короткое")
+    if weak_characteristics:
+        parts.append("характеристик мало")
+    if weak_visual:
+        parts.append("мало изображений")
+    return {
+        "label": ", ".join(parts) if parts else "карточка требует проверки",
+        "weakDescription": weak_description,
+        "weakCharacteristics": weak_characteristics,
+        "weakVisual": weak_visual,
+    }
+
+
+def _opportunity_factors(
+    *,
+    item: EligibleProduct,
+    all_positions: list[int],
+    all_prices: list[float],
+    all_review_counts: list[int],
+    all_items: list[EligibleProduct],
+    subcategory_prices: list[float],
+    subcategory_review_counts: list[int],
+) -> list[FactorScore]:
+    factors: list[FactorScore] = []
+    top_visible = _is_top_visible(item, all_positions)
+    median_price = _median_or_none(subcategory_prices) or _median_or_none(all_prices)
+    median_reviews = _median_or_none([float(value) for value in subcategory_review_counts]) or _median_or_none(
+        [float(value) for value in all_review_counts]
+    )
+
+    review_signals = item.product.review_signals
+    rated_reviews = review_signals.rated_review_count if review_signals else 0
+    low_rating_reviews = review_signals.low_rating_review_count if review_signals else 0
+    negative_text_reviews = review_signals.negative_text_review_count if review_signals else 0
+    average_recent_rating = _valid_rating(review_signals.average_rating) if review_signals else None
+    low_stock = item.total_quantity is not None and item.total_quantity <= 5
+
+    description = (item.product.description or "").strip()
+    has_description_data = item.product.description is not None
+    has_characteristics_data = item.product.characteristics is not None
+    image_count = _valid_non_negative_int(item.product.image_count)
+    weak_description = has_description_data and len(description) < 120
+    weak_characteristics = has_characteristics_data and _characteristics_count(item.product.characteristics) < 4
+    weak_visual = image_count is not None and image_count <= 2
+    weak_card_content = weak_description or weak_characteristics or weak_visual
+    good_reviews = item.rating is not None and item.rating >= 4.7 and item.review_count is not None and item.review_count >= 50
+
+    if rated_reviews > 0 and (low_rating_reviews > 0 or negative_text_reviews > 0):
+        label_parts: list[str] = []
+        if low_rating_reviews > 0:
+            label_parts.append(f"низких оценок: {low_rating_reviews}")
+        if negative_text_reviews > 0:
+            label_parts.append(f"негативных текстов: {negative_text_reviews}")
+        factors.append(FactorScore(
+            code="bad_recent_reviews",
+            label="Плохие последние отзывы",
+            value={
+                "label": ", ".join(label_parts),
+                "ratedReviews": rated_reviews,
+                "lowRatingReviews": low_rating_reviews,
+                "negativeTextReviews": negative_text_reviews,
+                "averageRating": average_recent_rating,
+            },
+            score=86,
+            confidence=0.78,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["bad_recent_reviews"],
+            direction=FactorDirection.NEGATIVE,
+            debug={
+                "ratedReviews": rated_reviews,
+                "lowRatingReviews": low_rating_reviews,
+                "negativeTextReviews": negative_text_reviews,
+                "averageRating": average_recent_rating,
+            },
+        ))
+
+    peer_review_counts = _peer_review_counts_for_item(item, all_items)
+    peer_median_reviews = _median_or_none([float(value) for value in peer_review_counts])
+    if (
+        top_visible
+        and item.review_count is not None
+        and peer_median_reviews is not None
+        and len(peer_review_counts) >= 5
+        and peer_median_reviews >= 10
+        and item.review_count < peer_median_reviews * 0.55
+    ):
+        factors.append(FactorScore(
+            code="low_review_count_top_position",
+            label="Мало отзывов в топе",
+            value={
+                "label": f"{item.review_count} против {round(peer_median_reviews)} у похожих карточек",
+                "reviewCount": item.review_count,
+                "peerMedianReviewCount": round(peer_median_reviews),
+                "peerSampleSize": len(peer_review_counts),
+                "position": item.position,
+            },
+            score=76,
+            confidence=0.74,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["low_review_count_top_position"],
+            direction=FactorDirection.NEGATIVE,
+            debug={
+                "position": item.position,
+                "reviewCount": item.review_count,
+                "peerMedianReviews": peer_median_reviews,
+                "peerSampleSize": len(peer_review_counts),
+            },
+        ))
+
+    if (
+        not top_visible
+        and item.rating is not None
+        and item.rating >= 4.8
+        and item.review_count is not None
+        and item.review_count >= 100
+        and item.position is not None
+    ):
+        factors.append(FactorScore(
+            code="good_reviews_weak_visibility",
+            label="Хорошие отзывы, слабая видимость",
+            value={
+                "label": f"оценка {item.rating:g}, отзывов {item.review_count}, позиция #{item.position}",
+                "rating": item.rating,
+                "reviewCount": item.review_count,
+                "position": item.position,
+            },
+            score=74,
+            confidence=0.70,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["good_reviews_weak_visibility"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"position": item.position, "rating": item.rating, "reviewCount": item.review_count},
+        ))
+
+    if top_visible and weak_card_content:
+        factors.append(FactorScore(
+            code="high_position_weak_card",
+            label="Слабая карточка в топе",
+            value=_card_content_value(weak_description, weak_characteristics, weak_visual),
+            score=90,
+            confidence=0.74,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["high_position_weak_card"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"position": item.position, "imageCount": image_count},
+        ))
+
+    if weak_description:
+        factors.append(FactorScore(
+            code="weak_description",
+            label="Слабое описание",
+            value={
+                "label": f"описание короткое: {len(description)} символов",
+                "descriptionLength": len(description),
+            },
+            score=70,
+            confidence=0.68,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["weak_description"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"descriptionLength": len(description)},
+        ))
+
+    if weak_characteristics:
+        count = _characteristics_count(item.product.characteristics)
+        factors.append(FactorScore(
+            code="missing_key_specs",
+            label="Проверьте характеристики",
+            value={"label": f"характеристик мало: {count}", "characteristicsCount": count},
+            score=68,
+            confidence=0.66,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["missing_key_specs"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"characteristicsCount": count},
+        ))
+
+    if (
+        item.price is not None
+        and median_price is not None
+        and item.price >= median_price * 1.25
+        and (item.rating is None or item.rating < 4.7)
+        and (item.review_count is None or median_reviews is None or item.review_count <= median_reviews)
+    ):
+        factors.append(FactorScore(
+            code="expensive_without_advantage",
+            label="Высокая цена без явного преимущества",
+            value={
+                "label": f"{_format_money(item.price)} против медианы {_format_money(median_price)}",
+                "price": round(item.price),
+                "peerMedianPrice": round(median_price),
+            },
+            score=82,
+            confidence=0.78,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["expensive_without_advantage"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"price": item.price, "medianPrice": median_price, "rating": item.rating, "reviewCount": item.review_count},
+        ))
+
+    if top_visible and low_stock:
+        factors.append(FactorScore(
+            code="top_low_stock",
+            label="В топе, но низкий остаток",
+            value={"label": f"остаток {item.total_quantity}", "stock": item.total_quantity, "position": item.position},
+            score=80,
+            confidence=0.82,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["top_low_stock"],
+            direction=FactorDirection.NEGATIVE,
+            debug={"position": item.position, "stock": item.total_quantity},
+        ))
+
+    if good_reviews and weak_card_content:
+        factors.append(FactorScore(
+            code="good_reviews_weak_card",
+            label="Хороший товар, слабая карточка",
+            value=_card_content_value(weak_description, weak_characteristics, weak_visual),
+            score=73,
+            confidence=0.70,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["good_reviews_weak_card"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"rating": item.rating, "reviewCount": item.review_count, "imageCount": image_count},
+        ))
+
+    if good_reviews and low_stock:
+        factors.append(FactorScore(
+            code="good_reviews_low_stock",
+            label="Хорошие отзывы, низкий остаток",
+            value={"label": f"оценка {item.rating:g}, остаток {item.total_quantity}", "stock": item.total_quantity},
+            score=73,
+            confidence=0.70,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["good_reviews_low_stock"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"rating": item.rating, "reviewCount": item.review_count, "stock": item.total_quantity},
+        ))
+
+    if (
+        good_reviews
+        and item.price is not None
+        and median_price is not None
+        and item.price >= median_price * 1.25
+    ):
+        factors.append(FactorScore(
+            code="good_reviews_high_price",
+            label="Хорошие отзывы, высокая цена",
+            value={
+                "label": f"{_format_money(item.price)} против медианы {_format_money(median_price)}",
+                "price": round(item.price),
+                "peerMedianPrice": round(median_price),
+            },
+            score=72,
+            confidence=0.68,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["good_reviews_high_price"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"rating": item.rating, "reviewCount": item.review_count, "price": item.price, "medianPrice": median_price},
+        ))
+
+    same_root_count = 0
+    if item.product.wb_root_id:
+        same_root_count = sum(1 for peer in all_items if peer.product.wb_root_id == item.product.wb_root_id)
+    normalized_name = _normalized_name(item.product.name)
+    same_name_count = 0
+    if normalized_name:
+        same_name_count = sum(1 for peer in all_items if _normalized_name(peer.product.name) == normalized_name)
+    duplicate_count = max(same_root_count, same_name_count)
+    if duplicate_count >= 3:
+        factors.append(FactorScore(
+            code="duplicate_cards",
+            label="Много одинаковых карточек",
+            value={"label": f"похожих карточек: {duplicate_count}", "similarCards": duplicate_count},
+            score=72,
+            confidence=0.72,
+            weight=OPPORTUNITY_FACTOR_WEIGHTS["duplicate_cards"],
+            direction=FactorDirection.NEUTRAL,
+            debug={"sameRootCount": same_root_count, "sameNameCount": same_name_count},
+        ))
+
+    return factors
+
+
+def _score_product(
+    *,
+    request: HotProductsRequest,
+    item: EligibleProduct,
+    all_items: list[EligibleProduct],
+    all_positions: list[int],
+    all_prices: list[float],
+    all_review_counts: list[int],
+    subcategory_prices: list[float],
+    subcategory_review_counts: list[int],
+    computed_at: datetime,
+    valid_for_hours: int,
+    include_debug: bool,
+) -> HotProductRecommendationDto:
+    factors = _opportunity_factors(
+        item=item,
+        all_positions=all_positions,
+        all_prices=all_prices,
+        all_review_counts=all_review_counts,
+        all_items=all_items,
+        subcategory_prices=subcategory_prices,
+        subcategory_review_counts=subcategory_review_counts,
+    )
+    score = 0.0 if not factors else _clamp(max(factor.score for factor in factors), 0, 100)
+    confidence = 0.0 if not factors else _clamp(sum(factor.confidence for factor in factors) / len(factors), 0, 1)
+    snapshot_hash = _snapshot_hash(request, item)
+    dto_factors = [
+        RecommendationFactorDto(
+            code=factor.code,
+            label=factor.label,
+            value=factor.value,
+            weight=factor.weight,
+            direction=factor.direction,
+        )
+        for factor in factors
+    ]
+
+    debug = None
+    if include_debug:
+        debug = {
+            "score": round(score, 4),
+            "confidence": round(confidence, 4),
+            "factorScores": {
+                factor.code: {
+                    "score": round(factor.score, 4),
+                    "confidence": round(factor.confidence, 4),
+                    **factor.debug,
+                }
+                for factor in factors
+            },
+        }
+
+    return HotProductRecommendationDto(
+        recommendation_key=_recommendation_key(item, snapshot_hash),
+        product_key=item.product_key,
+        wb_product_id=item.wb_product_id,
+        wb_root_id=item.product.wb_root_id,
+        score=round(score, 2),
+        confidence=round(confidence, 4),
+        title=factors[0].label if factors else "Карточка требует проверки",
+        reason="Подборка основана на наблюдаемых рыночных признаках. Проверьте товар, поставщика и конкуренцию.",
         factors=dto_factors,
         input_snapshot_hash=snapshot_hash,
         valid_until_utc=computed_at + timedelta(hours=valid_for_hours),

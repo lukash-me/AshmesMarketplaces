@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { Eye, History, Save, Trash2 } from 'lucide-vue-next';
+import { Eye, History, Pencil, Save, Trash2, X } from 'lucide-vue-next';
 
 import type { PagedResponse } from '@/entities/pagination';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
@@ -49,6 +49,7 @@ const filterForm = reactive({
 const loading = ref(false);
 const error = ref('');
 const drafts = reactive<Record<string, ProductDraft>>({});
+const editingIds = ref<Set<string>>(new Set());
 const savingIds = ref<Set<string>>(new Set());
 const deletingIds = ref<Set<string>>(new Set());
 const selectedProduct = ref<ParserProductListItem | null>(null);
@@ -217,6 +218,7 @@ async function loadProducts(): Promise<void> {
 function applyResponse(response: PagedResponse<WorkspaceMarketProductListItem>): void {
   products.value = response.items;
   totalCount.value = response.totalCount;
+  const productIds = new Set(response.items.map((product) => product.id));
 
   for (const product of response.items) {
     drafts[product.id] = {
@@ -224,6 +226,14 @@ function applyResponse(response: PagedResponse<WorkspaceMarketProductListItem>):
       note: product.note ?? ''
     };
   }
+
+  for (const id of Object.keys(drafts)) {
+    if (!productIds.has(id)) {
+      delete drafts[id];
+    }
+  }
+
+  editingIds.value = new Set([...editingIds.value].filter((id) => productIds.has(id)));
 }
 
 async function saveProduct(product: WorkspaceMarketProductListItem): Promise<void> {
@@ -248,11 +258,32 @@ async function saveProduct(product: WorkspaceMarketProductListItem): Promise<voi
       tagKey: updated.tagKey,
       note: updated.note ?? ''
     };
+    setEditing(product.id, false);
   } catch (requestError) {
     window.alert(getProblemMessage(requestError, 'Не удалось сохранить товар.'));
   } finally {
     setSaving(product.id, false);
   }
+}
+
+function startEdit(product: WorkspaceMarketProductListItem): void {
+  drafts[product.id] = {
+    tagKey: product.tagKey,
+    note: product.note ?? ''
+  };
+  setEditing(product.id, true);
+}
+
+function cancelEdit(product: WorkspaceMarketProductListItem): void {
+  drafts[product.id] = {
+    tagKey: product.tagKey,
+    note: product.note ?? ''
+  };
+  setEditing(product.id, false);
+}
+
+function isEditing(id: string): boolean {
+  return editingIds.value.has(id);
 }
 
 function requestDeleteProduct(product: WorkspaceMarketProductListItem): void {
@@ -285,6 +316,7 @@ async function removeProduct(product: WorkspaceMarketProductListItem): Promise<v
     products.value = products.value.filter((item) => item.id !== product.id);
     totalCount.value = Math.max(0, totalCount.value - 1);
     delete drafts[product.id];
+    setEditing(product.id, false);
     if (historyProductId.value === product.id) {
       closeHistory();
     }
@@ -337,6 +369,16 @@ function setSaving(id: string, saving: boolean): void {
     next.delete(id);
   }
   savingIds.value = next;
+}
+
+function setEditing(id: string, editing: boolean): void {
+  const next = new Set(editingIds.value);
+  if (editing) {
+    next.add(id);
+  } else {
+    next.delete(id);
+  }
+  editingIds.value = next;
 }
 
 function setDeleting(id: string, deleting: boolean): void {
@@ -531,7 +573,17 @@ function changePage(nextPage: number): void {
             </div>
           </div>
 
-          <div class="workspace-product__edit">
+          <div v-if="!isEditing(product.id)" class="workspace-product__note-view">
+            <span>Заметка</span>
+            <p
+              class="workspace-product__note-text"
+              :class="{ 'workspace-product__note-text--empty': !product.note }"
+            >
+              {{ product.note || 'Заметка не добавлена' }}
+            </p>
+          </div>
+
+          <div v-else class="workspace-product__edit">
             <label class="workspace-products__field app-select-field">
               <span>Тег</span>
               <select v-model="drafts[product.id].tagKey" class="app-select">
@@ -574,12 +626,26 @@ function changePage(nextPage: number): void {
 
           <div class="workspace-product__actions">
             <Button
+              v-if="isEditing(product.id)"
               variant="primary"
               :loading="savingIds.has(product.id)"
               @click="saveProduct(product)"
             >
               <Save :size="15" />
               Сохранить
+            </Button>
+            <Button v-else variant="secondary" @click="startEdit(product)">
+              <Pencil :size="15" />
+              Редактировать
+            </Button>
+            <Button
+              v-if="isEditing(product.id)"
+              variant="secondary"
+              :disabled="savingIds.has(product.id)"
+              @click="cancelEdit(product)"
+            >
+              <X :size="15" />
+              Отмена
             </Button>
             <Button variant="secondary" @click="toggleHistory(product)">
               <History :size="15" />
@@ -870,6 +936,38 @@ function changePage(nextPage: number): void {
     linear-gradient(90deg, rgb(127 29 29 / 0.035), transparent 42%),
     var(--operator-card-bg);
   padding: var(--space-3);
+}
+
+.workspace-product__note-view {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--operator-border-muted);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(90deg, rgb(127 29 29 / 0.03), transparent 42%),
+    var(--operator-card-bg);
+  padding: var(--space-3);
+}
+
+.workspace-product__note-view > span {
+  color: var(--color-text-muted);
+  font-size: var(--operator-label-size);
+  font-weight: 760;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.workspace-product__note-text {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--operator-body-size);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.workspace-product__note-text--empty {
+  color: var(--color-text-subtle);
 }
 
 .workspace-product__note {

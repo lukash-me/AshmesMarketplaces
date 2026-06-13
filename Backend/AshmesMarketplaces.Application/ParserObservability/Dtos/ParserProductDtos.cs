@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace AshmesMarketplaces.Application.ParserObservability.Dtos;
 
 public sealed record ParserProductListItemDto(
@@ -65,7 +67,14 @@ public sealed record ParserProductDetailDto(
     ParserProductPositionDto? Position,
     ParserProductLogisticsSummaryDto? Logistics,
     ParserProductLogisticsDetailDto? LogisticsDetail,
+    string? Description,
+    JsonElement? Characteristics,
+    ParserProductVisualAnalysisDto? VisualAnalysis,
     ParserProductReviewEvidenceDto ParsedReviewEvidence);
+
+public sealed record ParserProductVisualAnalysisDto(
+    string State,
+    IReadOnlyList<string> Facts);
 
 public sealed record ParserProductRankSummaryDto(
     int AbsolutePosition,
