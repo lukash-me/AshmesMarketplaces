@@ -25,77 +25,6 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
     private const string ReviewScopeProduct = "product";
     private const string ReviewScopeRoot = "root";
     private static readonly TimeSpan RecentReviewLookback = TimeSpan.FromDays(14);
-    private static readonly string[] ProductComplaintMarkers =
-    [
-        "плох",
-        "ужас",
-        "отврат",
-        "слом",
-        "брак",
-        "дефект",
-        "не работает",
-        "перестал",
-        "не включ",
-        "не гор",
-        "возврат",
-        "гряз",
-        "мят",
-        "запах",
-        "не совет",
-        "разочар",
-        "крив",
-        "дыра"
-    ];
-    private static readonly string[] StrongProductComplaintMarkers =
-    [
-        "слом",
-        "брак",
-        "дефект",
-        "не работает",
-        "перестал",
-        "не включ",
-        "не гор",
-        "возврат",
-        "крив",
-        "дыра"
-    ];
-    private static readonly string[] PackagingComplaintMarkers =
-    [
-        "упаков",
-        "коробк",
-        "достав",
-        "пвз",
-        "курьер"
-    ];
-    private static readonly string[] NeutralContextMarkers =
-    [
-        "не плох",
-        "неплох",
-        "не подош",
-        "не подойд",
-        "не видно",
-        "не критично",
-        "ничего лишнего",
-        "мне ок",
-        "размер не подош",
-        "пришло всё целое",
-        "пришло все целое",
-        "всё целое",
-        "все целое",
-        "царапинки нет",
-        "нет царап",
-        "в целом не плохо"
-    ];
-    private static readonly string[] PositiveContextMarkers =
-    [
-        "хорош",
-        "отлич",
-        "супер",
-        "понрав",
-        "довол",
-        "спасибо",
-        "благодар"
-    ];
 
     private readonly ApplicationDbContext _dbContext;
 
@@ -558,17 +487,9 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             .Select(x => x.ParserRunId)
             .FirstOrDefault();
         var cutoffUtc = referenceUtc - RecentReviewLookback;
-        var sentimentRows = selectedRows
-            .Select(ClassifyReviewSentiment)
-            .ToList();
-        var negativeEvidence = sentimentRows
-            .Where(x => x.IsNegative)
-            .GroupBy(ReviewSentimentDeduplicationKey, StringComparer.Ordinal)
-            .Select(x => x
-                .OrderByDescending(y => y.Score)
-                .ThenByDescending(y => y.CreatedAtOnMp)
-                .First())
-            .OrderByDescending(x => x.Score)
+        var lowRatingRows = selectedRows
+            .Where(x => x.Rating is >= 1 and <= 3)
+            .OrderBy(x => x.Rating)
             .ThenByDescending(x => x.CreatedAtOnMp)
             .ToList();
 
@@ -579,23 +500,23 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             AverageRating: validRatings.Count == 0
                 ? null
                 : decimal.Round((decimal)validRatings.Average(), 2, MidpointRounding.AwayFromZero),
-            LowRatingReviewCount: negativeEvidence.Count(x => x.IsNegativeByRating),
-            NegativeTextReviewCount: negativeEvidence.Count(x => x.IsNegativeByText),
-            BadReviewCount: negativeEvidence.Count,
+            LowRatingReviewCount: lowRatingRows.Count,
+            NegativeTextReviewCount: 0,
+            BadReviewCount: lowRatingRows.Count,
             ReviewWindowSize: selectedRows.Count,
             RecentTwoWeeksCount: selectedRows.Count(x => ReviewObservedAtUtc(x) >= cutoffUtc),
             latestRunId,
             ReviewSentimentVersion,
-            negativeEvidence
+            lowRatingRows
                 .Take(3)
                 .Select(x => new ReviewNegativeEvidenceDto(
                     x.ReviewIdOnMp,
-                    x.SourceWbProductId,
+                    x.WbProductId,
                     x.Rating,
                     x.CreatedAtOnMp,
-                    x.Snippet,
-                    x.ReasonCodes,
-                    x.Score))
+                    MakeSnippet(x.Text, x.Pros, x.Cons),
+                    ["low_rating"],
+                    0.85m))
                 .ToList());
     }
 
@@ -642,117 +563,6 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             return $"id:{row.ReviewIdOnMp.Trim()}";
 
         return $"fallback:{row.WbProductId}:{row.CreatedAtOnMp?.Ticks}:{row.SourceLineNumber}";
-    }
-
-    private static string ReviewSentimentDeduplicationKey(ReviewSentiment row)
-    {
-        if (!string.IsNullOrWhiteSpace(row.ReviewIdOnMp))
-            return $"id:{row.ReviewIdOnMp.Trim()}";
-
-        return $"fallback:{row.SourceWbProductId}:{row.CreatedAtOnMp?.Ticks}:{row.Snippet}";
-    }
-
-    private static ReviewSentiment ClassifyReviewSentiment(ReviewSignalRow row)
-    {
-        var consText = NormalizeReviewText(row.Cons);
-        var complaintText = NormalizeReviewText(row.Text, row.Cons);
-        var allText = NormalizeReviewText(row.Text, row.Pros, row.Cons);
-        var reasonCodes = new List<string>();
-        var rating = row.Rating;
-        var negativeByRating = rating is >= 1 and <= 2;
-        if (negativeByRating)
-            reasonCodes.Add("low_rating");
-
-        var matchedProductMarker = FirstMatchingMarker(complaintText, ProductComplaintMarkers);
-        var matchedStrongProductMarker = FirstMatchingMarker(complaintText, StrongProductComplaintMarkers);
-        var matchedConsMarker = FirstMatchingMarker(consText, ProductComplaintMarkers);
-        var matchedStrongConsMarker = FirstMatchingMarker(consText, StrongProductComplaintMarkers);
-        var hasPackagingContext = HasAnyMarker(allText, PackagingComplaintMarkers);
-        var hasPackagingOnlyComplaint =
-            hasPackagingContext
-            && string.IsNullOrWhiteSpace(matchedStrongProductMarker)
-            && !HasAnyMarker(consText, StrongProductComplaintMarkers)
-            && !negativeByRating;
-        var hasNeutralContext = HasAnyMarker(allText, NeutralContextMarkers);
-        var hasPositiveContext = HasAnyMarker(allText, PositiveContextMarkers);
-
-        var negativeByText = false;
-        if (!string.IsNullOrWhiteSpace(matchedProductMarker) && !hasPackagingOnlyComplaint)
-        {
-            negativeByText = rating switch
-            {
-                >= 4 and <= 5 => !hasNeutralContext && !hasPositiveContext && !string.IsNullOrWhiteSpace(matchedStrongProductMarker),
-                3 => !hasNeutralContext,
-                >= 1 and <= 2 => true,
-                _ => !hasNeutralContext
-            };
-        }
-
-        if (negativeByText)
-            reasonCodes.Add(!string.IsNullOrWhiteSpace(matchedConsMarker) || !string.IsNullOrWhiteSpace(matchedStrongConsMarker)
-                ? "strong_complaint_in_cons"
-                : "strong_complaint_text");
-        else if (hasPackagingContext && HasAnyMarker(allText, ProductComplaintMarkers))
-        {
-            reasonCodes.Add("packaging_issue");
-        }
-
-        var score = ScoreReviewSentiment(rating, negativeByRating, negativeByText, hasPositiveContext, hasNeutralContext);
-        return new ReviewSentiment(
-            row.ReviewIdOnMp,
-            row.WbProductId,
-            rating,
-            row.CreatedAtOnMp,
-            MakeSnippet(row.Text, row.Pros, row.Cons),
-            reasonCodes,
-            score,
-            negativeByRating,
-            negativeByText);
-    }
-
-    private static string NormalizeReviewText(params string?[] values)
-    {
-        return string.Join(
-                ' ',
-                values
-                    .Where(x => !string.IsNullOrWhiteSpace(x))
-                    .Select(x => x!.Trim()))
-            .Trim()
-            .ToLowerInvariant();
-    }
-
-    private static bool HasAnyMarker(string text, IReadOnlyList<string> markers) =>
-        !string.IsNullOrWhiteSpace(text) && markers.Any(text.Contains);
-
-    private static string? FirstMatchingMarker(string text, IReadOnlyList<string> markers) =>
-        string.IsNullOrWhiteSpace(text)
-            ? null
-            : markers.FirstOrDefault(text.Contains);
-
-    private static decimal ScoreReviewSentiment(
-        int? rating,
-        bool negativeByRating,
-        bool negativeByText,
-        bool hasPositiveContext,
-        bool hasNeutralContext)
-    {
-        var score = 0m;
-        if (negativeByRating)
-            score += 0.85m;
-        if (negativeByText)
-            score += 0.65m;
-        if (rating is >= 4 and <= 5)
-            score -= 0.35m;
-        if (hasPositiveContext)
-            score -= 0.2m;
-        if (hasNeutralContext)
-            score -= 0.15m;
-
-        score = decimal.Round(score, 2, MidpointRounding.AwayFromZero);
-        if (score < 0m)
-            return 0m;
-
-        return score > 1m ? 1m : score;
     }
 
     private static string MakeSnippet(params string?[] values)
@@ -865,17 +675,4 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         DateTime? CreatedAtOnMp,
         string? ReviewIdOnMp);
 
-    private sealed record ReviewSentiment(
-        string? ReviewIdOnMp,
-        string SourceWbProductId,
-        int? Rating,
-        DateTime? CreatedAtOnMp,
-        string Snippet,
-        IReadOnlyList<string> ReasonCodes,
-        decimal Score,
-        bool IsNegativeByRating,
-        bool IsNegativeByText)
-    {
-        public bool IsNegative => IsNegativeByRating || IsNegativeByText;
-    }
 }

@@ -344,7 +344,7 @@ class RecommendationContractTests(unittest.TestCase):
 
         self.assertNotIn("bad_recent_reviews", codes)
 
-    def test_negative_text_review_signal_creates_windowed_bad_recent_review_factor(self) -> None:
+    def test_negative_text_review_signal_without_low_rating_is_ignored(self) -> None:
         products = fixture_products(24)
         products[0]["reviewSignals"] = {
             "parsedReviewCount": 10,
@@ -365,19 +365,10 @@ class RecommendationContractTests(unittest.TestCase):
                     "sourceWbProductId": str(products[0]["wbProductId"]),
                     "rating": 5,
                     "createdAtOnMp": "2026-06-12T10:00:00Z",
-                    "snippet": "Сломался через день",
-                    "reasonCodes": ["strong_complaint_text"],
+                    "snippet": "???????? ????? ????",
+                    "reasonCodes": ["ignored_text_signal"],
                     "score": 0.3,
-                },
-                {
-                    "reviewIdOnMp": "bad-text-2",
-                    "sourceWbProductId": str(products[0]["wbProductId"]),
-                    "rating": 4,
-                    "createdAtOnMp": "2026-06-11T10:00:00Z",
-                    "snippet": "В минусах указан брак",
-                    "reasonCodes": ["strong_complaint_in_cons"],
-                    "score": 0.3,
-                },
+                }
             ],
         }
 
@@ -386,18 +377,9 @@ class RecommendationContractTests(unittest.TestCase):
             item for item in payload["recommendations"]
             if item["wbProductId"] == str(products[0]["wbProductId"])
         )
-        factor = next(
-            factor for factor in target["factors"]
-            if factor["code"] == "bad_recent_reviews"
-        )
+        codes = {factor["code"] for factor in target["factors"]}
 
-        self.assertEqual(factor["value"]["reviewWindowSize"], 10)
-        self.assertEqual(factor["value"]["recentTwoWeeksCount"], 5)
-        self.assertEqual(factor["value"]["negativeTextReviews"], 2)
-        self.assertEqual(factor["value"]["badReviewCount"], 2)
-        self.assertEqual(factor["value"]["sentimentVersion"], 2)
-        self.assertEqual(len(factor["value"]["negativeReviewEvidence"]), 2)
-        self.assertIn("2", factor["value"]["label"])
+        self.assertNotIn("bad_recent_reviews", codes)
 
     def test_bad_recent_reviews_uses_unique_bad_review_count(self) -> None:
         products = fixture_products(24)
@@ -407,7 +389,7 @@ class RecommendationContractTests(unittest.TestCase):
             "ratedReviewCount": 9,
             "averageRating": 4.1,
             "lowRatingReviewCount": 2,
-            "negativeTextReviewCount": 2,
+            "negativeTextReviewCount": 0,
             "badReviewCount": 2,
             "reviewWindowSize": 9,
             "recentTwoWeeksCount": 9,
@@ -421,7 +403,7 @@ class RecommendationContractTests(unittest.TestCase):
                     "rating": 1,
                     "createdAtOnMp": "2026-06-12T10:00:00Z",
                     "snippet": "Сломался",
-                    "reasonCodes": ["low_rating", "strong_complaint_text"],
+                    "reasonCodes": ["low_rating"],
                     "score": 1.0,
                 },
                 {
@@ -447,7 +429,7 @@ class RecommendationContractTests(unittest.TestCase):
         )
 
         self.assertEqual(factor["value"]["badReviewCount"], 2)
-        self.assertIn("2 плохих", factor["value"]["label"])
+        self.assertIn("2 оценки 3 и ниже", factor["value"]["label"])
 
     def test_product_scope_ignores_evidence_from_other_variation(self) -> None:
         products = fixture_products(24)
@@ -456,8 +438,8 @@ class RecommendationContractTests(unittest.TestCase):
             "parsedReplyCount": 0,
             "ratedReviewCount": 10,
             "averageRating": 4.8,
-            "lowRatingReviewCount": 0,
-            "negativeTextReviewCount": 1,
+            "lowRatingReviewCount": 1,
+            "negativeTextReviewCount": 0,
             "badReviewCount": 1,
             "reviewWindowSize": 10,
             "recentTwoWeeksCount": 10,
@@ -468,11 +450,11 @@ class RecommendationContractTests(unittest.TestCase):
                 {
                     "reviewIdOnMp": "sibling-review",
                     "sourceWbProductId": "999999999",
-                    "rating": 4,
+                    "rating": 2,
                     "createdAtOnMp": "2026-06-12T10:00:00Z",
-                    "snippet": "Брак",
-                    "reasonCodes": ["strong_complaint_in_cons"],
-                    "score": 0.4,
+                    "snippet": "",
+                    "reasonCodes": ["low_rating"],
+                    "score": 0.85,
                 }
             ],
         }
@@ -493,8 +475,8 @@ class RecommendationContractTests(unittest.TestCase):
             "parsedReplyCount": 0,
             "ratedReviewCount": 10,
             "averageRating": 4.3,
-            "lowRatingReviewCount": 0,
-            "negativeTextReviewCount": 1,
+            "lowRatingReviewCount": 1,
+            "negativeTextReviewCount": 0,
             "badReviewCount": 1,
             "reviewWindowSize": 10,
             "recentTwoWeeksCount": 10,
@@ -505,11 +487,11 @@ class RecommendationContractTests(unittest.TestCase):
                 {
                     "reviewIdOnMp": "sibling-review",
                     "sourceWbProductId": "999999999",
-                    "rating": 4,
+                    "rating": 2,
                     "createdAtOnMp": "2026-06-12T10:00:00Z",
-                    "snippet": "Брак",
-                    "reasonCodes": ["strong_complaint_in_cons"],
-                    "score": 0.4,
+                    "snippet": "",
+                    "reasonCodes": ["low_rating"],
+                    "score": 0.85,
                 }
             ],
         }

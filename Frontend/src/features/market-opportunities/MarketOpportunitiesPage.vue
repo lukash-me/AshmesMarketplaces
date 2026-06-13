@@ -60,7 +60,7 @@ const factorCatalog: Record<string, { label: string; help: string }> = {
   },
   bad_recent_reviews: {
     label: 'Плохие последние отзывы',
-    help: 'Последние отзывы имеют низкую оценку или негативный текст. Пустой текст отзыва не считается плохим отзывом.'
+    help: 'Последние отзывы с оценкой 3 и ниже. Текст отзыва временно не анализируется.'
   },
   low_review_count_top_position: {
     label: 'Мало отзывов в топе',
@@ -375,7 +375,7 @@ function factorHelp(key: string, fallback?: string, value?: HotProductRecommenda
     const scope = value !== null && typeof value === 'object' && value.reviewScope === 'root'
       ? ' Использован fallback по общей карточке/вариациям, потому что для выбранного WB id не было собственных отзывов.'
       : '';
-    const base = `Анализируются последние 10 отзывов: сначала отзывы за 14 дней, затем более старые до набора 10. Плохим считается низкая оценка или явная жалоба в тексте; пустой текст и оценка 4-5 без сильной жалобы не считаются плохим отзывом.${scope}`;
+    const base = `Анализируются последние 10 отзывов: сначала отзывы за 14 дней, затем более старые до набора 10. Плохими временно считаются только оценки 1-3. Текст отзыва, плюсы и минусы сейчас не анализируются.${scope}`;
     const evidence = formatNegativeReviewEvidence(value);
     return evidence ? `${base} ${evidence}` : base;
   }
@@ -426,9 +426,6 @@ function formatNegativeReviewEvidence(value: HotProductRecommendationFactor['val
 function reasonLabel(reason: string): string {
   const labels: Record<string, string> = {
     low_rating: 'низкая оценка',
-    strong_complaint_in_cons: 'жалоба в минусах',
-    strong_complaint_text: 'жалоба в тексте',
-    packaging_issue: 'упаковка/доставка'
   };
   return labels[reason] ?? reason;
 }
@@ -531,16 +528,11 @@ function isInvalidBadRecentReviewsFactor(factor: HotProductRecommendationFactor)
     return true;
   }
 
-  if (negativeTextReviews > 0 && !hasNegativeReviewEvidence(factor.value)) {
+  if (negativeTextReviews > 0) {
     return true;
   }
 
-  return badReviewCount <= 0 || (lowRatingReviews <= 0 && negativeTextReviews <= 0);
-}
-
-function hasNegativeReviewEvidence(value: Record<string, unknown>): boolean {
-  const evidence = value.negativeReviewEvidence;
-  return Array.isArray(evidence) && evidence.length > 0;
+  return badReviewCount <= 0 || lowRatingReviews <= 0;
 }
 
 function isInvalidLowReviewCountFactor(factor: HotProductRecommendationFactor): boolean {

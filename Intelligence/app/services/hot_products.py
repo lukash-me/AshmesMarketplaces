@@ -870,32 +870,26 @@ def _opportunity_factors(
     weak_card_content = weak_description or weak_characteristics or weak_visual
     good_reviews = item.rating is not None and item.rating >= 4.7 and item.review_count is not None and item.review_count >= 50
 
-    valid_negative_text_reviews = negative_text_reviews if negative_evidence else 0
     bad_review_count = review_signals.bad_review_count if review_signals else 0
     if review_scope != "root" and raw_negative_evidence:
         bad_review_count = min(bad_review_count, len(negative_evidence))
-    if sentiment_version >= 2 and review_window_size > 0 and bad_review_count > 0:
+    if sentiment_version >= 2 and review_window_size > 0 and bad_review_count > 0 and low_rating_reviews > 0:
         if review_scope == "root":
-            summary_label = f"{bad_review_count} плохих по общей карточке из {review_window_size} отзывов"
+            summary_label = f"{bad_review_count} оценки 3 и ниже по общей карточке из {review_window_size} отзывов"
         else:
-            summary_label = f"{bad_review_count} плохих из {review_window_size} последних отзывов"
-        label_parts: list[str] = []
-        if low_rating_reviews > 0:
-            label_parts.append(f"низких оценок: {low_rating_reviews}")
-        if valid_negative_text_reviews > 0:
-            label_parts.append(f"жалоб в тексте: {valid_negative_text_reviews}")
+            summary_label = f"{bad_review_count} оценки 3 и ниже из {review_window_size} последних отзывов"
         factors.append(FactorScore(
             code="bad_recent_reviews",
             label="Плохие последние отзывы",
             value={
                 "label": summary_label,
-                "details": ", ".join(label_parts),
+                "details": f"оценок 3 и ниже: {low_rating_reviews}",
                 "sentimentVersion": sentiment_version,
                 "reviewWindowSize": review_window_size,
                 "recentTwoWeeksCount": recent_two_weeks_count,
                 "ratedReviews": rated_reviews,
                 "lowRatingReviews": low_rating_reviews,
-                "negativeTextReviews": valid_negative_text_reviews,
+                "negativeTextReviews": 0,
                 "badReviewCount": bad_review_count,
                 "reviewScope": review_scope,
                 "averageRating": average_recent_rating,
@@ -905,14 +899,14 @@ def _opportunity_factors(
                 ],
             },
             score=86,
-            confidence=0.84 if low_rating_reviews > 0 else 0.68,
+            confidence=0.84,
             weight=OPPORTUNITY_FACTOR_WEIGHTS["bad_recent_reviews"],
             direction=FactorDirection.NEGATIVE,
             debug={
                 "sentimentVersion": sentiment_version,
                 "ratedReviews": rated_reviews,
                 "lowRatingReviews": low_rating_reviews,
-                "negativeTextReviews": valid_negative_text_reviews,
+                "negativeTextReviews": 0,
                 "badReviewCount": bad_review_count,
                 "reviewScope": review_scope,
                 "reviewWindowSize": review_window_size,

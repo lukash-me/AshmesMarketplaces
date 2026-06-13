@@ -31,7 +31,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
 
     private static readonly IReadOnlyList<HotProductsGroupDefinition> GroupDefinitions =
     [
-        new("bad_recent_reviews", "Плохие последние отзывы", "Низкие оценки или негативный текст в последних отзывах."),
+        new("bad_recent_reviews", "Плохие последние отзывы", "Оценки 3 и ниже в последних отзывах."),
         new("repeated_review_complaint", "Повторяющаяся жалоба", "В отзывах повторяется один и тот же повод для проверки."),
         new("weak_description", "Слабое описание", "Описание карточки короткое или неполное. Показывается только если описание получено."),
         new("weak_visible_description", "Слабое описание", "У видимых карточек есть проверяемые признаки слабого описания."),
@@ -537,17 +537,10 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             return true;
         }
 
-        if (negativeTextReviews > 0 && !HasNegativeReviewEvidence(value))
+        if (negativeTextReviews > 0)
             return true;
 
-        return badReviewCount <= 0 || lowRatingReviews <= 0 && negativeTextReviews <= 0;
-    }
-
-    private static bool HasNegativeReviewEvidence(JsonElement value)
-    {
-        return value.TryGetProperty("negativeReviewEvidence", out var evidence)
-            && evidence.ValueKind == JsonValueKind.Array
-            && evidence.GetArrayLength() > 0;
+        return badReviewCount <= 0 || lowRatingReviews <= 0;
     }
 
     private static bool IsInvalidLowReviewCountFactor(HotProductRecommendationFactorDto factor)
