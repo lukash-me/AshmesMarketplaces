@@ -370,8 +370,67 @@ function factorLabel(key: string, fallback?: string): string {
   return factorCatalog[key]?.label ?? fallback ?? key;
 }
 
-function factorHelp(key: string, fallback?: string): string {
+function factorHelp(key: string, fallback?: string, value?: HotProductRecommendationFactor['value']): string {
+  if (key === 'bad_recent_reviews') {
+    const scope = value !== null && typeof value === 'object' && value.reviewScope === 'root'
+      ? ' Использован fallback по общей карточке/вариациям, потому что для выбранного WB id не было собственных отзывов.'
+      : '';
+    const base = `Анализируются последние 10 отзывов: сначала отзывы за 14 дней, затем более старые до набора 10. Плохим считается низкая оценка или явная жалоба в тексте; пустой текст и оценка 4-5 без сильной жалобы не считаются плохим отзывом.${scope}`;
+    const evidence = formatNegativeReviewEvidence(value);
+    return evidence ? `${base} ${evidence}` : base;
+  }
+
   return factorCatalog[key]?.help ?? fallback ?? 'Фактор рассчитан по сохраненным рыночным данным.';
+}
+
+function formatNegativeReviewEvidence(value: HotProductRecommendationFactor['value']): string {
+  if (value === null || typeof value !== 'object') {
+    return '';
+  }
+
+  const evidence = value.negativeReviewEvidence;
+  if (!Array.isArray(evidence) || evidence.length === 0) {
+    return '';
+  }
+
+  const snippets = evidence
+    .slice(0, 3)
+    .map((item) => {
+      if (item === null || typeof item !== 'object') {
+        return '';
+      }
+
+      const rating = 'rating' in item && typeof item.rating === 'number'
+        ? `оценка ${item.rating}`
+        : 'оценка не указана';
+      const wbProductId = 'sourceWbProductId' in item && typeof item.sourceWbProductId === 'string'
+        ? `WB ${item.sourceWbProductId}`
+        : '';
+      const reasons = 'reasonCodes' in item && Array.isArray(item.reasonCodes)
+        ? item.reasonCodes
+            .map((reason) => typeof reason === 'string' ? reasonLabel(reason) : '')
+            .filter(Boolean)
+            .join(', ')
+        : '';
+      const snippet = 'snippet' in item && typeof item.snippet === 'string'
+        ? item.snippet.trim()
+        : '';
+      const meta = [rating, wbProductId, reasons].filter(Boolean).join(', ');
+      return snippet ? `${meta}: ${snippet}` : meta;
+    })
+    .filter(Boolean);
+
+  return snippets.length ? `Проверочные примеры: ${snippets.join('; ')}.` : '';
+}
+
+function reasonLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    low_rating: 'низкая оценка',
+    strong_complaint_in_cons: 'жалоба в минусах',
+    strong_complaint_text: 'жалоба в тексте',
+    packaging_issue: 'упаковка/доставка'
+  };
+  return labels[reason] ?? reason;
 }
 
 function filterItems(items: HotProductRecommendationItem[]): HotProductRecommendationItem[] {
@@ -461,7 +520,27 @@ function isInvalidBadRecentReviewsFactor(factor: HotProductRecommendationFactor)
 
   const lowRatingReviews = numericFactorField(factor.value, 'lowRatingReviews');
   const negativeTextReviews = numericFactorField(factor.value, 'negativeTextReviews');
-  return lowRatingReviews <= 0 && negativeTextReviews <= 0;
+  const badReviewCount = numericFactorField(factor.value, 'badReviewCount');
+  const sentimentVersion = numericFactorField(factor.value, 'sentimentVersion');
+  const reviewScope = typeof factor.value.reviewScope === 'string' ? factor.value.reviewScope : '';
+  if (sentimentVersion < 2) {
+    return true;
+  }
+
+  if (reviewScope !== 'product' && reviewScope !== 'root') {
+    return true;
+  }
+
+  if (negativeTextReviews > 0 && !hasNegativeReviewEvidence(factor.value)) {
+    return true;
+  }
+
+  return badReviewCount <= 0 || (lowRatingReviews <= 0 && negativeTextReviews <= 0);
+}
+
+function hasNegativeReviewEvidence(value: Record<string, unknown>): boolean {
+  const evidence = value.negativeReviewEvidence;
+  return Array.isArray(evidence) && evidence.length > 0;
 }
 
 function isInvalidLowReviewCountFactor(factor: HotProductRecommendationFactor): boolean {
@@ -775,7 +854,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                     :class="`opportunity-tag--${factorTone(factor)}`"
                   >
                     {{ factorText(factor) }}
-                    <HelpTooltip :text="factorHelp(factor.code, factor.label)" />
+                    <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
                   </span>
                 </div>
 
@@ -835,7 +914,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                     :class="`opportunity-tag--${factorTone(factor)}`"
                   >
                     {{ factorText(factor) }}
-                    <HelpTooltip :text="factorHelp(factor.code, factor.label)" />
+                    <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
                   </span>
                 </div>
               </div>

@@ -211,7 +211,38 @@ public sealed class IntelligenceClient : IIntelligenceClient
 
         try
         {
-            var error = JsonSerializer.Deserialize<IntelligenceErrorResponse>(responseBody, JsonOptions);
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.TryGetProperty("details", out var details)
+                && details.ValueKind == JsonValueKind.Object
+                && details.TryGetProperty("errors", out var errors)
+                && errors.ValueKind == JsonValueKind.Array)
+            {
+                var messages = errors
+                    .EnumerateArray()
+                    .Select(error =>
+                    {
+                        var location = error.TryGetProperty("loc", out var loc)
+                            && loc.ValueKind == JsonValueKind.Array
+                                ? string.Join(".", loc.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)))
+                                : null;
+                        var message = error.TryGetProperty("message", out var messageElement)
+                            && messageElement.ValueKind == JsonValueKind.String
+                                ? messageElement.GetString()
+                                : null;
+
+                        return string.IsNullOrWhiteSpace(location)
+                            ? message
+                            : $"{location}: {message}";
+                    })
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Take(5)
+                    .ToList();
+
+                if (messages.Count > 0)
+                    return $"Request payload validation failed: {string.Join("; ", messages)}";
+            }
+
+            var error = document.RootElement.Deserialize<IntelligenceErrorResponse>(JsonOptions);
             if (!string.IsNullOrWhiteSpace(error?.Message))
                 return error.Message;
             if (!string.IsNullOrWhiteSpace(error?.ErrorCode))

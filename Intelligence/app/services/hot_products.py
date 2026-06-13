@@ -845,7 +845,19 @@ def _opportunity_factors(
     rated_reviews = review_signals.rated_review_count if review_signals else 0
     low_rating_reviews = review_signals.low_rating_review_count if review_signals else 0
     negative_text_reviews = review_signals.negative_text_review_count if review_signals else 0
+    review_window_size = review_signals.review_window_size if review_signals else 0
+    recent_two_weeks_count = review_signals.recent_two_weeks_count if review_signals else 0
     average_recent_rating = _valid_rating(review_signals.average_rating) if review_signals else None
+    sentiment_version = review_signals.sentiment_version if review_signals else 1
+    review_scope = review_signals.review_scope if review_signals else "product"
+    raw_negative_evidence = review_signals.negative_review_evidence if review_signals else []
+    negative_evidence = [
+        evidence
+        for evidence in raw_negative_evidence
+        if review_scope == "root"
+        or not evidence.source_wb_product_id
+        or evidence.source_wb_product_id == item.wb_product_id
+    ]
     low_stock = item.total_quantity is not None and item.total_quantity <= 5
 
     description = (item.product.description or "").strip()
@@ -858,31 +870,56 @@ def _opportunity_factors(
     weak_card_content = weak_description or weak_characteristics or weak_visual
     good_reviews = item.rating is not None and item.rating >= 4.7 and item.review_count is not None and item.review_count >= 50
 
-    if rated_reviews > 0 and (low_rating_reviews > 0 or negative_text_reviews > 0):
+    valid_negative_text_reviews = negative_text_reviews if negative_evidence else 0
+    bad_review_count = review_signals.bad_review_count if review_signals else 0
+    if review_scope != "root" and raw_negative_evidence:
+        bad_review_count = min(bad_review_count, len(negative_evidence))
+    if sentiment_version >= 2 and review_window_size > 0 and bad_review_count > 0:
+        if review_scope == "root":
+            summary_label = f"{bad_review_count} плохих по общей карточке из {review_window_size} отзывов"
+        else:
+            summary_label = f"{bad_review_count} плохих из {review_window_size} последних отзывов"
         label_parts: list[str] = []
         if low_rating_reviews > 0:
             label_parts.append(f"низких оценок: {low_rating_reviews}")
-        if negative_text_reviews > 0:
-            label_parts.append(f"негативных текстов: {negative_text_reviews}")
+        if valid_negative_text_reviews > 0:
+            label_parts.append(f"жалоб в тексте: {valid_negative_text_reviews}")
         factors.append(FactorScore(
             code="bad_recent_reviews",
             label="Плохие последние отзывы",
             value={
-                "label": ", ".join(label_parts),
+                "label": summary_label,
+                "details": ", ".join(label_parts),
+                "sentimentVersion": sentiment_version,
+                "reviewWindowSize": review_window_size,
+                "recentTwoWeeksCount": recent_two_weeks_count,
                 "ratedReviews": rated_reviews,
                 "lowRatingReviews": low_rating_reviews,
-                "negativeTextReviews": negative_text_reviews,
+                "negativeTextReviews": valid_negative_text_reviews,
+                "badReviewCount": bad_review_count,
+                "reviewScope": review_scope,
                 "averageRating": average_recent_rating,
+                "negativeReviewEvidence": [
+                    evidence.model_dump(by_alias=True)
+                    for evidence in negative_evidence[:3]
+                ],
             },
             score=86,
-            confidence=0.78,
+            confidence=0.84 if low_rating_reviews > 0 else 0.68,
             weight=OPPORTUNITY_FACTOR_WEIGHTS["bad_recent_reviews"],
             direction=FactorDirection.NEGATIVE,
             debug={
+                "sentimentVersion": sentiment_version,
                 "ratedReviews": rated_reviews,
                 "lowRatingReviews": low_rating_reviews,
-                "negativeTextReviews": negative_text_reviews,
+                "negativeTextReviews": valid_negative_text_reviews,
+                "badReviewCount": bad_review_count,
+                "reviewScope": review_scope,
+                "reviewWindowSize": review_window_size,
+                "recentTwoWeeksCount": recent_two_weeks_count,
                 "averageRating": average_recent_rating,
+                "negativeEvidenceCount": len(negative_evidence),
+                "rawNegativeEvidenceCount": len(raw_negative_evidence),
             },
         ))
 

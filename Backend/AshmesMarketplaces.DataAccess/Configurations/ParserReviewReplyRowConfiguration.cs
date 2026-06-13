@@ -46,6 +46,16 @@ public sealed class ParserReviewReplyRowConfiguration : IEntityTypeConfiguration
 
         builder.HasIndex(x => new { x.IdParserFile, x.SourceLineNumber }).IsUnique();
         builder.HasIndex(x => new { x.IdParserRun, x.ReviewIdOnMp });
+        builder
+            .HasIndex(x => new { x.Marketplace, x.WbProductId, x.ReviewIdOnMp, x.ReplyIdOnMp })
+            .IsUnique()
+            .HasDatabaseName("UX_ParserReviewReplyRows_marketplace_product_review_reply")
+            .HasFilter("reply_id_on_mp IS NOT NULL");
+        builder
+            .HasIndex(x => new { x.Marketplace, x.WbProductId, x.ReviewIdOnMp, x.ReplyFallbackHash })
+            .IsUnique()
+            .HasDatabaseName("UX_ParserReviewReplyRows_marketplace_product_review_fallback")
+            .HasFilter("reply_fallback_hash IS NOT NULL");
         builder.HasIndex(x => x.SourceWbRootId);
 
         builder.HasOne<ParserRun>().WithMany().HasForeignKey(x => x.IdParserRun).OnDelete(DeleteBehavior.Restrict);

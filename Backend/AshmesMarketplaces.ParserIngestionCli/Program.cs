@@ -21,6 +21,20 @@ Console.CancelKeyPress += (_, eventArgs) =>
 try
 {
     await using var dbContext = CreateDbContext(parsed);
+    if (parsed.Command is "audit-quality" or "purge-quality")
+    {
+        var maintenance = new ParserDataQualityMaintenance(dbContext);
+        var maintenanceResult = parsed.Command switch
+        {
+            "audit-quality" => await maintenance.AuditAsync(parsed.Target, cancellation.Token),
+            "purge-quality" => await maintenance.PurgeAsync(parsed.Target, parsed.Confirm, cancellation.Token),
+            _ => throw new ArgumentException($"Unsupported command '{parsed.Command}'.")
+        };
+
+        Console.WriteLine(JsonSerializer.Serialize(maintenanceResult, new JsonSerializerOptions { WriteIndented = true }));
+        return maintenanceResult.ErrorCount == 0 ? 0 : 2;
+    }
+
     var service = new ParserIngestionService(dbContext);
     var options = new ParserIngestionOptions(parsed.BatchSize, parsed.MaxRows, parsed.DryRun);
     var result = parsed.Command switch
@@ -69,7 +83,10 @@ static ApplicationDbContext CreateDbContext(CliArguments parsed)
     }
 
     options.UseNpgsql(connectionString, npgsqlOptions =>
-        npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName));
+    {
+        npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+        npgsqlOptions.CommandTimeout(300);
+    });
     return new ApplicationDbContext(options.Options);
 }
 
@@ -80,10 +97,11 @@ internal sealed record CliArguments(
     long? MaxRows,
     bool DryRun,
     string? ConnectionString,
+    bool Confirm,
     bool ShowHelp)
 {
     public bool RequiresDatabase =>
-        Command == "promote-products"
+        Command is "promote-products" or "audit-quality" or "purge-quality"
         || (!DryRun && Command is "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details");
 
     public static string HelpText =>
@@ -102,8 +120,11 @@ internal sealed record CliArguments(
           stage-logistics <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           stage-product-details <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           promote-products <parser-run-id> [--dry-run] [--batch-size <rows>] [--limit <rows>]
+          audit-quality <output-directory>
+          purge-quality <output-directory> --confirm
 
         Write commands need --connection-string or ConnectionStrings__Postgres.
+        purge-quality creates backup tables in schema ParserQualityBackups before deleting rows.
         Stage commands with --dry-run only read parser artifacts and do not need database access.
         Review staging preserves capped/root-level partial snapshot semantics and does not write domain Reviews.
         Rank staging preserves observed rank/page-fetch evidence and does not infer product positions.
@@ -113,23 +134,27 @@ internal sealed record CliArguments(
     public static CliArguments Parse(string[] args)
     {
         if (args.Length == 0 || args[0] is "--help" or "-h")
-            return new CliArguments(string.Empty, string.Empty, 5000, null, false, null, true);
+            return new CliArguments(string.Empty, string.Empty, 5000, null, false, null, false, true);
 
         if (args.Length < 2)
             throw new ArgumentException("A command and target are required. Use --help for syntax.");
 
         var command = args[0].Trim().ToLowerInvariant();
-        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "validate-product-details" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "promote-products"))
+        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "validate-product-details" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "promote-products" or "audit-quality" or "purge-quality"))
             throw new ArgumentException($"Unsupported command '{args[0]}'. Use --help for syntax.");
 
         var batchSize = command == "promote-products" ? 1000 : 5000;
         long? maxRows = null;
         var dryRun = false;
         string? connectionString = null;
+        var confirm = false;
         for (var index = 2; index < args.Length; index++)
         {
             switch (args[index])
             {
+                case "--confirm":
+                    confirm = true;
+                    break;
                 case "--dry-run":
                     dryRun = true;
                     break;
@@ -147,7 +172,7 @@ internal sealed record CliArguments(
             }
         }
 
-        return new CliArguments(command, args[1], batchSize, maxRows, dryRun, connectionString, false);
+        return new CliArguments(command, args[1], batchSize, maxRows, dryRun, connectionString, confirm, false);
     }
 
     private static int ParseIntOption(string[] args, ref int index, string option)

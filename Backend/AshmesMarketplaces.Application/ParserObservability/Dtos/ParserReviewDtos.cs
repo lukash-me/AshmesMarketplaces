@@ -10,6 +10,8 @@ public sealed record ParserReviewListItemDto(
     string ReviewAttributionMode,
     int? Rating,
     string? TextPreview,
+    string? ProsPreview,
+    string? ConsPreview,
     DateTime? CreatedAtOnMp,
     bool HasObservedReply,
     bool IsPartialSnapshot,

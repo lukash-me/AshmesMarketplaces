@@ -69,6 +69,7 @@ public sealed record ParserProductDetailDto(
     ParserProductLogisticsDetailDto? LogisticsDetail,
     string? Description,
     JsonElement? Characteristics,
+    JsonElement? GroupedOptions,
     ParserProductVisualAnalysisDto? VisualAnalysis,
     ParserProductReviewEvidenceDto ParsedReviewEvidence);
 

@@ -296,8 +296,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             .AsNoTracking()
             .Where(x =>
                 x.WbProductId == product.WbProductId
-                && x.Status == "succeeded"
-                && (x.InputProductsParserRunId == product.ParserRunId || x.InputProductsParserRunId == null))
+                && x.Status == "succeeded")
             .OrderByDescending(x => x.InputProductsParserRunId == product.ParserRunId)
             .ThenByDescending(x => x.ParsedAtUtc)
             .ThenByDescending(x => x.SourceLineNumber)
@@ -1581,6 +1580,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             evidence.GetLogisticsDetail(row.Id),
             Description: details?.Description,
             Characteristics: details?.Characteristics?.RootElement.Clone(),
+            GroupedOptions: details?.GroupedOptions?.RootElement.Clone(),
             VisualAnalysis: null,
             ParsedReviewEvidence: evidence.GetReviewEvidence(row.Id));
     }

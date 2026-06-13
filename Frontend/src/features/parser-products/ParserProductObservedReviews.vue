@@ -197,6 +197,14 @@ function reviewTextValue(value: string | null | undefined): string {
   return value === null || value === undefined || value.trim() === '' ? '—' : value;
 }
 
+function reviewPreviewRows(row: ParserReviewListItem): Array<{ label: string; text: string }> {
+  return [
+    { label: 'Отзыв', text: row.textPreview?.trim() ?? '' },
+    { label: 'Плюсы', text: row.prosPreview?.trim() ?? '' },
+    { label: 'Минусы', text: row.consPreview?.trim() ?? '' }
+  ].filter((item) => item.text.length > 0);
+}
+
 function formatDate(value: string | null | undefined): string {
   if (!value) {
     return 'Нет данных';
@@ -287,7 +295,13 @@ function ratingTone(value: number | null): string {
           {{ fieldValue(row.rating) }}
         </span>
         <span class="review-card__body">
-          <strong>{{ reviewTextValue(row.textPreview) }}</strong>
+          <span v-if="reviewPreviewRows(row).length" class="review-card__preview-list">
+            <span v-for="preview in reviewPreviewRows(row)" :key="`${row.id}:${preview.label}`" class="review-card__preview">
+              <span>{{ preview.label }}</span>
+              <strong>{{ preview.text }}</strong>
+            </span>
+          </span>
+          <strong v-else>—</strong>
           <small>{{ formatDate(row.createdAtOnMp) }}</small>
         </span>
         <Badge :tone="row.hasObservedReply ? 'success' : 'neutral'">
@@ -500,6 +514,23 @@ function ratingTone(value: number | null): string {
   display: grid;
   min-width: 0;
   gap: var(--space-1);
+}
+
+.review-card__preview-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.review-card__preview {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.review-card__preview span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 740;
+  text-transform: uppercase;
 }
 
 .review-card__body strong {

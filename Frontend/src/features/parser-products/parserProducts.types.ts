@@ -43,6 +43,7 @@ export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbn
   rowHash: string;
   description: string | null;
   characteristics: Record<string, unknown> | unknown[] | null;
+  groupedOptions: Record<string, unknown> | unknown[] | null;
   visualAnalysis: ParserProductVisualAnalysis | null;
   logisticsDetail?: ParserProductLogisticsDetail | null;
 }

@@ -237,7 +237,11 @@ class RecommendationContractTests(unittest.TestCase):
             "averageRating": 0,
             "lowRatingReviewCount": 0,
             "negativeTextReviewCount": 0,
+            "reviewWindowSize": 1,
+            "recentTwoWeeksCount": 1,
             "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "negativeReviewEvidence": [],
         }
 
         payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
@@ -258,7 +262,11 @@ class RecommendationContractTests(unittest.TestCase):
             "averageRating": 4,
             "lowRatingReviewCount": 0,
             "negativeTextReviewCount": 0,
+            "reviewWindowSize": 1,
+            "recentTwoWeeksCount": 1,
             "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "negativeReviewEvidence": [],
         }
 
         payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
@@ -279,6 +287,257 @@ class RecommendationContractTests(unittest.TestCase):
             "averageRating": 2.6,
             "lowRatingReviewCount": 3,
             "negativeTextReviewCount": 0,
+            "badReviewCount": 3,
+            "reviewWindowSize": 5,
+            "recentTwoWeeksCount": 5,
+            "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "reviewScope": "product",
+            "negativeReviewEvidence": [
+                {
+                    "reviewIdOnMp": "bad-rating-1",
+                    "sourceWbProductId": str(products[0]["wbProductId"]),
+                    "rating": 1,
+                    "createdAtOnMp": "2026-06-12T10:00:00Z",
+                    "snippet": "",
+                    "reasonCodes": ["low_rating"],
+                    "score": 0.85,
+                }
+            ],
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        factors_by_code = {factor["code"]: factor for factor in target["factors"]}
+
+        self.assertIn("bad_recent_reviews", factors_by_code)
+        self.assertEqual(factors_by_code["bad_recent_reviews"]["value"]["reviewWindowSize"], 5)
+        self.assertEqual(factors_by_code["bad_recent_reviews"]["value"]["lowRatingReviews"], 3)
+
+    def test_bad_recent_reviews_requires_review_window(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 20,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 20,
+            "averageRating": 2.0,
+            "lowRatingReviewCount": 8,
+            "negativeTextReviewCount": 0,
+            "badReviewCount": 8,
+            "reviewWindowSize": 0,
+            "recentTwoWeeksCount": 0,
+            "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "reviewScope": "product",
+            "negativeReviewEvidence": [],
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("bad_recent_reviews", codes)
+
+    def test_negative_text_review_signal_creates_windowed_bad_recent_review_factor(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 10,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 8,
+            "averageRating": 4.2,
+            "lowRatingReviewCount": 0,
+            "negativeTextReviewCount": 2,
+            "badReviewCount": 2,
+            "reviewWindowSize": 10,
+            "recentTwoWeeksCount": 5,
+            "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "reviewScope": "product",
+            "negativeReviewEvidence": [
+                {
+                    "reviewIdOnMp": "bad-text-1",
+                    "sourceWbProductId": str(products[0]["wbProductId"]),
+                    "rating": 5,
+                    "createdAtOnMp": "2026-06-12T10:00:00Z",
+                    "snippet": "Сломался через день",
+                    "reasonCodes": ["strong_complaint_text"],
+                    "score": 0.3,
+                },
+                {
+                    "reviewIdOnMp": "bad-text-2",
+                    "sourceWbProductId": str(products[0]["wbProductId"]),
+                    "rating": 4,
+                    "createdAtOnMp": "2026-06-11T10:00:00Z",
+                    "snippet": "В минусах указан брак",
+                    "reasonCodes": ["strong_complaint_in_cons"],
+                    "score": 0.3,
+                },
+            ],
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        factor = next(
+            factor for factor in target["factors"]
+            if factor["code"] == "bad_recent_reviews"
+        )
+
+        self.assertEqual(factor["value"]["reviewWindowSize"], 10)
+        self.assertEqual(factor["value"]["recentTwoWeeksCount"], 5)
+        self.assertEqual(factor["value"]["negativeTextReviews"], 2)
+        self.assertEqual(factor["value"]["badReviewCount"], 2)
+        self.assertEqual(factor["value"]["sentimentVersion"], 2)
+        self.assertEqual(len(factor["value"]["negativeReviewEvidence"]), 2)
+        self.assertIn("2", factor["value"]["label"])
+
+    def test_bad_recent_reviews_uses_unique_bad_review_count(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 9,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 9,
+            "averageRating": 4.1,
+            "lowRatingReviewCount": 2,
+            "negativeTextReviewCount": 2,
+            "badReviewCount": 2,
+            "reviewWindowSize": 9,
+            "recentTwoWeeksCount": 9,
+            "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "reviewScope": "product",
+            "negativeReviewEvidence": [
+                {
+                    "reviewIdOnMp": "same-review",
+                    "sourceWbProductId": str(products[0]["wbProductId"]),
+                    "rating": 1,
+                    "createdAtOnMp": "2026-06-12T10:00:00Z",
+                    "snippet": "Сломался",
+                    "reasonCodes": ["low_rating", "strong_complaint_text"],
+                    "score": 1.0,
+                },
+                {
+                    "reviewIdOnMp": "other-review",
+                    "sourceWbProductId": str(products[0]["wbProductId"]),
+                    "rating": 1,
+                    "createdAtOnMp": "2026-06-11T10:00:00Z",
+                    "snippet": "",
+                    "reasonCodes": ["low_rating"],
+                    "score": 0.85,
+                },
+            ],
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        factor = next(
+            factor for factor in target["factors"]
+            if factor["code"] == "bad_recent_reviews"
+        )
+
+        self.assertEqual(factor["value"]["badReviewCount"], 2)
+        self.assertIn("2 плохих", factor["value"]["label"])
+
+    def test_product_scope_ignores_evidence_from_other_variation(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 10,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 10,
+            "averageRating": 4.8,
+            "lowRatingReviewCount": 0,
+            "negativeTextReviewCount": 1,
+            "badReviewCount": 1,
+            "reviewWindowSize": 10,
+            "recentTwoWeeksCount": 10,
+            "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "reviewScope": "product",
+            "negativeReviewEvidence": [
+                {
+                    "reviewIdOnMp": "sibling-review",
+                    "sourceWbProductId": "999999999",
+                    "rating": 4,
+                    "createdAtOnMp": "2026-06-12T10:00:00Z",
+                    "snippet": "Брак",
+                    "reasonCodes": ["strong_complaint_in_cons"],
+                    "score": 0.4,
+                }
+            ],
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("bad_recent_reviews", codes)
+
+    def test_root_scope_labels_shared_variation_reviews(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 10,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 10,
+            "averageRating": 4.3,
+            "lowRatingReviewCount": 0,
+            "negativeTextReviewCount": 1,
+            "badReviewCount": 1,
+            "reviewWindowSize": 10,
+            "recentTwoWeeksCount": 10,
+            "latestReviewRunId": "wb_reviews_test",
+            "sentimentVersion": 2,
+            "reviewScope": "root",
+            "negativeReviewEvidence": [
+                {
+                    "reviewIdOnMp": "sibling-review",
+                    "sourceWbProductId": "999999999",
+                    "rating": 4,
+                    "createdAtOnMp": "2026-06-12T10:00:00Z",
+                    "snippet": "Брак",
+                    "reasonCodes": ["strong_complaint_in_cons"],
+                    "score": 0.4,
+                }
+            ],
+        }
+
+        payload = self.post_hot_products(products, {"maxRecommendations": 24}).json()
+        target = next(
+            item for item in payload["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        factor = next(
+            factor for factor in target["factors"]
+            if factor["code"] == "bad_recent_reviews"
+        )
+
+        self.assertEqual(factor["value"]["reviewScope"], "root")
+        self.assertIn("общей карточке", factor["value"]["label"])
+
+    def test_legacy_negative_text_signal_without_sentiment_version_is_ignored(self) -> None:
+        products = fixture_products(24)
+        products[0]["reviewSignals"] = {
+            "parsedReviewCount": 10,
+            "parsedReplyCount": 0,
+            "ratedReviewCount": 10,
+            "averageRating": 4.8,
+            "lowRatingReviewCount": 0,
+            "negativeTextReviewCount": 2,
+            "reviewWindowSize": 10,
+            "recentTwoWeeksCount": 10,
             "latestReviewRunId": "wb_reviews_test",
         }
 
@@ -289,7 +548,7 @@ class RecommendationContractTests(unittest.TestCase):
         )
         codes = {factor["code"] for factor in target["factors"]}
 
-        self.assertIn("bad_recent_reviews", codes)
+        self.assertNotIn("bad_recent_reviews", codes)
 
     def test_low_review_count_top_position_uses_peer_cluster_comparison(self) -> None:
         products = fixture_products(24)

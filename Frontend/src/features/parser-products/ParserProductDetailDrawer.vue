@@ -59,7 +59,12 @@ const activeImageIndex = computed(() =>
 const productUrl = computed(() => getWildberriesProductUrl(displayProduct.value?.wbProductId));
 const positionSummary = computed(() => positionFor(displayProduct.value));
 const productDescription = computed(() => detail.value?.description?.trim() ?? '');
-const characteristicRows = computed(() => flattenCharacteristics(detail.value?.characteristics ?? null));
+const characteristicRows = computed(() =>
+  uniqueCharacteristicRows([
+    ...flattenCharacteristics(detail.value?.characteristics ?? null),
+    ...flattenCharacteristics(detail.value?.groupedOptions ?? null)
+  ])
+);
 const visualFacts = computed(() => detail.value?.visualAnalysis?.facts ?? []);
 
 watch(
@@ -408,50 +413,74 @@ function positionLabel(position: ParserProductPosition): string {
   return 'Нет данных';
 }
 
-function flattenCharacteristics(value: ParserProductDetail['characteristics']): Array<{ name: string; value: string }> {
+function flattenCharacteristics(
+  value: ParserProductDetail['characteristics'] | ParserProductDetail['groupedOptions']
+): Array<{ name: string; value: string }> {
   if (!value) {
     return [];
   }
 
   if (Array.isArray(value)) {
     return value
-      .map((entry, index) => normalizeCharacteristicEntry(entry, `Параметр ${index + 1}`))
-      .filter((entry): entry is { name: string; value: string } => Boolean(entry));
+      .flatMap((entry, index) => normalizeCharacteristicEntries(entry, `Параметр ${index + 1}`));
   }
 
   return Object.entries(value)
-    .map(([key, entry]) => normalizeCharacteristicEntry(entry, key))
-    .filter((entry): entry is { name: string; value: string } => Boolean(entry));
+    .flatMap(([key, entry]) => normalizeCharacteristicEntries(entry, key));
 }
 
-function normalizeCharacteristicEntry(entry: unknown, fallbackName: string): { name: string; value: string } | null {
+function normalizeCharacteristicEntries(entry: unknown, fallbackName: string): Array<{ name: string; value: string }> {
   if (entry === null || entry === undefined || entry === '') {
-    return null;
+    return [];
   }
 
   if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
-    return { name: fallbackName, value: String(entry) };
+    return [{ name: fallbackName, value: String(entry) }];
   }
 
   if (Array.isArray(entry)) {
     const value = entry.map((item) => String(item ?? '').trim()).filter(Boolean).join(', ');
-    return value ? { name: fallbackName, value } : null;
+    return value ? [{ name: fallbackName, value }] : [];
   }
 
   if (typeof entry === 'object') {
     const record = entry as Record<string, unknown>;
+    if (Array.isArray(record.options)) {
+      const groupName = String(record.group_name ?? record.groupName ?? fallbackName).trim();
+      return record.options.flatMap((option, index) =>
+        normalizeCharacteristicEntries(option, groupName || `Группа ${index + 1}`)
+      );
+    }
+
     const name = String(record.name ?? record.title ?? record.key ?? fallbackName).trim();
     const rawValue = record.value ?? record.values ?? record.text;
     if (Array.isArray(rawValue)) {
       const value = rawValue.map((item) => String(item ?? '').trim()).filter(Boolean).join(', ');
-      return value ? { name, value } : null;
+      return value ? [{ name, value }] : [];
     }
 
     const value = String(rawValue ?? '').trim();
-    return value ? { name, value } : null;
+    return value ? [{ name, value }] : [];
   }
 
-  return null;
+  return [];
+}
+
+function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>): Array<{ name: string; value: string }> {
+  const seen = new Set<string>();
+  const result: Array<{ name: string; value: string }> = [];
+
+  for (const row of rows) {
+    const key = `${row.name.trim().toLowerCase()}::${row.value.trim().toLowerCase()}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(row);
+  }
+
+  return result;
 }
 
 </script>
@@ -596,8 +625,6 @@ function normalizeCharacteristicEntry(entry: unknown, fallbackName: string): { n
             <p v-if="positionSummary.state === 'unknown'" class="drawer__empty">Позиция пока не определена для этой карточки.</p>
           </section>
 
-          <MarketProductObservedReviews :product="displayProduct" />
-
           <section class="drawer__section">
             <div class="drawer__section-title">
               <h3>Описание</h3>
@@ -628,6 +655,8 @@ function normalizeCharacteristicEntry(entry: unknown, fallbackName: string): { n
             </ul>
             <p v-else class="drawer__empty">Визуальный анализ изображений пока не рассчитан.</p>
           </section>
+
+          <MarketProductObservedReviews :product="displayProduct" />
 
           <section class="drawer__section">
             <h3>Цены и наличие</h3>

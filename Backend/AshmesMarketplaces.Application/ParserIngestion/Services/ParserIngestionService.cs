@@ -20,6 +20,14 @@ public sealed class ParserIngestionService : IParserIngestionService
     private const string ProductDetailsKind = "product_details";
     private readonly ApplicationDbContext _dbContext;
 
+    private sealed record ReviewIdentity(string Marketplace, string WbProductId, string ReviewIdOnMp);
+
+    private sealed record ReviewReplyIdentity(
+        string Marketplace,
+        string WbProductId,
+        string ReviewIdOnMp,
+        string ReplyKey);
+
     public ParserIngestionService(ApplicationDbContext dbContext)
     {
         _dbContext = dbContext;
@@ -1060,7 +1068,16 @@ public sealed class ParserIngestionService : IParserIngestionService
                 .Select(x => x.SourceLineNumber)
                 .ToListAsync(cancellationToken);
         var existingLines = existing.ToHashSet();
-        var newRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+        var candidateRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+        var existingReviewKeys = await LoadExistingReviewKeysAsync(candidateRows, cancellationToken);
+        var batchReviewKeys = new HashSet<ReviewIdentity>();
+        var newRows = candidateRows
+            .Where(row =>
+            {
+                var key = ToReviewIdentity(row);
+                return !existingReviewKeys.Contains(key) && batchReviewKeys.Add(key);
+            })
+            .ToList();
 
         summary.RowsSkipped += rows.Count - newRows.Count;
         summary.RowsWritten += newRows.Count;
@@ -1134,7 +1151,16 @@ public sealed class ParserIngestionService : IParserIngestionService
                 .Select(x => x.SourceLineNumber)
                 .ToListAsync(cancellationToken);
         var existingLines = existing.ToHashSet();
-        var newRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+        var candidateRows = rows.Where(x => !existingLines.Contains(x.SourceLineNumber)).ToList();
+        var existingReplyKeys = await LoadExistingReviewReplyKeysAsync(candidateRows, cancellationToken);
+        var batchReplyKeys = new HashSet<ReviewReplyIdentity>();
+        var newRows = candidateRows
+            .Where(row =>
+            {
+                var key = ToReviewReplyIdentity(row);
+                return !existingReplyKeys.Contains(key) && batchReplyKeys.Add(key);
+            })
+            .ToList();
 
         summary.RowsSkipped += rows.Count - newRows.Count;
         summary.RowsWritten += newRows.Count;
@@ -1145,6 +1171,92 @@ public sealed class ParserIngestionService : IParserIngestionService
         rows.Clear();
         errors.Clear();
     }
+
+    private async Task<HashSet<ReviewIdentity>> LoadExistingReviewKeysAsync(
+        IReadOnlyCollection<ParserReviewRow> rows,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+            return [];
+
+        var marketplaces = rows.Select(x => x.Marketplace).Distinct(StringComparer.Ordinal).ToList();
+        var productIds = rows.Select(x => x.WbProductId).Distinct(StringComparer.Ordinal).ToList();
+        var reviewIds = rows.Select(x => x.ReviewIdOnMp).Distinct(StringComparer.Ordinal).ToList();
+
+        var existing = await _dbContext.ParserReviewRows
+            .AsNoTracking()
+            .Where(x =>
+                marketplaces.Contains(x.Marketplace)
+                && productIds.Contains(x.WbProductId)
+                && reviewIds.Contains(x.ReviewIdOnMp))
+            .Select(x => new { x.Marketplace, x.WbProductId, x.ReviewIdOnMp })
+            .ToListAsync(cancellationToken);
+
+        return existing
+            .Select(x => new ReviewIdentity(x.Marketplace, x.WbProductId, x.ReviewIdOnMp))
+            .ToHashSet();
+    }
+
+    private async Task<HashSet<ReviewReplyIdentity>> LoadExistingReviewReplyKeysAsync(
+        IReadOnlyCollection<ParserReviewReplyRow> rows,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+            return [];
+
+        var marketplaces = rows.Select(x => x.Marketplace).Distinct(StringComparer.Ordinal).ToList();
+        var productIds = rows.Select(x => x.WbProductId).Distinct(StringComparer.Ordinal).ToList();
+        var reviewIds = rows.Select(x => x.ReviewIdOnMp).Distinct(StringComparer.Ordinal).ToList();
+        var replyIds = rows
+            .Select(x => x.ReplyIdOnMp)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var fallbackHashes = rows
+            .Select(x => x.ReplyFallbackHash)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var existing = await _dbContext.ParserReviewReplyRows
+            .AsNoTracking()
+            .Where(x =>
+                marketplaces.Contains(x.Marketplace)
+                && productIds.Contains(x.WbProductId)
+                && reviewIds.Contains(x.ReviewIdOnMp)
+                && ((x.ReplyIdOnMp != null && replyIds.Contains(x.ReplyIdOnMp))
+                    || (x.ReplyFallbackHash != null && fallbackHashes.Contains(x.ReplyFallbackHash))))
+            .Select(x => new
+            {
+                x.Marketplace,
+                x.WbProductId,
+                x.ReviewIdOnMp,
+                x.ReplyIdOnMp,
+                x.ReplyFallbackHash
+            })
+            .ToListAsync(cancellationToken);
+
+        return existing
+            .Select(x => new ReviewReplyIdentity(
+                x.Marketplace,
+                x.WbProductId,
+                x.ReviewIdOnMp,
+                ReviewReplyKey(x.ReplyIdOnMp, x.ReplyFallbackHash)))
+            .ToHashSet();
+    }
+
+    private static ReviewIdentity ToReviewIdentity(ParserReviewRow row) =>
+        new(row.Marketplace, row.WbProductId, row.ReviewIdOnMp);
+
+    private static ReviewReplyIdentity ToReviewReplyIdentity(ParserReviewReplyRow row) =>
+        new(row.Marketplace, row.WbProductId, row.ReviewIdOnMp, ReviewReplyKey(row.ReplyIdOnMp, row.ReplyFallbackHash));
+
+    private static string ReviewReplyKey(string? replyIdOnMp, string? replyFallbackHash) =>
+        string.IsNullOrWhiteSpace(replyIdOnMp)
+            ? $"fallback:{replyFallbackHash}"
+            : $"id:{replyIdOnMp}";
 
     private async Task ScanRankSnapshotsAsync(
         string path,

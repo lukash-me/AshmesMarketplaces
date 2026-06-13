@@ -8,6 +8,8 @@ export interface ParserReviewListItem {
   reviewAttributionMode: string;
   rating: number | null;
   textPreview: string | null;
+  prosPreview: string | null;
+  consPreview: string | null;
   createdAtOnMp: string | null;
   hasObservedReply: boolean;
   isPartialSnapshot: boolean;

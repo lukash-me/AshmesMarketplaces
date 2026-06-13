@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.Application.MarketRecommendations.Intelligence;
@@ -19,6 +20,82 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
     private const string PositionStateUnknown = "unknown";
     private const int DefaultBoundedProducts = 1000;
     private const int MaxProductsPerRun = 100_000;
+    private const int RecentReviewWindowSize = 10;
+    private const int ReviewSentimentVersion = 2;
+    private const string ReviewScopeProduct = "product";
+    private const string ReviewScopeRoot = "root";
+    private static readonly TimeSpan RecentReviewLookback = TimeSpan.FromDays(14);
+    private static readonly string[] ProductComplaintMarkers =
+    [
+        "плох",
+        "ужас",
+        "отврат",
+        "слом",
+        "брак",
+        "дефект",
+        "не работает",
+        "перестал",
+        "не включ",
+        "не гор",
+        "возврат",
+        "гряз",
+        "мят",
+        "запах",
+        "не совет",
+        "разочар",
+        "крив",
+        "дыра"
+    ];
+    private static readonly string[] StrongProductComplaintMarkers =
+    [
+        "слом",
+        "брак",
+        "дефект",
+        "не работает",
+        "перестал",
+        "не включ",
+        "не гор",
+        "возврат",
+        "крив",
+        "дыра"
+    ];
+    private static readonly string[] PackagingComplaintMarkers =
+    [
+        "упаков",
+        "коробк",
+        "достав",
+        "пвз",
+        "курьер"
+    ];
+    private static readonly string[] NeutralContextMarkers =
+    [
+        "не плох",
+        "неплох",
+        "не подош",
+        "не подойд",
+        "не видно",
+        "не критично",
+        "ничего лишнего",
+        "мне ок",
+        "размер не подош",
+        "пришло всё целое",
+        "пришло все целое",
+        "всё целое",
+        "все целое",
+        "царапинки нет",
+        "нет царап",
+        "в целом не плохо"
+    ];
+    private static readonly string[] PositiveContextMarkers =
+    [
+        "хорош",
+        "отлич",
+        "супер",
+        "понрав",
+        "довол",
+        "спасибо",
+        "благодар"
+    ];
 
     private readonly ApplicationDbContext _dbContext;
 
@@ -82,7 +159,8 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         var positions = string.IsNullOrWhiteSpace(rankRunId)
             ? BuildUnknownPositions(products)
             : await LoadPositionsAsync(products, rankRunId, cancellationToken);
-        var reviews = await LoadReviewEvidenceAsync(products, cancellationToken);
+        var reviews = await LoadReviewEvidenceAsync(products, DateTime.UtcNow, cancellationToken);
+        var productDetails = await LoadProductDetailsAsync(products, productRunId, cancellationToken);
         var reviewRunIds = reviews.Values
             .Select(x => x.LatestReviewRunId)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -115,6 +193,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             {
                 positions.TryGetValue(product.Id, out var position);
                 reviews.TryGetValue(product.Id, out var review);
+                productDetails.TryGetValue(product.Id, out var detail);
                 review ??= ReviewEvidence.Empty;
                 position ??= ProductPosition.Unknown(product.SourceCategory, product.SourceSubcategory);
 
@@ -141,9 +220,9 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                     position.ObservedRangeLimit,
                     product.TotalQuantity,
                     product.ParsedAtUtc,
-                    Description: null,
-                    Characteristics: null,
-                    ImageCount: product.ImageCount,
+                    Description: detail?.Description,
+                    Characteristics: detail?.Characteristics,
+                    ImageCount: detail?.MediaCount ?? product.ImageCount,
                     ReviewSignals: new MarketProductReviewSignalDto(
                         review.ParsedReviewCount,
                         review.ParsedReplyCount,
@@ -151,7 +230,13 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                         review.AverageRating,
                         review.LowRatingReviewCount,
                         review.NegativeTextReviewCount,
-                        review.LatestReviewRunId));
+                        review.BadReviewCount,
+                        review.ReviewWindowSize,
+                        review.RecentTwoWeeksCount,
+                        review.LatestReviewRunId,
+                        review.SentimentVersion,
+                        review.ReviewScope,
+                        review.NegativeReviewEvidence));
 
                 return new MarketProductFeatureSnapshot(
                     product.Id,
@@ -322,8 +407,46 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             x => ProductPosition.Unknown(x.SourceCategory, x.SourceSubcategory));
     }
 
+    private async Task<IReadOnlyDictionary<Guid, ProductDetailEvidence>> LoadProductDetailsAsync(
+        IReadOnlyList<ParserProductRow> products,
+        string productRunId,
+        CancellationToken cancellationToken)
+    {
+        var productIds = products
+            .Select(x => x.WbProductId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var detailRows = await _dbContext.ParserProductDetailRows
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId) && x.Status == SucceededStatus)
+            .OrderByDescending(x => x.InputProductsParserRunId == productRunId)
+            .ThenByDescending(x => x.ParsedAtUtc)
+            .ThenByDescending(x => x.SourceLineNumber)
+            .ToListAsync(cancellationToken);
+
+        var detailsByProductId = detailRows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+
+        var result = new Dictionary<Guid, ProductDetailEvidence>();
+        foreach (var product in products)
+        {
+            if (!detailsByProductId.TryGetValue(product.WbProductId, out var detail))
+                continue;
+
+            result[product.Id] = new ProductDetailEvidence(
+                detail.Description,
+                CloneUsableJson(detail.Characteristics) ?? CloneUsableJson(detail.GroupedOptions),
+                detail.MediaCount);
+        }
+
+        return result;
+    }
+
     private async Task<IReadOnlyDictionary<Guid, ReviewEvidence>> LoadReviewEvidenceAsync(
         IReadOnlyList<ParserProductRow> products,
+        DateTime referenceUtc,
         CancellationToken cancellationToken)
     {
         var rootIds = products
@@ -349,7 +472,9 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 x.Cons,
                 x.ParserRunId,
                 x.ParsedAtUtc,
-                x.SourceLineNumber))
+                x.SourceLineNumber,
+                x.CreatedAtOnMp,
+                x.ReviewIdOnMp))
             .ToListAsync(cancellationToken);
 
         var reviewByRoot = rootIds.Count == 0
@@ -357,7 +482,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             : reviewRows
                 .Where(x => rootIds.Contains(x.SourceWbRootId))
                 .GroupBy(x => x.SourceWbRootId, StringComparer.Ordinal)
-                .ToDictionary(x => x.Key, x => BuildReviewAggregate(x.Key, x), StringComparer.Ordinal);
+                .ToDictionary(x => x.Key, x => BuildReviewAggregate(x.Key, x, referenceUtc), StringComparer.Ordinal);
         var replyByRoot = rootIds.Count == 0
             ? new Dictionary<string, int>(StringComparer.Ordinal)
             : await _dbContext.ParserReviewReplyRows
@@ -369,7 +494,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         var reviewByProduct = reviewRows
             .Where(x => productIds.Contains(x.WbProductId))
             .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
-            .ToDictionary(x => x.Key, x => BuildReviewAggregate(x.Key, x), StringComparer.Ordinal);
+            .ToDictionary(x => x.Key, x => BuildReviewAggregate(x.Key, x, referenceUtc), StringComparer.Ordinal);
         var replyByProduct = await _dbContext.ParserReviewReplyRows
             .AsNoTracking()
             .Where(x => productIds.Contains(x.WbProductId))
@@ -383,16 +508,16 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             var rootKey = product.WbRootId;
             ReviewAggregate? reviewAggregate = null;
             int replyCount = 0;
-            if (!string.IsNullOrWhiteSpace(rootKey))
+            var reviewScope = ReviewScopeProduct;
+
+            reviewByProduct.TryGetValue(product.WbProductId, out reviewAggregate);
+            replyByProduct.TryGetValue(product.WbProductId, out replyCount);
+
+            if (reviewAggregate is null && !string.IsNullOrWhiteSpace(rootKey))
             {
                 reviewByRoot.TryGetValue(rootKey, out reviewAggregate);
                 replyByRoot.TryGetValue(rootKey, out replyCount);
-            }
-
-            if (reviewAggregate is null)
-            {
-                reviewByProduct.TryGetValue(product.WbProductId, out reviewAggregate);
-                replyByProduct.TryGetValue(product.WbProductId, out replyCount);
+                reviewScope = ReviewScopeRoot;
             }
 
             result[product.Id] = reviewAggregate is null
@@ -404,7 +529,13 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                     reviewAggregate.AverageRating,
                     reviewAggregate.LowRatingReviewCount,
                     reviewAggregate.NegativeTextReviewCount,
-                    reviewAggregate.LatestReviewRunId);
+                    reviewAggregate.BadReviewCount,
+                    reviewAggregate.ReviewWindowSize,
+                    reviewAggregate.RecentTwoWeeksCount,
+                    reviewAggregate.LatestReviewRunId,
+                    reviewAggregate.SentimentVersion,
+                    reviewScope,
+                    reviewAggregate.NegativeReviewEvidence);
         }
 
         return result;
@@ -412,61 +543,243 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
 
     private static ReviewAggregate BuildReviewAggregate(
         string key,
-        IEnumerable<ReviewSignalRow> rows)
+        IEnumerable<ReviewSignalRow> rows,
+        DateTime referenceUtc)
     {
-        var materialized = rows.ToList();
-        var validRatings = materialized
+        var selectedRows = BuildRecentReviewWindow(rows, referenceUtc);
+        var validRatings = selectedRows
             .Select(x => x.Rating)
             .Where(x => x is >= 1 and <= 5)
             .Select(x => x!.Value)
             .ToList();
-        var latestRunId = materialized
+        var latestRunId = selectedRows
             .OrderByDescending(x => x.ParsedAtUtc)
             .ThenByDescending(x => x.SourceLineNumber)
             .Select(x => x.ParserRunId)
             .FirstOrDefault();
+        var cutoffUtc = referenceUtc - RecentReviewLookback;
+        var sentimentRows = selectedRows
+            .Select(ClassifyReviewSentiment)
+            .ToList();
+        var negativeEvidence = sentimentRows
+            .Where(x => x.IsNegative)
+            .GroupBy(ReviewSentimentDeduplicationKey, StringComparer.Ordinal)
+            .Select(x => x
+                .OrderByDescending(y => y.Score)
+                .ThenByDescending(y => y.CreatedAtOnMp)
+                .First())
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.CreatedAtOnMp)
+            .ToList();
 
         return new ReviewAggregate(
             key,
-            materialized.Count,
+            selectedRows.Count,
             RatedReviewCount: validRatings.Count,
             AverageRating: validRatings.Count == 0
                 ? null
                 : decimal.Round((decimal)validRatings.Average(), 2, MidpointRounding.AwayFromZero),
-            LowRatingReviewCount: validRatings.Count(x => x <= 3),
-            NegativeTextReviewCount: materialized.Count(ContainsNegativeReviewText),
-            latestRunId);
+            LowRatingReviewCount: negativeEvidence.Count(x => x.IsNegativeByRating),
+            NegativeTextReviewCount: negativeEvidence.Count(x => x.IsNegativeByText),
+            BadReviewCount: negativeEvidence.Count,
+            ReviewWindowSize: selectedRows.Count,
+            RecentTwoWeeksCount: selectedRows.Count(x => ReviewObservedAtUtc(x) >= cutoffUtc),
+            latestRunId,
+            ReviewSentimentVersion,
+            negativeEvidence
+                .Take(3)
+                .Select(x => new ReviewNegativeEvidenceDto(
+                    x.ReviewIdOnMp,
+                    x.SourceWbProductId,
+                    x.Rating,
+                    x.CreatedAtOnMp,
+                    x.Snippet,
+                    x.ReasonCodes,
+                    x.Score))
+                .ToList());
     }
 
-    private static bool ContainsNegativeReviewText(ReviewSignalRow row)
+    private static List<ReviewSignalRow> BuildRecentReviewWindow(
+        IEnumerable<ReviewSignalRow> rows,
+        DateTime referenceUtc)
     {
-        var text = string.Join(
-            ' ',
-            new[] { row.Text, row.Pros, row.Cons }
-                .Where(x => !string.IsNullOrWhiteSpace(x)))
+        var cutoffUtc = referenceUtc - RecentReviewLookback;
+        var sortedRows = rows
+            .GroupBy(ReviewDeduplicationKey, StringComparer.Ordinal)
+            .Select(x => x
+                .OrderByDescending(ReviewObservedAtUtc)
+                .ThenByDescending(y => y.ParsedAtUtc)
+                .ThenByDescending(y => y.SourceLineNumber)
+                .First())
+            .OrderByDescending(ReviewObservedAtUtc)
+            .ThenByDescending(x => x.ParsedAtUtc)
+            .ThenByDescending(x => x.SourceLineNumber)
+            .ToList();
+
+        var recentRows = sortedRows
+            .Where(x => ReviewObservedAtUtc(x) >= cutoffUtc)
+            .Take(RecentReviewWindowSize)
+            .ToList();
+
+        if (recentRows.Count >= RecentReviewWindowSize)
+            return recentRows;
+
+        var selectedKeys = recentRows
+            .Select(ReviewDeduplicationKey)
+            .ToHashSet(StringComparer.Ordinal);
+        var olderRows = sortedRows
+            .Where(x => !selectedKeys.Contains(ReviewDeduplicationKey(x)))
+            .Take(RecentReviewWindowSize - recentRows.Count);
+        recentRows.AddRange(olderRows);
+        return recentRows;
+    }
+
+    private static DateTime ReviewObservedAtUtc(ReviewSignalRow row) => row.CreatedAtOnMp ?? row.ParsedAtUtc;
+
+    private static string ReviewDeduplicationKey(ReviewSignalRow row)
+    {
+        if (!string.IsNullOrWhiteSpace(row.ReviewIdOnMp))
+            return $"id:{row.ReviewIdOnMp.Trim()}";
+
+        return $"fallback:{row.WbProductId}:{row.CreatedAtOnMp?.Ticks}:{row.SourceLineNumber}";
+    }
+
+    private static string ReviewSentimentDeduplicationKey(ReviewSentiment row)
+    {
+        if (!string.IsNullOrWhiteSpace(row.ReviewIdOnMp))
+            return $"id:{row.ReviewIdOnMp.Trim()}";
+
+        return $"fallback:{row.SourceWbProductId}:{row.CreatedAtOnMp?.Ticks}:{row.Snippet}";
+    }
+
+    private static ReviewSentiment ClassifyReviewSentiment(ReviewSignalRow row)
+    {
+        var consText = NormalizeReviewText(row.Cons);
+        var complaintText = NormalizeReviewText(row.Text, row.Cons);
+        var allText = NormalizeReviewText(row.Text, row.Pros, row.Cons);
+        var reasonCodes = new List<string>();
+        var rating = row.Rating;
+        var negativeByRating = rating is >= 1 and <= 2;
+        if (negativeByRating)
+            reasonCodes.Add("low_rating");
+
+        var matchedProductMarker = FirstMatchingMarker(complaintText, ProductComplaintMarkers);
+        var matchedStrongProductMarker = FirstMatchingMarker(complaintText, StrongProductComplaintMarkers);
+        var matchedConsMarker = FirstMatchingMarker(consText, ProductComplaintMarkers);
+        var matchedStrongConsMarker = FirstMatchingMarker(consText, StrongProductComplaintMarkers);
+        var hasPackagingContext = HasAnyMarker(allText, PackagingComplaintMarkers);
+        var hasPackagingOnlyComplaint =
+            hasPackagingContext
+            && string.IsNullOrWhiteSpace(matchedStrongProductMarker)
+            && !HasAnyMarker(consText, StrongProductComplaintMarkers)
+            && !negativeByRating;
+        var hasNeutralContext = HasAnyMarker(allText, NeutralContextMarkers);
+        var hasPositiveContext = HasAnyMarker(allText, PositiveContextMarkers);
+
+        var negativeByText = false;
+        if (!string.IsNullOrWhiteSpace(matchedProductMarker) && !hasPackagingOnlyComplaint)
+        {
+            negativeByText = rating switch
+            {
+                >= 4 and <= 5 => !hasNeutralContext && !hasPositiveContext && !string.IsNullOrWhiteSpace(matchedStrongProductMarker),
+                3 => !hasNeutralContext,
+                >= 1 and <= 2 => true,
+                _ => !hasNeutralContext
+            };
+        }
+
+        if (negativeByText)
+            reasonCodes.Add(!string.IsNullOrWhiteSpace(matchedConsMarker) || !string.IsNullOrWhiteSpace(matchedStrongConsMarker)
+                ? "strong_complaint_in_cons"
+                : "strong_complaint_text");
+        else if (hasPackagingContext && HasAnyMarker(allText, ProductComplaintMarkers))
+        {
+            reasonCodes.Add("packaging_issue");
+        }
+
+        var score = ScoreReviewSentiment(rating, negativeByRating, negativeByText, hasPositiveContext, hasNeutralContext);
+        return new ReviewSentiment(
+            row.ReviewIdOnMp,
+            row.WbProductId,
+            rating,
+            row.CreatedAtOnMp,
+            MakeSnippet(row.Text, row.Pros, row.Cons),
+            reasonCodes,
+            score,
+            negativeByRating,
+            negativeByText);
+    }
+
+    private static string NormalizeReviewText(params string?[] values)
+    {
+        return string.Join(
+                ' ',
+                values
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x!.Trim()))
             .Trim()
             .ToLowerInvariant();
-        if (text.Length == 0)
-            return false;
+    }
 
-        string[] markers =
-        [
-            "плохо",
-            "ужас",
-            "слом",
-            "брак",
-            "не работает",
-            "не подош",
-            "возврат",
-            "гряз",
-            "царап",
-            "мят",
-            "запах",
-            "не совет",
-            "разочар"
-        ];
+    private static bool HasAnyMarker(string text, IReadOnlyList<string> markers) =>
+        !string.IsNullOrWhiteSpace(text) && markers.Any(text.Contains);
 
-        return markers.Any(text.Contains);
+    private static string? FirstMatchingMarker(string text, IReadOnlyList<string> markers) =>
+        string.IsNullOrWhiteSpace(text)
+            ? null
+            : markers.FirstOrDefault(text.Contains);
+
+    private static decimal ScoreReviewSentiment(
+        int? rating,
+        bool negativeByRating,
+        bool negativeByText,
+        bool hasPositiveContext,
+        bool hasNeutralContext)
+    {
+        var score = 0m;
+        if (negativeByRating)
+            score += 0.85m;
+        if (negativeByText)
+            score += 0.65m;
+        if (rating is >= 4 and <= 5)
+            score -= 0.35m;
+        if (hasPositiveContext)
+            score -= 0.2m;
+        if (hasNeutralContext)
+            score -= 0.15m;
+
+        score = decimal.Round(score, 2, MidpointRounding.AwayFromZero);
+        if (score < 0m)
+            return 0m;
+
+        return score > 1m ? 1m : score;
+    }
+
+    private static string MakeSnippet(params string?[] values)
+    {
+        var text = string.Join(
+                ' ',
+                values
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Select(x => x!.Trim()))
+            .Trim();
+
+        return text.Length <= 180 ? text : $"{text[..177]}...";
+    }
+
+    private static JsonElement? CloneUsableJson(JsonDocument? document)
+    {
+        if (document is null)
+            return null;
+
+        var root = document.RootElement;
+        return root.ValueKind switch
+        {
+            JsonValueKind.Array when root.GetArrayLength() == 0 => null,
+            JsonValueKind.Object when !root.EnumerateObject().Any() => null,
+            JsonValueKind.Null or JsonValueKind.Undefined => null,
+            _ => root.Clone()
+        };
     }
 
     private static RankRow BestRank(IEnumerable<RankRow> rows)
@@ -494,6 +807,8 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
 
     private sealed record CoverageSummary(int ObservedRangeLimit, IReadOnlyList<string> Queries, DateTime ObservedAtUtc);
 
+    private sealed record ProductDetailEvidence(string? Description, JsonElement? Characteristics, int? MediaCount);
+
     private sealed record ProductPosition(string PositionState, int? Position, int? ObservedRangeLimit)
     {
         public static ProductPosition Observed(int position) => new(PositionStateObserved, position, null);
@@ -512,7 +827,12 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         decimal? AverageRating,
         int LowRatingReviewCount,
         int NegativeTextReviewCount,
-        string? LatestReviewRunId);
+        int BadReviewCount,
+        int ReviewWindowSize,
+        int RecentTwoWeeksCount,
+        string? LatestReviewRunId,
+        int SentimentVersion,
+        IReadOnlyList<ReviewNegativeEvidenceDto> NegativeReviewEvidence);
 
     private sealed record ReviewEvidence(
         int ParsedReviewCount,
@@ -521,9 +841,15 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         decimal? AverageRating,
         int LowRatingReviewCount,
         int NegativeTextReviewCount,
-        string? LatestReviewRunId)
+        int BadReviewCount,
+        int ReviewWindowSize,
+        int RecentTwoWeeksCount,
+        string? LatestReviewRunId,
+        int SentimentVersion,
+        string ReviewScope,
+        IReadOnlyList<ReviewNegativeEvidenceDto> NegativeReviewEvidence)
     {
-        public static readonly ReviewEvidence Empty = new(0, 0, 0, null, 0, 0, null);
+        public static readonly ReviewEvidence Empty = new(0, 0, 0, null, 0, 0, 0, 0, 0, null, ReviewSentimentVersion, ReviewScopeProduct, []);
     }
 
     private sealed record ReviewSignalRow(
@@ -535,5 +861,21 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         string? Cons,
         string ParserRunId,
         DateTime ParsedAtUtc,
-        long SourceLineNumber);
+        long SourceLineNumber,
+        DateTime? CreatedAtOnMp,
+        string? ReviewIdOnMp);
+
+    private sealed record ReviewSentiment(
+        string? ReviewIdOnMp,
+        string SourceWbProductId,
+        int? Rating,
+        DateTime? CreatedAtOnMp,
+        string Snippet,
+        IReadOnlyList<string> ReasonCodes,
+        decimal Score,
+        bool IsNegativeByRating,
+        bool IsNegativeByText)
+    {
+        public bool IsNegative => IsNegativeByRating || IsNegativeByText;
+    }
 }

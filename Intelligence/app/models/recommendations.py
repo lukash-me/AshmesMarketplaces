@@ -61,7 +61,26 @@ class MarketProductReviewSignalDto(ContractModel):
     average_rating: float | None = Field(default=None, alias="averageRating")
     low_rating_review_count: int = Field(default=0, alias="lowRatingReviewCount")
     negative_text_review_count: int = Field(default=0, alias="negativeTextReviewCount")
+    bad_review_count: int = Field(default=0, alias="badReviewCount")
+    review_window_size: int = Field(default=0, alias="reviewWindowSize")
+    recent_two_weeks_count: int = Field(default=0, alias="recentTwoWeeksCount")
     latest_review_run_id: str | None = Field(default=None, alias="latestReviewRunId")
+    sentiment_version: int = Field(default=1, alias="sentimentVersion")
+    review_scope: str = Field(default="product", alias="reviewScope")
+    negative_review_evidence: list["ReviewNegativeEvidenceDto"] = Field(
+        default_factory=list,
+        alias="negativeReviewEvidence",
+    )
+
+
+class ReviewNegativeEvidenceDto(ContractModel):
+    review_id_on_mp: str | None = Field(default=None, alias="reviewIdOnMp")
+    source_wb_product_id: WbIdentifier = Field(default=None, alias="sourceWbProductId")
+    rating: int | None = None
+    created_at_on_mp: datetime | None = Field(default=None, alias="createdAtOnMp")
+    snippet: str = ""
+    reason_codes: list[str] = Field(default_factory=list, alias="reasonCodes")
+    score: float = 0.0
 
 
 class ProductHistoryDto(ContractModel):

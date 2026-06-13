@@ -237,6 +237,8 @@ public sealed class ParserReviewReadService : IParserReviewReadService
             row.ReviewAttributionMode,
             row.Rating,
             GetPreview(row.Text),
+            GetPreview(row.Pros),
+            GetPreview(row.Cons),
             row.CreatedAtOnMp,
             hasObservedReply,
             row.IsPartialSnapshot,

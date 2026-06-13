@@ -56,7 +56,22 @@ public sealed record MarketProductReviewSignalDto(
     decimal? AverageRating,
     int LowRatingReviewCount,
     int NegativeTextReviewCount,
-    string? LatestReviewRunId);
+    int BadReviewCount,
+    int ReviewWindowSize,
+    int RecentTwoWeeksCount,
+    string? LatestReviewRunId,
+    int SentimentVersion,
+    string ReviewScope,
+    IReadOnlyList<ReviewNegativeEvidenceDto> NegativeReviewEvidence);
+
+public sealed record ReviewNegativeEvidenceDto(
+    string? ReviewIdOnMp,
+    string? SourceWbProductId,
+    int? Rating,
+    DateTime? CreatedAtOnMp,
+    string Snippet,
+    IReadOnlyList<string> ReasonCodes,
+    decimal Score);
 
 public sealed record HotProductsIntelligenceResponse(
     string RequestId,

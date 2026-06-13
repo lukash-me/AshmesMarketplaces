@@ -16,7 +16,10 @@ public static class DatabaseServiceCollectionExtensions
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseNpgsql(connectionString, npgsqlOptions =>
-                npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
+            {
+                npgsqlOptions.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName);
+                npgsqlOptions.CommandTimeout(300);
+            }));
 
         return services;
     }

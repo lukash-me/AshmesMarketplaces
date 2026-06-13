@@ -110,7 +110,16 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         }
 
         var thumbnailUrls = await LoadThumbnailUrlsAsync(allItemRows, cancellationToken);
-        var allRunItems = allItemRows.Select(item => MapItem(item, thumbnailUrls)).ToList();
+        var allRunItems = allItemRows
+            .Select(item => MapItem(item, thumbnailUrls))
+            .Where(item => item.Factors.Count > 0)
+            .ToList();
+        if (allRunItems.Count == 0)
+        {
+            return ServiceResult<HotProductsListResponse>.Success(
+                new HotProductsListResponse(null, page, pageSize, 0, [], []));
+        }
+
         var groupedItems = ApplyGroupFilter(allRunItems, query.GroupKey);
         var filteredItems = ApplyFactorFilter(groupedItems, query);
         var totalCount = filteredItems.Count;
@@ -512,7 +521,33 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
 
         var lowRatingReviews = ReadOptionalInt(value, "lowRatingReviews") ?? 0;
         var negativeTextReviews = ReadOptionalInt(value, "negativeTextReviews") ?? 0;
-        return lowRatingReviews <= 0 && negativeTextReviews <= 0;
+        var badReviewCount = ReadOptionalInt(value, "badReviewCount") ?? 0;
+        var reviewWindowSize = ReadOptionalInt(value, "reviewWindowSize") ?? 0;
+        var sentimentVersion = ReadOptionalInt(value, "sentimentVersion") ?? 1;
+        var reviewScope = ReadOptionalString(value, "reviewScope");
+        if (reviewWindowSize <= 0)
+            return true;
+
+        if (sentimentVersion < 2)
+            return true;
+
+        if (!string.Equals(reviewScope, "product", StringComparison.Ordinal)
+            && !string.Equals(reviewScope, "root", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (negativeTextReviews > 0 && !HasNegativeReviewEvidence(value))
+            return true;
+
+        return badReviewCount <= 0 || lowRatingReviews <= 0 && negativeTextReviews <= 0;
+    }
+
+    private static bool HasNegativeReviewEvidence(JsonElement value)
+    {
+        return value.TryGetProperty("negativeReviewEvidence", out var evidence)
+            && evidence.ValueKind == JsonValueKind.Array
+            && evidence.GetArrayLength() > 0;
     }
 
     private static bool IsInvalidLowReviewCountFactor(HotProductRecommendationFactorDto factor)
@@ -552,6 +587,14 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             return decimalValue;
 
         return null;
+    }
+
+    private static string? ReadOptionalString(JsonElement value, string propertyName)
+    {
+        if (!value.TryGetProperty(propertyName, out var property))
+            return null;
+
+        return property.ValueKind == JsonValueKind.String ? property.GetString() : null;
     }
 
     private static string GetFactorValueText(HotProductRecommendationFactorDto factor)

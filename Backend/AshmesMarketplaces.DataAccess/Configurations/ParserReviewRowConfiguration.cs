@@ -47,6 +47,10 @@ public sealed class ParserReviewRowConfiguration : IEntityTypeConfiguration<Pars
         builder.HasIndex(x => x.WbProductId);
         builder.HasIndex(x => x.SourceWbRootId);
         builder.HasIndex(x => x.ReviewIdOnMp);
+        builder
+            .HasIndex(x => new { x.Marketplace, x.WbProductId, x.ReviewIdOnMp })
+            .IsUnique()
+            .HasDatabaseName("UX_ParserReviewRows_marketplace_product_review");
         builder.HasIndex(x => x.CreatedAtOnMp);
         builder.HasIndex(x => new { x.ParserRunId, x.CreatedAtOnMp });
 
