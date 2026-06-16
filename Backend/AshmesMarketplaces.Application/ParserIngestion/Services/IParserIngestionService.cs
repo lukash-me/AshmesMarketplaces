@@ -54,6 +54,16 @@ public interface IParserIngestionService
         ParserIngestionOptions options,
         CancellationToken cancellationToken);
 
+    Task<ParserIngestionResult> StageCompleteBatchAsync(
+        string batchDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken);
+
+    Task<ParserIngestionResult> CompleteParserPipelineAsync(
+        string pipelineRunId,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken);
+
     Task<ParserIngestionResult> PromoteProductsAsync(
         string parserRunId,
         ParserIngestionOptions options,

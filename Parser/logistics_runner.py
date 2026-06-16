@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -42,7 +43,22 @@ from logistics_exporters import (
 )
 from logistics_manifest import LogisticsRunManifest
 from manifest import get_git_commit, utc_now_iso
+from run_scope import parser_run_scope_from_env
 from wb_logistics_client import LogisticsFetchResult, WbLogisticsClient
+
+
+@dataclass(frozen=True)
+class DeliveryDestination:
+    key: str
+    name: str
+    dest: str
+    profile_key: str | None = None
+    profile_version: str | None = None
+    city: str | None = None
+    label: str | None = None
+    address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class AdaptiveDelay:
@@ -185,13 +201,89 @@ def _load_products(
     return rows_total, selected
 
 
-def _completed_product_ids(snapshot_path: Path) -> set[str]:
+def _destination_key(wb_product_id: str, dest: str) -> str:
+    return f"{wb_product_id}|{dest}"
+
+
+def _completed_product_destination_keys(snapshot_path: Path) -> set[str]:
     completed: set[str] = set()
     for row in iter_jsonl(snapshot_path) or []:
         wb_product_id = row.get("wb_product_id")
-        if wb_product_id:
-            completed.add(str(wb_product_id))
+        source_region_dest = row.get("source_region_dest")
+        if wb_product_id and source_region_dest:
+            completed.add(_destination_key(str(wb_product_id), str(source_region_dest)))
     return completed
+
+
+def _load_delivery_profile(config_path: Path, profile_key: str) -> tuple[str | None, list[DeliveryDestination]]:
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    profiles = payload.get("profiles") if isinstance(payload, dict) else None
+    if not isinstance(profiles, dict) or profile_key not in profiles:
+        available = ", ".join(sorted(str(key) for key in (profiles or {}).keys()))
+        raise ValueError(f"Delivery profile '{profile_key}' was not found in {config_path}. Available: {available}")
+
+    profile = profiles[profile_key]
+    if not isinstance(profile, dict):
+        raise ValueError(f"Delivery profile '{profile_key}' must be an object.")
+    version = str(profile.get("version") or payload.get("schema_version") or "1")
+    destinations = profile.get("destinations")
+    if not isinstance(destinations, list) or not destinations:
+        raise ValueError(f"Delivery profile '{profile_key}' must include non-empty destinations.")
+
+    result: list[DeliveryDestination] = []
+    for index, item in enumerate(destinations, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Delivery profile '{profile_key}' destination #{index} must be an object.")
+        key = _string_or_none(item.get("key")) or f"destination_{index}"
+        name = _string_or_none(item.get("name")) or key
+        dest = _string_or_none(item.get("dest"))
+        if not dest:
+            raise ValueError(f"Delivery profile '{profile_key}' destination '{key}' has no dest.")
+        result.append(DeliveryDestination(
+            key=key,
+            name=name,
+            dest=dest,
+            profile_key=profile_key,
+            profile_version=version,
+            city=_string_or_none(item.get("city")) or name,
+            label=_string_or_none(item.get("label")),
+            address=_string_or_none(item.get("address")),
+            latitude=_float_or_none(item.get("latitude")),
+            longitude=_float_or_none(item.get("longitude")),
+        ))
+
+    return version, result
+
+
+def _parse_delivery_destination(value: str) -> DeliveryDestination:
+    parts = [part.strip() for part in value.split("|")]
+    if len(parts) == 1:
+        dest = _string_or_none(parts[0])
+        if not dest:
+            raise ValueError("--delivery-destination must include dest.")
+        return DeliveryDestination(key=dest, name=dest, dest=dest, profile_key="manual", profile_version="1")
+    if len(parts) != 3:
+        raise ValueError("--delivery-destination format must be 'key|name|dest' or 'dest'.")
+    key, name, dest = parts
+    if not key or not name or not dest:
+        raise ValueError("--delivery-destination format must be 'key|name|dest' with non-empty values.")
+    return DeliveryDestination(key=key, name=name, dest=dest, profile_key="manual", profile_version="1", city=name)
+
+
+def _resolve_delivery_destinations(args: argparse.Namespace) -> tuple[str, list[DeliveryDestination]]:
+    manual_values = list(getattr(args, "delivery_destination", None) or [])
+    if manual_values:
+        destinations = [_parse_delivery_destination(value) for value in manual_values]
+        return "manual", destinations
+
+    profile_key = _string_or_none(getattr(args, "delivery_profile", None))
+    if profile_key:
+        profile_config = Path(getattr(args, "delivery_profile_config", None) or BASE_DIR / "presets" / "delivery_profiles.json")
+        _, destinations = _load_delivery_profile(profile_config, profile_key)
+        return profile_key, destinations
+
+    dest = str(getattr(args, "dest", None) or "12354108")
+    return "single_dest", [DeliveryDestination(key="default", name="Default destination", dest=dest)]
 
 
 def _final_status(manifest: LogisticsRunManifest, *, dry_run: bool) -> str:
@@ -228,13 +320,13 @@ def _client_for_thread(
 def _fetch_product_with_retry_queue(
     *,
     product: LogisticsProductInput,
-    dest: str,
+    destination: DeliveryDestination,
     args: argparse.Namespace,
     client_factory: Callable[[], WbLogisticsClient] | None,
     thread_local: threading.local,
     throttle: AdaptiveDelay,
-) -> tuple[LogisticsProductInput, str, LogisticsFetchResult, int]:
-    product_dest = dest or product.source_region_dest or ""
+) -> tuple[LogisticsProductInput, DeliveryDestination, LogisticsFetchResult, int]:
+    product_dest = destination.dest or product.source_region_dest or ""
     client = _client_for_thread(
         client_factory=client_factory,
         thread_local=thread_local,
@@ -257,12 +349,12 @@ def _fetch_product_with_retry_queue(
         total_retries += result.retries
     result.attempts = total_attempts
     result.retries = total_retries
-    return product, product_dest, result, retry_queue_attempts
+    return product, destination, result, retry_queue_attempts
 
 
 def _iter_fetch_results(
     *,
-    products: list[LogisticsProductInput],
+    work_items: list[tuple[LogisticsProductInput, DeliveryDestination]],
     args: argparse.Namespace,
     client_factory: Callable[[], WbLogisticsClient] | None,
     throttle: AdaptiveDelay,
@@ -270,10 +362,10 @@ def _iter_fetch_results(
     max_workers = max(1, int(getattr(args, "max_concurrent", 1) or 1))
     if max_workers == 1:
         thread_local = threading.local()
-        for product in products:
+        for product, destination in work_items:
             yield _fetch_product_with_retry_queue(
                 product=product,
-                dest=args.dest,
+                destination=destination,
                 args=args,
                 client_factory=client_factory,
                 thread_local=thread_local,
@@ -283,19 +375,19 @@ def _iter_fetch_results(
 
     thread_local = threading.local()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        iterator = iter(products)
+        iterator = iter(work_items)
         pending: set[concurrent.futures.Future] = set()
         max_pending = max_workers * 2
 
         def submit_next() -> bool:
             try:
-                product = next(iterator)
+                product, destination = next(iterator)
             except StopIteration:
                 return False
             pending.add(executor.submit(
                 _fetch_product_with_retry_queue,
                 product=product,
-                dest=args.dest,
+                destination=destination,
                 args=args,
                 client_factory=client_factory,
                 thread_local=thread_local,
@@ -331,14 +423,18 @@ def run_logistics(
 
     if is_resume_run:
         manifest = LogisticsRunManifest.load(run_dir)
-        manifest.source_region_dest = args.dest
+        profile_key, delivery_destinations = _resolve_delivery_destinations(args)
+        manifest.source_region_dest = ",".join(destination.dest for destination in delivery_destinations)
     else:
+        profile_key, delivery_destinations = _resolve_delivery_destinations(args)
         manifest = LogisticsRunManifest.create(
             parser_run_id=run_dir.name,
             run_dir=run_dir,
             config_snapshot={
                 "marketplace": args.marketplace,
                 "dest": args.dest,
+                "delivery_profile": getattr(args, "delivery_profile", None),
+                "delivery_destinations": [destination.__dict__ for destination in delivery_destinations],
                 "limit": args.limit,
                 "delay_ms": args.delay_ms,
                 "timeout_sec": args.timeout_sec,
@@ -352,11 +448,12 @@ def run_logistics(
                 "product_ids": args.product_id or [],
                 "limit": args.limit,
                 "source_request_family": SOURCE_REQUEST_FAMILY,
+                **parser_run_scope_from_env(),
             },
             marketplace=args.marketplace,
             source_request_family=SOURCE_REQUEST_FAMILY,
             source_endpoint=WB_CARD_DETAIL_ENDPOINT,
-            source_region_dest=args.dest,
+            source_region_dest=",".join(destination.dest for destination in delivery_destinations),
             input_products_run_id=_products_run_id(products_run_dir),
             input_products_file=str(products_jsonl.resolve()),
             repo_dir=BASE_DIR.parent,
@@ -374,19 +471,31 @@ def run_logistics(
         limit=args.limit,
         dest=args.dest,
     )
-    completed = _completed_product_ids(paths["logistics_snapshots"]) if args.resume else set()
-    work_items = [product for product in products if product.wb_product_id not in completed]
+    completed = _completed_product_destination_keys(paths["logistics_snapshots"]) if args.resume else set()
+    all_work_items = [
+        (product, destination)
+        for product in products
+        for destination in delivery_destinations
+    ]
+    work_items = [
+        (product, destination)
+        for product, destination in all_work_items
+        if _destination_key(product.wb_product_id, destination.dest) not in completed
+    ]
 
     manifest.set_counter("products_requested", len(work_items))
-    manifest.set_counter("products_skipped", len(products) - len(work_items))
+    manifest.set_counter("products_skipped", len(all_work_items) - len(work_items))
     manifest.requested_scope["products_total"] = rows_total
+    manifest.requested_scope["unique_products_selected"] = len(products)
+    manifest.requested_scope["delivery_profile_key"] = profile_key
+    manifest.requested_scope["delivery_destinations"] = [destination.__dict__ for destination in delivery_destinations]
     manifest.write()
     logger.info(
         "Logistics run start id={} products_jsonl={} selected={} skipped={} dry_run={}",
         manifest.parser_run_id,
         products_jsonl,
         len(work_items),
-        len(products) - len(work_items),
+        len(all_work_items) - len(work_items),
         args.dry_run,
     )
 
@@ -409,12 +518,13 @@ def run_logistics(
     manifest.write()
 
     checkpoint_interval = max(1, int(getattr(args, "checkpoint_interval", 25) or 25))
-    for product, dest, result, retry_queue_attempts in _iter_fetch_results(
-        products=work_items,
+    for product, destination, result, retry_queue_attempts in _iter_fetch_results(
+        work_items=work_items,
         args=args,
         client_factory=client_factory,
         throttle=throttle,
     ):
+        dest = destination.dest
         params = build_card_detail_params(wb_product_id=product.wb_product_id, dest=dest)
         fingerprint = request_fingerprint(endpoint=WB_CARD_DETAIL_ENDPOINT, params=params)
         try:
@@ -444,6 +554,22 @@ def run_logistics(
                 source_endpoint=WB_CARD_DETAIL_ENDPOINT,
                 request_fingerprint_value=result.request_fingerprint,
                 source_region_dest=dest,
+                delivery_profile_key=destination.profile_key,
+                delivery_destination_name=destination.name,
+                delivery_profile_version=destination.profile_version,
+                delivery_destination_city=destination.city,
+                delivery_destination_label=destination.label,
+                delivery_destination_address=destination.address,
+                delivery_destination_latitude=destination.latitude,
+                delivery_destination_longitude=destination.longitude,
+                visible_delivery_status=result.visible_delivery.status if result.visible_delivery else "empty",
+                visible_delivery_label=result.visible_delivery.label if result.visible_delivery else None,
+                visible_delivery_date=result.visible_delivery.date if result.visible_delivery else None,
+                visible_delivery_source=result.visible_delivery.source if result.visible_delivery else None,
+                visible_delivery_observed_at_utc=(
+                    result.visible_delivery.observed_at_utc if result.visible_delivery else None
+                ),
+                visible_delivery_raw_payload=result.visible_delivery.raw_payload if result.visible_delivery else None,
             )
             if not snapshots:
                 manifest.add_counter("products_failed")
@@ -509,6 +635,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--products-run-dir", type=Path, help="Existing product parser run directory.")
     parser.add_argument("--products-jsonl", type=Path, help="Explicit products.jsonl input path.")
     parser.add_argument("--dest", default="12354108", help="WB destination id.")
+    parser.add_argument(
+        "--delivery-profile",
+        help="Named delivery destination profile from --delivery-profile-config. Keeps --dest as fallback when omitted.",
+    )
+    parser.add_argument(
+        "--delivery-profile-config",
+        type=Path,
+        default=BASE_DIR / "presets" / "delivery_profiles.json",
+        help="JSON file with delivery destination profiles.",
+    )
+    parser.add_argument(
+        "--delivery-destination",
+        action="append",
+        help="Manual destination in format 'key|name|dest' or just 'dest'. Can be repeated.",
+    )
     parser.add_argument("--limit", type=_positive_int, help="Maximum number of unique products to request.")
     parser.add_argument("--output-dir", type=Path, help="Output base directory, or existing run dir with --resume.")
     parser.add_argument("--delay-ms", type=_non_negative_int, default=500)
@@ -544,6 +685,15 @@ def _string_or_none(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def main() -> None:

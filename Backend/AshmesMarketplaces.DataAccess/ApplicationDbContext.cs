@@ -41,6 +41,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
     public DbSet<Logistic> Logistics => Set<Logistic>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<UserAnalysisSchedule> UserAnalysisSchedules => Set<UserAnalysisSchedule>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();

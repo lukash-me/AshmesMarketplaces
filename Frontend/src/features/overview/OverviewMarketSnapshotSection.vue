@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch, type Component } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
-import { ArrowRight, BarChart3, Boxes, ListFilter, Radar, Truck } from 'lucide-vue-next';
+import { ArrowRight, BarChart3, Boxes, ListFilter, Radar } from 'lucide-vue-next';
 
 import AnimatedMetricValue from './AnimatedMetricValue.vue';
 import { marketIntelligenceLink } from './overview.api';
@@ -66,7 +66,6 @@ const snapshotCards = computed<SnapshotCard[]>(() => {
 
   return [
     productsCard(),
-    logisticsCard(),
     eventsCard(),
     intelligenceCard()
   ];
@@ -101,7 +100,7 @@ const eventBarItems = computed<BarItem[]>(() => {
   }
 
   return [
-    { key: 'new-products', label: 'Новые товары', value: events.summary.newProducts ?? 0, metricKey: 'newProducts' },
+    { key: 'new-products', label: 'Новые карточки', value: events.summary.newProducts ?? 0, metricKey: 'newProducts' },
     { key: 'stock-decreased', label: 'Снижение остатков', value: events.summary.stockDecreased, metricKey: 'stockDecreased' },
     { key: 'stock-increased', label: 'Рост остатков', value: events.summary.stockIncreased ?? 0, metricKey: 'stockIncreased' },
     { key: 'missing', label: 'Исчезли из наблюдения', value: events.summary.missingProducts ?? 0, metricKey: 'missingProducts' }
@@ -198,39 +197,6 @@ function productsCard(): SnapshotCard {
   };
 }
 
-function logisticsCard(): SnapshotCard {
-  const summary = logisticsSummary.value;
-  const unavailable = !summary;
-  const coverage = summary && summary.productsTotal > 0
-    ? Math.round((summary.productsWithLogistics / summary.productsTotal) * 100)
-    : null;
-
-  return {
-    id: 'logistics',
-    title: 'Логистика WB',
-    icon: Truck,
-    to: '/logistics',
-    unavailable,
-    metrics: summary
-      ? [
-          {
-            key: 'productsWithLogistics',
-            label: 'Товаров с логистикой',
-            value: formatNumber(summary.productsWithLogistics),
-            numericValue: summary.productsWithLogistics
-          },
-          {
-            key: 'logisticsCoveragePercent',
-            label: 'Покрытие',
-            value: coverage === null ? 'Нет данных' : `${coverage}%`,
-            numericValue: coverage,
-            suffix: '%'
-          }
-        ]
-      : []
-  };
-}
-
 function eventsCard(): SnapshotCard {
   const events = observedEvents.value;
 
@@ -301,7 +267,7 @@ function eventMetrics(events: OverviewObservedEvents): OverviewMetric[] {
   return [
     {
       key: 'newProducts',
-      label: 'Новые товары',
+      label: 'Новые карточки',
       value: formatNumber(events.summary.newProducts),
       numericValue: events.summary.newProducts
     },
@@ -605,11 +571,6 @@ function formatDateTime(value: string | null | undefined): string {
               </div>
             </div>
           </div>
-
-          <RouterLink class="market-panel__cta" to="/logistics">
-            <span>Открыть логистику</span>
-            <ArrowRight :size="14" />
-          </RouterLink>
         </section>
 
         <section class="market-panel app-surface">

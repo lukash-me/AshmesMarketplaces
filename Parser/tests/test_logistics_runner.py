@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ if str(PARSER_DIR) not in sys.path:
 
 import logistics_runner  # noqa: E402
 from logistics_exporters import iter_jsonl  # noqa: E402
+from visible_delivery import build_visible_delivery_evidence  # noqa: E402
 from wb_logistics_client import LogisticsFetchResult  # noqa: E402
 
 
@@ -94,6 +96,9 @@ class LogisticsRunnerTests(unittest.TestCase):
             "products_run_dir": None,
             "products_jsonl": products_jsonl,
             "dest": "123",
+            "delivery_profile": None,
+            "delivery_profile_config": PARSER_DIR / "presets" / "delivery_profiles.json",
+            "delivery_destination": None,
             "limit": None,
             "output_dir": temp_dir / "out",
             "delay_ms": 0,
@@ -169,6 +174,9 @@ class LogisticsRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "succeeded")
         self.assertEqual(manifest["input_products_run_id"], "wb_products_test")
         self.assertEqual(snapshots[0]["source_region_dest"], "123")
+        self.assertIsNone(snapshots[0]["delivery_profile_key"])
+        self.assertEqual(snapshots[0]["delivery_destination_name"], "Default destination")
+        self.assertIsNone(snapshots[0]["delivery_profile_version"])
         self.assertEqual(snapshots[0]["wb_product_id"], "1001")
         self.assertEqual(snapshots[0]["wb_root_id"], "5001")
         self.assertEqual(snapshots[0]["seller_id"], "42")
@@ -184,6 +192,9 @@ class LogisticsRunnerTests(unittest.TestCase):
         self.assertEqual(snapshots[0]["product_dist_raw"], 1089)
         self.assertIn("sizes", snapshots[0]["raw_observed_fields"])
         self.assertEqual(warehouse_rows[0]["warehouse_id_on_mp"], "301983")
+        self.assertIsNone(warehouse_rows[0]["delivery_profile_key"])
+        self.assertEqual(warehouse_rows[0]["delivery_destination_name"], "Default destination")
+        self.assertIsNone(warehouse_rows[0]["delivery_profile_version"])
         self.assertEqual(warehouse_rows[0]["quantity_observed"], 50)
         self.assertIsNone(warehouse_rows[0]["quantity_is_capped"])
         self.assertEqual(warehouse_rows[0]["price_logistics_raw"], 0)
@@ -252,6 +263,120 @@ class LogisticsRunnerTests(unittest.TestCase):
 
         self.assertEqual(second_fake.calls, [])
         self.assertEqual(len(snapshots), 1)
+
+    def test_manual_delivery_destinations_fetch_each_product_per_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            products_jsonl = self._products_jsonl(temp_dir)
+            fake = FakeLogisticsClient({
+                "1001": self._payload("1001"),
+            })
+
+            run_dir = logistics_runner.run_logistics(
+                args=self._args(
+                    temp_dir=temp_dir,
+                    products_jsonl=products_jsonl,
+                    limit=1,
+                    delivery_destination=["moscow|Москва|111", "spb|Санкт-Петербург|222"],
+                ),
+                client_factory=lambda: fake,
+            )
+
+            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+            snapshots = list(iter_jsonl(run_dir / "logistics_snapshots.jsonl") or [])
+
+        self.assertEqual(fake.calls, [("1001", "111"), ("1001", "222")])
+        self.assertEqual(manifest["coverage"]["products_requested"], 2)
+        self.assertEqual({row["source_region_dest"] for row in snapshots}, {"111", "222"})
+        self.assertEqual({row["delivery_profile_key"] for row in snapshots}, {"manual"})
+        self.assertEqual({row["delivery_profile_version"] for row in snapshots}, {"1"})
+        self.assertEqual(
+            {row["delivery_destination_name"] for row in snapshots},
+            {"Москва", "Санкт-Петербург"},
+        )
+
+    def test_visible_delivery_for_wb_warehouse_uses_product_time1_plus_time2(self) -> None:
+        evidence = build_visible_delivery_evidence(
+            product={
+                "id": 70267982,
+                "supplierId": 32524,
+                "time1": 2,
+                "time2": 19,
+                "dtype": 6597069766664,
+                "wh": 507,
+                "totalQuantity": 50,
+            },
+            supplier_payload={"deliveryDuration": 36},
+            observed_at_utc="2026-06-14T16:34:00Z",
+            now_utc=datetime(2026, 6, 14, 16, 34, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(evidence.status, "calculated")
+        self.assertEqual(evidence.source, "wb_time1_plus_time2_calculated")
+        self.assertEqual(evidence.label, "Завтра, склад WB")
+        self.assertEqual(evidence.raw_payload["delivery_hours"], 21)
+
+    def test_visible_delivery_for_seller_warehouse_uses_product_time1_plus_time2(self) -> None:
+        evidence = build_visible_delivery_evidence(
+            product={
+                "id": 1065665301,
+                "supplierId": 4580550,
+                "time1": 60,
+                "time2": 45,
+                "dtype": 6597069766657,
+                "wh": 212419,
+                "totalQuantity": 50,
+            },
+            supplier_payload={"deliveryDuration": 77},
+            observed_at_utc="2026-06-14T16:34:00Z",
+            now_utc=datetime(2026, 6, 14, 16, 34, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(evidence.status, "calculated")
+        self.assertEqual(evidence.source, "wb_time1_plus_time2_calculated")
+        self.assertEqual(evidence.label, "19 июня, склад продавца")
+        self.assertEqual(evidence.raw_payload["delivery_hours"], 105)
+
+    def test_visible_delivery_is_empty_when_product_is_out_of_stock(self) -> None:
+        evidence = build_visible_delivery_evidence(
+            product={
+                "id": 720594628,
+                "supplierId": 250063680,
+                "time1": None,
+                "time2": None,
+                "dtype": None,
+                "wh": None,
+                "totalQuantity": 0,
+            },
+            supplier_payload={"deliveryDuration": 46},
+            observed_at_utc="2026-06-14T16:34:00Z",
+            now_utc=datetime(2026, 6, 14, 16, 34, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(evidence.status, "empty")
+        self.assertIsNone(evidence.label)
+        self.assertIsNone(evidence.date)
+        self.assertEqual(evidence.raw_payload["reason"], "out_of_stock")
+
+    def test_visible_delivery_shifts_late_arrival_to_next_day(self) -> None:
+        evidence = build_visible_delivery_evidence(
+            product={
+                "id": 993793837,
+                "supplierId": 101124,
+                "time1": 25,
+                "time2": 74,
+                "dtype": 6597069766657,
+                "wh": 50178550,
+                "totalQuantity": 5,
+            },
+            supplier_payload={"deliveryDuration": 41},
+            observed_at_utc="2026-06-14T17:01:00Z",
+            now_utc=datetime(2026, 6, 14, 17, 1, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(evidence.status, "calculated")
+        self.assertEqual(evidence.label, "19 июня, склад продавца")
+        self.assertEqual(evidence.raw_payload["delivery_hours"], 99)
 
 
 if __name__ == "__main__":

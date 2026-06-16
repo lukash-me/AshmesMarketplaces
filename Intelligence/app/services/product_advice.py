@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import math
 import re
+import unicodedata
+from typing import Any
 
 from app.core.config import Settings
 from app.models.common import RecommendationStatus
@@ -165,6 +167,44 @@ def _tokens(value: str | None) -> set[str]:
     return {part for part in re.split(r"[^0-9a-zа-яё]+", value.lower()) if len(part) > 2}
 
 
+DUPLICATE_GENERIC_TOKENS = {
+    "для",
+    "ванной",
+    "ванны",
+    "туалета",
+    "дома",
+    "коврик",
+    "коврики",
+    "ковра",
+    "ковров",
+    "ковровый",
+    "см",
+    "сантиметр",
+    "сантиметра",
+    "сантиметров",
+    "размер",
+    "размера",
+    "набор",
+    "комплект",
+    "штук",
+    "шт",
+}
+
+COLOR_TOKEN_GROUPS = [
+    {"беж", "бежевый", "бежевая", "бежевое", "бежевые", "бежевого"},
+    {"белый", "белая", "белое", "белые", "белого"},
+    {"черный", "черная", "черное", "черные", "чёрный", "чёрная", "чёрное", "чёрные"},
+    {"серый", "серая", "серое", "серые", "серого"},
+    {"коричневый", "коричневая", "коричневое", "коричневые"},
+    {"синий", "синяя", "синее", "синие"},
+    {"голубой", "голубая", "голубое", "голубые"},
+    {"зеленый", "зеленая", "зеленое", "зеленые", "зелёный", "зелёная", "зелёное", "зелёные"},
+    {"красный", "красная", "красное", "красные"},
+    {"розовый", "розовая", "розовое", "розовые"},
+    {"желтый", "желтая", "желтое", "желтые", "жёлтый", "жёлтая", "жёлтое", "жёлтые"},
+]
+
+
 def _safe_float(value: float | int | None) -> float | None:
     if value is None:
         return None
@@ -173,6 +213,166 @@ def _safe_float(value: float | int | None) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _duplicate_normalized_name(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKC", value).lower().replace("ё", "е")
+    normalized = re.sub(r"(?<=\d)\s*[xх×*]\s*(?=\d)", "x", normalized)
+    normalized = re.sub(r"[^0-9a-zа-я]+", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _duplicate_dimensions(value: str | None) -> set[tuple[int, int]]:
+    text = _duplicate_normalized_name(value)
+    dimensions: set[tuple[int, int]] = set()
+    for left, right in re.findall(r"(\d{2,3})\s*x\s*(\d{2,3})", text):
+        first = int(left)
+        second = int(right)
+        dimensions.add(tuple(sorted((first, second))))
+    return dimensions
+
+
+def _duplicate_color_groups(value: str | None) -> set[int]:
+    tokens = set(_duplicate_normalized_name(value).split())
+    return {
+        index
+        for index, variants in enumerate(COLOR_TOKEN_GROUPS)
+        if tokens & variants
+    }
+
+
+def _duplicate_model_tokens(value: str | None) -> set[str]:
+    color_tokens = set().union(*COLOR_TOKEN_GROUPS)
+    return {
+        token
+        for token in _duplicate_normalized_name(value).split()
+        if len(token) > 2
+        and not token.isdigit()
+        and not re.fullmatch(r"\d{2,3}x\d{2,3}", token)
+        and token not in DUPLICATE_GENERIC_TOKENS
+        and token not in color_tokens
+    }
+
+
+def _is_duplicate_card(product: MarketProductFeatureDto, candidate: MarketProductFeatureDto) -> bool:
+    if not product.source_subcategory or product.source_subcategory != candidate.source_subcategory:
+        return False
+
+    product_dimensions = _duplicate_dimensions(product.name)
+    candidate_dimensions = _duplicate_dimensions(candidate.name)
+    if not product_dimensions or not candidate_dimensions or product_dimensions.isdisjoint(candidate_dimensions):
+        return False
+
+    product_colors = _duplicate_color_groups(product.name)
+    candidate_colors = _duplicate_color_groups(candidate.name)
+    if not product_colors or not candidate_colors or product_colors.isdisjoint(candidate_colors):
+        return False
+
+    product_model_tokens = _duplicate_model_tokens(product.name)
+    candidate_model_tokens = _duplicate_model_tokens(candidate.name)
+    return bool(product_model_tokens and candidate_model_tokens and product_model_tokens & candidate_model_tokens)
+
+
+def _duplicate_card_facts(product: MarketProductFeatureDto, candidate: MarketProductFeatureDto) -> list[str]:
+    facts = ["Одинаковая карточка"]
+    shared_models = sorted(_duplicate_model_tokens(product.name) & _duplicate_model_tokens(candidate.name))
+    shared_dimensions = sorted(_duplicate_dimensions(product.name) & _duplicate_dimensions(candidate.name))
+    if shared_models:
+        facts.append(f"Совпадает модель: {shared_models[0]}")
+    if shared_dimensions:
+        width, height = shared_dimensions[0]
+        facts.append(f"Совпадает размер: {width}x{height} см")
+    return facts
+
+
+def _duplicate_sort_key(product: MarketProductFeatureDto, candidate: MarketProductFeatureDto) -> tuple[float, str]:
+    product_price = _price(product)
+    candidate_price = _price(candidate)
+    price_delta = abs(product_price - candidate_price) if product_price is not None and candidate_price is not None else math.inf
+    return price_delta, candidate.name or ""
+
+
+def _valid_delivery_destinations(product: MarketProductFeatureDto) -> list[Any]:
+    profile = product.delivery_profile
+    if profile is None:
+        return []
+
+    destinations: list[Any] = []
+    for destination in profile.destinations:
+        hours = _safe_float(destination.delivery_hours)
+        if hours is None or hours <= 0:
+            continue
+        if destination.visible_delivery_date is None:
+            continue
+        if destination.total_quantity_observed is not None and destination.total_quantity_observed <= 0:
+            continue
+        destinations.append(destination)
+    return destinations
+
+
+def _destination_key(destination: Any) -> str:
+    raw = destination.region_key or destination.destination_city or destination.region_name or ""
+    return str(raw).strip().lower()
+
+
+def _destination_region_name(destination: Any) -> str:
+    return (
+        (destination.region_name or "").strip()
+        or (destination.destination_city or "").strip()
+        or (destination.region_key or "").strip()
+        or "регион"
+    )
+
+
+def _delivery_days_text(hours: float | int | None) -> str:
+    value = _safe_float(hours)
+    if value is None or value <= 0:
+        return "нет данных"
+    return f"{math.ceil(value / 24)} д"
+
+
+def _delivery_source_phrase(destination: Any) -> str:
+    source_type = (destination.delivery_source_type or "").strip().lower()
+    if source_type == "wb_warehouse":
+        return " со склада WB"
+    if source_type == "seller_warehouse":
+        return " со склада продавца"
+    return ""
+
+
+def _delivery_fact_label(destination: Any) -> str:
+    return f"{_delivery_days_text(destination.delivery_hours)}{_delivery_source_phrase(destination)}"
+
+
+def _delivery_by_region(product: MarketProductFeatureDto) -> dict[str, Any]:
+    return {
+        _destination_key(destination): destination
+        for destination in _valid_delivery_destinations(product)
+        if _destination_key(destination)
+    }
+
+
+def _similar_faster_delivery_facts(product: MarketProductFeatureDto, candidate: MarketProductFeatureDto) -> list[str]:
+    product_destinations = _delivery_by_region(product)
+    facts: list[str] = []
+    for candidate_destination in _valid_delivery_destinations(candidate):
+        key = _destination_key(candidate_destination)
+        product_destination = product_destinations.get(key)
+        if product_destination is None:
+            continue
+        product_hours = _safe_float(product_destination.delivery_hours)
+        candidate_hours = _safe_float(candidate_destination.delivery_hours)
+        if product_hours is None or candidate_hours is None:
+            continue
+        if candidate_hours <= product_hours - 24:
+            region = _destination_region_name(candidate_destination)
+            city = (candidate_destination.destination_city or region).strip()
+            facts.append(
+                f"Похожая быстрее в {city}: {_delivery_fact_label(candidate_destination)} против {_delivery_fact_label(product_destination)}"
+            )
+    return facts
 
 
 def _closeness(left: float | None, right: float | None, scale: float) -> float:
@@ -271,6 +471,14 @@ def _build_similar_product_groups(
 
     definitions = [
         (
+            "duplicate_cards",
+            "Одинаковые карточки",
+            "Карточки с совпадающими моделью, размером и цветом.",
+            lambda candidate: _is_duplicate_card(product, candidate),
+            lambda candidate: _duplicate_card_facts(product, candidate),
+            lambda candidate: _duplicate_sort_key(product, candidate),
+        ),
+        (
             "price_disadvantage",
             "Дешевле",
             "Похожие карточки дешевле текущей наблюдаемой карточки.",
@@ -309,6 +517,14 @@ def _build_similar_product_groups(
             lambda candidate: product_stock is not None and _safe_float(candidate.total_quantity) is not None and _safe_float(candidate.total_quantity) > product_stock,
             lambda candidate: _stock_disadvantage_facts(product_stock, candidate),
             lambda candidate: -((_safe_float(candidate.total_quantity) or product_stock) - product_stock),
+        ),
+        (
+            "similar_faster_region_delivery",
+            "Похожие доставляют быстрее",
+            "Похожие карточки доставляются быстрее текущей в одну из контрольных точек.",
+            lambda candidate: bool(_similar_faster_delivery_facts(product, candidate)),
+            lambda candidate: _similar_faster_delivery_facts(product, candidate),
+            lambda candidate: len(_similar_faster_delivery_facts(product, candidate)),
         ),
         (
             "weak_competitor_cards",

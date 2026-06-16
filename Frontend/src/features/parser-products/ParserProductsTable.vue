@@ -52,7 +52,7 @@ const emit = defineEmits<{
   open: [row: ParserProductListItem];
 }>();
 
-const storageKey = 'ashmes.market-products.columns.v2';
+const storageKey = 'ashmes.market-products.columns.v3';
 const mandatoryColumns: MarketProductColumnId[] = ['product'];
 const defaultColumnIds: MarketProductColumnId[] = [
   'thumbnailUrl',
@@ -60,7 +60,6 @@ const defaultColumnIds: MarketProductColumnId[] = [
   'position',
   'brandSeller',
   'price',
-  'stock',
   'reviewRating',
   'feedbackCount'
 ];
@@ -68,11 +67,11 @@ const columns: MarketProductColumn[] = [
   { key: 'thumbnailUrl', label: 'Фото', optionLabel: 'Фото', group: 'default', className: 'table__cell--image' },
   { key: 'product', label: 'Товар', optionLabel: 'Товар', group: 'default', className: 'table__cell--product' },
   { key: 'position', label: 'Позиция', optionLabel: 'Позиция', group: 'default', sortable: true },
-  { key: 'brandSeller', label: 'Бренд / продавец', optionLabel: 'Бренд / продавец', group: 'default' },
-  { key: 'price', label: 'Цена', optionLabel: 'Цена', group: 'default', sortable: true, align: 'right' },
-  { key: 'stock', label: 'Остаток WB', optionLabel: 'Остаток WB', group: 'default', align: 'right' },
-  { key: 'reviewRating', label: 'Рейтинг WB', optionLabel: 'Рейтинг WB', group: 'default', sortable: true, align: 'right' },
-  { key: 'feedbackCount', label: 'Отзывы WB', optionLabel: 'Отзывы WB', group: 'default', sortable: true, align: 'right' },
+  { key: 'brandSeller', label: 'Бренд / продавец', optionLabel: 'Бренд / продавец', group: 'default', className: 'table__cell--brand-seller' },
+  { key: 'price', label: 'Цена', optionLabel: 'Цена', group: 'default', sortable: true, align: 'right', className: 'table__cell--price' },
+  { key: 'stock', label: 'Остаток WB', optionLabel: 'Остаток WB', group: 'default', align: 'right', className: 'table__cell--stock' },
+  { key: 'reviewRating', label: 'Рейтинг WB', optionLabel: 'Рейтинг WB', group: 'default', sortable: true, align: 'right', className: 'table__cell--rating' },
+  { key: 'feedbackCount', label: 'Отзывы WB', optionLabel: 'Отзывы WB', group: 'default', sortable: true, align: 'right', className: 'table__cell--feedback' },
   { key: 'wbProductId', label: 'WB id', optionLabel: 'WB id', group: 'optional', sortable: true },
   { key: 'brandName', label: 'Бренд', optionLabel: 'Бренд', group: 'optional' },
   { key: 'sellerName', label: 'Продавец', optionLabel: 'Продавец', group: 'optional' },
@@ -268,7 +267,7 @@ function positionTitle(row: ParserProductListItem): string {
       : 'Карточка не найдена в пределах проверенного диапазона.',
     position.query ? `Запрос: ${position.query}` : null,
     source ? `Источник: ${source}` : null,
-    observed !== 'Нет данных' ? `Обновлено: ${observed}` : null
+    observed !== 'Нет данных' ? `Позиция проверена: ${observed}` : null
   ]
     .filter(Boolean)
     .join('\n');
@@ -624,8 +623,8 @@ function formatDateTime(value: string | null | undefined): string {
 
 .thumb {
   display: grid;
-  width: 5.75rem;
-  height: 7.25rem;
+  width: 8rem;
+  height: 10rem;
   place-items: center;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -690,8 +689,20 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 .price-cell {
-  min-width: 11rem;
+  min-width: 8.75rem;
   justify-items: end;
+}
+
+.brand-seller {
+  max-width: 15rem;
+}
+
+.brand-seller strong,
+.brand-seller span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stock-cell {
@@ -829,7 +840,7 @@ function formatDateTime(value: string | null | undefined): string {
 }
 
 :deep(tbody tr) {
-  height: 7.75rem;
+  height: 10.5rem;
 }
 
 :deep(td) {
@@ -838,6 +849,40 @@ function formatDateTime(value: string | null | undefined): string {
 
 :deep(td.table__cell--image) {
   padding: 0.25rem;
+}
+
+:deep(th.table__cell--image),
+:deep(td.table__cell--image) {
+  width: 8.5rem;
+  min-width: 8.5rem;
+  max-width: 8.5rem;
+}
+
+:deep(th.table__cell--brand-seller),
+:deep(td.table__cell--brand-seller) {
+  width: 16rem;
+  max-width: 16rem;
+}
+
+:deep(th.table__cell--price),
+:deep(td.table__cell--price) {
+  width: 9rem;
+  min-width: 8.75rem;
+  max-width: 9.5rem;
+}
+
+:deep(th.table__cell--rating),
+:deep(td.table__cell--rating) {
+  width: 7rem;
+  min-width: 6.75rem;
+  max-width: 7rem;
+}
+
+:deep(th.table__cell--feedback),
+:deep(td.table__cell--feedback) {
+  width: 7.5rem;
+  min-width: 7rem;
+  max-width: 7.5rem;
 }
 
 :deep(tbody tr:hover) {

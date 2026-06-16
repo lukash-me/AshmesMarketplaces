@@ -46,6 +46,7 @@ export interface ParserProductDetail extends Omit<ParserProductListItem, 'thumbn
   groupedOptions: Record<string, unknown> | unknown[] | null;
   visualAnalysis: ParserProductVisualAnalysis | null;
   logisticsDetail?: ParserProductLogisticsDetail | null;
+  deliveryProfile?: ParserProductDeliveryProfile | null;
 }
 
 export interface ParserProductVisualAnalysis {
@@ -61,6 +62,14 @@ export interface ParserProductLogisticsSummary {
   quantitySemantics: string | null;
   warehouseCount: number;
   destination: string | null;
+  deliveryProfileKey: string | null;
+  deliveryDestinationName: string | null;
+  deliveryProfileVersion: string | null;
+  deliveryDestinationCity: string | null;
+  deliveryDestinationLabel: string | null;
+  deliveryDestinationAddress: string | null;
+  deliveryDestinationLatitude: number | null;
+  deliveryDestinationLongitude: number | null;
   latestLogisticsRunId: string | null;
   observedAtUtc: string | null;
   hasWarehouseRows: boolean;
@@ -69,6 +78,14 @@ export interface ParserProductLogisticsSummary {
 export interface ParserProductLogisticsDetail {
   summary: ParserProductLogisticsSummary | null;
   productWhRaw: string | null;
+  deliveryProfileKey: string | null;
+  deliveryDestinationName: string | null;
+  deliveryProfileVersion: string | null;
+  deliveryDestinationCity: string | null;
+  deliveryDestinationLabel: string | null;
+  deliveryDestinationAddress: string | null;
+  deliveryDestinationLatitude: number | null;
+  deliveryDestinationLongitude: number | null;
   productTime1Raw: number | null;
   productTime2Raw: number | null;
   productDtypeRaw: number | null;
@@ -76,8 +93,66 @@ export interface ParserProductLogisticsDetail {
   warehouseRows: ParserWarehouseAvailability[];
 }
 
+export interface ParserProductDeliveryProfile {
+  latestLogisticsRunId: string | null;
+  destinationCount: number;
+  warehouseSourceCount: number;
+  bestProductTime1Raw: number | null;
+  worstProductTime1Raw: number | null;
+  productTime1SpreadRaw: number | null;
+  locationEstimate: ParserProductDeliveryLocationEstimate | null;
+  destinations: ParserProductDeliveryDestinationSignal[];
+}
+
+export interface ParserProductDeliveryLocationEstimate {
+  status: string;
+  zoneKey: string | null;
+  zoneTitle: string | null;
+  confidence: string | null;
+  nearestDestinationName: string | null;
+  nearestDeliveryLabel: string | null;
+  nearestDeliveryHours: number | null;
+  secondDestinationName: string | null;
+  secondDeliveryHours: number | null;
+  farthestDestinationName: string | null;
+  deliverySpreadHours: number | null;
+  evidence: string[];
+}
+
+export interface ParserProductDeliveryDestinationSignal {
+  destination: string;
+  deliveryProfileKey: string | null;
+  deliveryDestinationName: string | null;
+  deliveryProfileVersion: string | null;
+  deliveryDestinationCity: string | null;
+  deliveryDestinationLabel: string | null;
+  deliveryDestinationAddress: string | null;
+  deliveryDestinationLatitude: number | null;
+  deliveryDestinationLongitude: number | null;
+  totalQuantityObserved: number | null;
+  warehouseCount: number;
+  productTime1Raw: number | null;
+  productTime2Raw: number | null;
+  productDistRaw: number | null;
+  visibleDeliveryStatus: string | null;
+  visibleDeliveryLabel: string | null;
+  visibleDeliveryDate: string | null;
+  visibleDeliverySource: string | null;
+  visibleDeliveryObservedAtUtc: string | null;
+  visibleDeliveryRawPayload: Record<string, unknown> | null;
+  observedAtUtc: string | null;
+}
+
 export interface ParserWarehouseAvailability {
   warehouseIdOnMp: string | null;
+  deliveryProfileKey: string | null;
+  deliveryDestinationName: string | null;
+  deliveryProfileVersion: string | null;
+  deliveryDestinationCity: string | null;
+  deliveryDestinationLabel: string | null;
+  deliveryDestinationAddress: string | null;
+  deliveryDestinationLatitude: number | null;
+  deliveryDestinationLongitude: number | null;
   optionId: string | null;
   sizeName: string | null;
   sizeOrigName: string | null;
@@ -98,6 +173,9 @@ export interface ParserWarehouseAvailability {
 
 export interface ParserProductLogisticsSummaryParams {
   parserRunId?: string;
+  includeTestRuns?: boolean;
+  testRunsOnly?: boolean;
+  testLabel?: string;
   search?: string;
   sourceCategory?: string;
   sourceSubcategory?: string;
@@ -117,6 +195,14 @@ export interface ParserProductQuantityBuckets {
 
 export interface ParserProductLogisticsDestinationSummary {
   destination: string | null;
+  deliveryProfileKey: string | null;
+  deliveryDestinationName: string | null;
+  deliveryProfileVersion: string | null;
+  deliveryDestinationCity: string | null;
+  deliveryDestinationLabel: string | null;
+  deliveryDestinationAddress: string | null;
+  deliveryDestinationLatitude: number | null;
+  deliveryDestinationLongitude: number | null;
   productsWithLogistics: number;
   latestObservedAtUtc: string | null;
 }
@@ -189,6 +275,10 @@ export interface ParserProductListParams {
   sort?: string;
   search?: string;
   parserRunId?: string;
+  includeTestRuns?: boolean;
+  testRunsOnly?: boolean;
+  testLabel?: string;
+  requireDeliveryProfile?: boolean;
   sourceCategory?: string;
   sourceSubcategory?: string;
   brandName?: string;
@@ -211,6 +301,9 @@ export interface ParserProductFilterOptions {
 
 export interface ParserProductFilterOptionsParams {
   parserRunId?: string;
+  includeTestRuns?: boolean;
+  testRunsOnly?: boolean;
+  testLabel?: string;
   search?: string;
   sourceCategory?: string;
   sourceSubcategory?: string;

@@ -17,6 +17,7 @@ public sealed class AuthService : IAuthService
     private readonly IPasswordHashService _passwordHashService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IAccessTokenService _accessTokenService;
+    private readonly IUserAnalysisScheduleService _analysisScheduleService;
     private readonly ICurrentUser _currentUser;
     private readonly JwtOptions _jwtOptions;
 
@@ -25,6 +26,7 @@ public sealed class AuthService : IAuthService
         IPasswordHashService passwordHashService,
         IRefreshTokenService refreshTokenService,
         IAccessTokenService accessTokenService,
+        IUserAnalysisScheduleService analysisScheduleService,
         ICurrentUser currentUser,
         IOptions<JwtOptions> jwtOptions)
     {
@@ -32,6 +34,7 @@ public sealed class AuthService : IAuthService
         _passwordHashService = passwordHashService;
         _refreshTokenService = refreshTokenService;
         _accessTokenService = accessTokenService;
+        _analysisScheduleService = analysisScheduleService;
         _currentUser = currentUser;
         _jwtOptions = jwtOptions.Value;
     }
@@ -161,6 +164,7 @@ public sealed class AuthService : IAuthService
 
     private async Task<AuthUserResponse> MapToAuthUserResponseAsync(User user, CancellationToken cancellationToken)
     {
+        var analysisSchedule = await _analysisScheduleService.EnsureScheduleAsync(user.Id, cancellationToken);
         var workspaces = await _dbContext.UserWorkspaces
             .AsNoTracking()
             .Where(x => x.IdUser == user.Id)
@@ -189,6 +193,7 @@ public sealed class AuthService : IAuthService
             user.Email,
             user.Phone,
             user.Status,
+            analysisSchedule,
             workspaces,
             permissions);
     }

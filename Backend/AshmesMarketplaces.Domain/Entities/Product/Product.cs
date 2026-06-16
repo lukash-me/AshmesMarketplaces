@@ -69,6 +69,34 @@ public class Product : BaseEntity<ProductId>, IDisposable
     public ProductStatus Status { get; private set; }
     public DateTime DateUpdated { get; private set; }
     public DateTime? DateCreated { get; private set; }
+
+    public Result<Product, Error> UpdateParserOwnedFields(string? name, string? skuProduct, DateTime dateUpdated)
+    {
+        if (!DateTimeUtc.IsUtc(dateUpdated))
+            return Errors.General.ValueIsInvalid("dateUpdated");
+
+        if (dateUpdated > DateTime.UtcNow)
+            return Errors.General.ValueIsInvalid("dateUpdated");
+
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            if (name.Length > Constants.PRODUCT_NAME_MAX_LENGTH)
+                return Errors.General.InvalidLength("name");
+
+            Name = name;
+        }
+
+        if (!string.IsNullOrWhiteSpace(skuProduct))
+        {
+            if (skuProduct.Length > Constants.EXTERNAL_ID_MAX_LENGTH)
+                return Errors.General.InvalidLength("skuProduct");
+
+            SkuProduct = skuProduct;
+        }
+
+        DateUpdated = dateUpdated;
+        return this;
+    }
     
     public void AddImage(string url)
     {

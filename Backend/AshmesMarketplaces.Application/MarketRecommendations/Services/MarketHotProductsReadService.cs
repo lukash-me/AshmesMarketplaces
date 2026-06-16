@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.DataAccess;
@@ -13,6 +14,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
 {
     private const string StatusCompleted = "completed";
     private const string DuplicateCardsKey = "duplicate_cards";
+    private const string SlowDeliveryGroupKey = "slow_delivery";
     private const string FactorModeAll = "all";
 
     private static readonly HashSet<string> DeprecatedFactorCodes = new(StringComparer.Ordinal)
@@ -27,6 +29,31 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         "weak_description",
         "weak_visible_description",
         "missing_key_specs"
+    };
+
+    private static readonly HashSet<string> TagOnlyGroupKeys = new(StringComparer.Ordinal)
+    {
+        "seller_stock_slow_central_delivery",
+        "top_slow_central_delivery",
+        "peers_slow_region_delivery",
+        "top_slow_cluster_region_delivery"
+    };
+
+    private static readonly Dictionary<string, (string Title, string Description)> GroupOverrides = new(StringComparer.Ordinal)
+    {
+        ["faster_than_peers_region_delivery"] = (
+            "Быстрее похожих",
+            "Карточка доставляется в регион быстрее медианы похожих товаров.")
+    };
+
+    private static readonly Dictionary<string, string[]> CompositeGroupFactorCodes = new(StringComparer.Ordinal)
+    {
+        [SlowDeliveryGroupKey] =
+        [
+            "seller_stock_slow_central_delivery",
+            "top_slow_central_delivery",
+            "top_low_stock_slow_central_delivery"
+        ]
     };
 
     private static readonly IReadOnlyList<HotProductsGroupDefinition> GroupDefinitions =
@@ -45,17 +72,27 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         new("good_reviews_weak_visibility", "Хорошие отзывы, слабая видимость", "У товара хорошие отзывы, но позиция в выдаче слабая."),
         new("good_reviews_weak_card", "Хороший товар, слабая карточка", "Отзывы хорошие, но карточка выглядит неполной."),
         new("good_reviews_low_stock", "Хорошие отзывы, низкий остаток", "Покупатели оценивают товар хорошо, но наблюдаемый остаток низкий."),
-        new("good_reviews_high_price", "Хорошие отзывы, высокая цена", "Отзывы хорошие, но цена выше похожих товаров.")
+        new("good_reviews_high_price", "Хорошие отзывы, высокая цена", "Отзывы хорошие, но цена выше похожих товаров."),
+        new(SlowDeliveryGroupKey, "Долгая доставка", "Карточки с долгой доставкой в значимые регионы."),
+        new("seller_stock_slow_central_delivery", "Долгая доставка со склада продавца", "Доставка в Центральный регион дольше послезавтра, источник - склад продавца."),
+        new("top_low_stock_slow_central_delivery", "Топ, низкий остаток и долгая доставка", "Товар высоко в выдаче, остаток низкий, доставка в Центральный регион дольше послезавтра."),
+        new("top_slow_cluster_region_delivery", "Топ, долгая доставка в регион кластера", "Товар высоко в выдаче, но доставка в характерный регион кластера дольше послезавтра."),
+        new("top_slow_central_delivery", "Топ, долгая доставка в Центральный регион", "Товар высоко в выдаче, но доставка в московскую контрольную точку дольше послезавтра."),
+        new("peers_slow_region_delivery", "Похожие доставляются с задержкой", "У похожих карточек в регионе доставка обычно дольше послезавтра."),
+        new("faster_than_peers_region_delivery", "Быстрее похожих", "Карточка доставляется в регион быстрее медианы похожих товаров.")
     ];
 
     private readonly ApplicationDbContext _dbContext;
+    private readonly ICurrentUser _currentUser;
     private readonly ILogger<MarketHotProductsReadService> _logger;
 
     public MarketHotProductsReadService(
         ApplicationDbContext dbContext,
+        ICurrentUser currentUser,
         ILogger<MarketHotProductsReadService> logger)
     {
         _dbContext = dbContext;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -66,11 +103,16 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 50);
         var nowUtc = DateTime.UtcNow;
+        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
+            return ServiceResult<HotProductsListResponse>.Unauthorized("Authentication is required.");
+
+        var userId = _currentUser.UserId.Value;
 
         var runs = _dbContext.MarketRecommendationRuns
             .AsNoTracking()
             .Where(x =>
                 x.Kind == MarketRecommendationRun.HotProductsKind
+                && (x.IdUser == userId || x.IdUser == null)
                 && x.Status == StatusCompleted
                 && x.RecommendationsCount > 0
                 && (x.ValidUntilUtc == null || x.ValidUntilUtc >= nowUtc));
@@ -84,7 +126,8 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         }
 
         var run = await runs
-            .OrderByDescending(x => x.CompletedAtUtc)
+            .OrderByDescending(x => x.IdUser == userId)
+            .ThenByDescending(x => x.CompletedAtUtc)
             .ThenByDescending(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -262,9 +305,10 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             return items;
 
         var value = groupKey.Trim();
+        var factorCodes = FactorCodesForGroup(value);
         return items
             .Where(item => item.Factors.Any(factor =>
-                string.Equals(factor.Code, value, StringComparison.Ordinal)))
+                factorCodes.Contains(factor.Code)))
             .ToList();
     }
 
@@ -300,9 +344,13 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         var groups = new List<HotProductsGroupDto>();
         foreach (var definition in GroupDefinitions)
         {
+            if (TagOnlyGroupKeys.Contains(definition.Key))
+                continue;
+
+            var factorCodes = FactorCodesForGroup(definition.Key);
             var groupItems = items
                 .Where(item => item.Factors.Any(factor =>
-                    string.Equals(factor.Code, definition.Key, StringComparison.Ordinal)))
+                    factorCodes.Contains(factor.Code)))
                 .OrderByDescending(item => item.Score)
                 .ThenBy(item => item.RankOrder)
                 .ToList();
@@ -311,16 +359,32 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
                 continue;
 
             var clusters = definition.Key == DuplicateCardsKey ? BuildDuplicateClusters(groupItems) : [];
+            var title = definition.Title;
+            var description = definition.Description;
+            if (GroupOverrides.TryGetValue(definition.Key, out var groupOverride))
+            {
+                title = groupOverride.Title;
+                description = groupOverride.Description;
+            }
+
             groups.Add(new HotProductsGroupDto(
                 definition.Key,
-                definition.Title,
-                definition.Description,
+                title,
+                description,
                 groupItems.Count,
                 definition.Key == DuplicateCardsKey && clusters.Count > 0 ? [] : groupItems,
                 clusters));
         }
 
         return groups;
+    }
+
+    private static HashSet<string> FactorCodesForGroup(string groupKey)
+    {
+        if (CompositeGroupFactorCodes.TryGetValue(groupKey, out var factorCodes))
+            return factorCodes.ToHashSet(StringComparer.Ordinal);
+
+        return new HashSet<string>([groupKey], StringComparer.Ordinal);
     }
 
     private static IReadOnlyList<HotProductsDuplicateClusterDto> BuildDuplicateClusters(

@@ -13,6 +13,7 @@ public sealed class MarketRecommendationRunConfiguration : IEntityTypeConfigurat
 
         builder.Property(x => x.Id).ValueGeneratedNever().HasColumnName("id");
         builder.Property(x => x.Kind).IsRequired().HasMaxLength(64).HasColumnName("kind");
+        builder.Property(x => x.IdUser).HasColumnName("id_user");
         builder.Property(x => x.Marketplace).IsRequired().HasMaxLength(128).HasColumnName("marketplace");
         builder.Property(x => x.SourceCategory).HasMaxLength(512).HasColumnName("source_category");
         builder.Property(x => x.SourceSubcategories).IsRequired().HasColumnType("jsonb").HasColumnName("source_subcategories");
@@ -38,8 +39,14 @@ public sealed class MarketRecommendationRunConfiguration : IEntityTypeConfigurat
         builder.Property(x => x.CreatedAtUtc).IsRequired().HasColumnName("created_at_utc");
 
         builder.HasIndex(x => new { x.Kind, x.Status, x.ValidUntilUtc, x.CompletedAtUtc });
+        builder.HasIndex(x => new { x.IdUser, x.Kind, x.Status, x.ValidUntilUtc, x.CompletedAtUtc })
+            .HasDatabaseName("IX_MarketRecommendationRuns_user_latest");
         builder.HasIndex(x => new { x.Algorithm, x.AlgorithmVersion, x.ModelVersion, x.InputSnapshotHash });
         builder.HasIndex(x => x.ProductParserRunId);
         builder.HasIndex(x => x.RankParserRunId);
+        builder.HasOne<AshmesMarketplaces.Domain.Entities.Users.User>()
+            .WithMany()
+            .HasForeignKey(x => x.IdUser)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

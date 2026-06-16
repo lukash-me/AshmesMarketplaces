@@ -3,6 +3,7 @@ using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Intelligence;
 using AshmesMarketplaces.Application.MarketRecommendations.Services;
+using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.ParserIngestion;
@@ -19,8 +20,26 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
     private const string ModelVersionFallback = "rules";
     private const int MaxCandidatesPerProduct = 80;
     private const int MaxSimilarProducts = 12;
+    private const long WbWarehouseDtypeFlag = 8;
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly HashSet<string> LogisticsSignalCodes = new(StringComparer.Ordinal)
+    {
+        "seller_stock_slow_central_delivery",
+        "top_low_stock_slow_central_delivery",
+        "top_slow_cluster_region_delivery",
+        "top_slow_central_delivery",
+        "peers_slow_region_delivery",
+        "faster_than_peers_region_delivery"
+    };
+    private static readonly HashSet<string> LogisticsSimilarGroupKeys = new(StringComparer.Ordinal)
+    {
+        "similar_faster_region_delivery",
+        "peers_slow_region_delivery",
+        "faster_than_peers_region_delivery",
+        "top_slow_central_delivery",
+        "top_slow_cluster_region_delivery"
+    };
 
     private readonly ApplicationDbContext _dbContext;
     private readonly ICurrentUser _currentUser;
@@ -75,7 +94,18 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         Guid workspaceId,
         CancellationToken cancellationToken)
     {
-        var access = await EnsureWorkspaceAccessAsync(workspaceId, cancellationToken);
+        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
+            return ServiceResult<WorkspaceOverviewRecalculateResponse>.Unauthorized("Authentication is required.");
+
+        return await RecalculateForUserAsync(workspaceId, _currentUser.UserId.Value, cancellationToken);
+    }
+
+    public async Task<ServiceResult<WorkspaceOverviewRecalculateResponse>> RecalculateForUserAsync(
+        Guid workspaceId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var access = await EnsureWorkspaceAccessAsync(workspaceId, userId, cancellationToken);
         if (!access.IsSuccess)
             return PropagateError<WorkspaceOverviewRecalculateResponse>(access.Error!);
 
@@ -96,13 +126,15 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         {
             var history = await LoadHistoryAsync(product, cancellationToken);
             var candidates = await LoadSimilarCandidatesAsync(product, products, cancellationToken);
+            var productDeliveryProfiles = await LoadDeliveryProfilesByWbProductIdAsync([product.WbProductId], cancellationToken);
+            productDeliveryProfiles.TryGetValue(product.WbProductId, out var productDeliveryProfile);
             var requestId = $"workspace-overview-{workspaceId:N}-{product.Id:N}-{startedAt:yyyyMMddHHmmss}";
             var intelligence = await _intelligenceClient.AnalyzeWorkspaceProductAsync(
                 new WorkspaceProductAnalysisIntelligenceRequest(
                     requestId,
                     startedAt,
                     MarketplaceWildberries,
-                    BuildFeature(product, history),
+                    BuildFeature(product, history, productDeliveryProfile),
                     BuildIntelligenceHistory(history),
                     candidates.Select(x => x.Feature).ToList(),
                     new WorkspaceProductAnalysisOptions(MaxSimilarProducts, AlgorithmFallback)),
@@ -247,11 +279,20 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         var existingStates = await _dbContext.WorkspaceMarketProductUserReadStates
             .Where(x => x.IdUser == userId && requestedProductIds.Contains(x.IdWorkspaceMarketProduct))
             .ToDictionaryAsync(x => x.IdWorkspaceMarketProduct, cancellationToken);
+        var latestRun = await LoadLatestRunAsync(workspaceId, cancellationToken);
+        var analyses = latestRun is null
+            ? new Dictionary<Guid, WorkspaceMarketProductAnalysis>()
+            : await _dbContext.WorkspaceMarketProductAnalyses
+                .AsNoTracking()
+                .Where(x => x.IdAnalysisRun == latestRun.Id && requestedProductIds.Contains(x.IdWorkspaceMarketProduct))
+                .ToDictionaryAsync(x => x.IdWorkspaceMarketProduct, cancellationToken);
         var viewedAt = DateTime.UtcNow;
 
         foreach (var product in products)
         {
             var snapshot = await LoadCurrentSnapshotAsync(product, cancellationToken);
+            analyses.TryGetValue(product.Id, out var analysis);
+            var logisticsFactors = BuildLogisticsFactorSnapshotJson(analysis);
             if (existingStates.TryGetValue(product.Id, out var state))
             {
                 state.Update(
@@ -261,7 +302,8 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                     snapshot.Position,
                     snapshot.Stock,
                     snapshot.FeedbackCount,
-                    snapshot.ReviewRating);
+                    snapshot.ReviewRating,
+                    logisticsFactors);
             }
             else
             {
@@ -274,7 +316,8 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                     snapshot.Position,
                     snapshot.Stock,
                     snapshot.FeedbackCount,
-                    snapshot.ReviewRating));
+                    snapshot.ReviewRating,
+                    logisticsFactors));
             }
         }
 
@@ -314,7 +357,7 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                 currentSnapshots.TryGetValue(product.Id, out var currentSnapshot);
                 currentSnapshot ??= CurrentSnapshot.FromWorkspaceProduct(product);
                 var viewedChanges = BuildViewedChanges(product, currentSnapshot, readState);
-                return HasVisibleChange(viewedChanges)
+                return HasVisibleChange(viewedChanges) || HasLogisticsFactorChange(analysis, readState)
                     ? MapProduct(product, analysis, viewedChanges, currentSnapshot)
                     : null;
             })
@@ -429,6 +472,58 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         || HasChange(changes.Stock)
         || HasChange(changes.Feedback)
         || HasChange(changes.ReviewRating);
+
+    private static bool HasLogisticsFactorChange(
+        WorkspaceMarketProductAnalysis? analysis,
+        WorkspaceMarketProductUserReadState? readState)
+    {
+        var current = BuildLogisticsFactorSnapshotEntries(analysis);
+        if (current.Count == 0)
+            return false;
+
+        var currentJson = JsonSerializer.Serialize(current, JsonOptions);
+        var baselineJson = readState?.BaselineLogisticsFactors?.RootElement.GetRawText();
+        return !string.Equals(currentJson, baselineJson, StringComparison.Ordinal);
+    }
+
+    private static JsonDocument BuildLogisticsFactorSnapshotJson(WorkspaceMarketProductAnalysis? analysis) =>
+        ToJsonDocument(BuildLogisticsFactorSnapshotEntries(analysis));
+
+    private static IReadOnlyList<string> BuildLogisticsFactorSnapshotEntries(WorkspaceMarketProductAnalysis? analysis)
+    {
+        if (analysis is null)
+            return [];
+
+        var entries = new List<string>();
+        foreach (var signal in DeserializeSignals(analysis.Signals))
+        {
+            if (!LogisticsSignalCodes.Contains(signal.Code))
+                continue;
+
+            var facts = string.Join("|", signal.MetricFacts.OrderBy(x => x, StringComparer.Ordinal));
+            entries.Add($"signal:{signal.Code}:{signal.Title}:{facts}");
+        }
+
+        foreach (var group in DeserializeSimilarProductGroups(analysis.SimilarProductGroups))
+        {
+            if (!LogisticsSimilarGroupKeys.Contains(group.Key))
+                continue;
+
+            foreach (var item in group.Items)
+            {
+                var facts = string.Join(
+                    "|",
+                    item.Facts.Concat(item.Tags).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal));
+                entries.Add($"group:{group.Key}:{item.Product.ProductKey}:{facts}");
+            }
+        }
+
+        return entries
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToArray();
+    }
 
     private static bool HasChange(WorkspaceOverviewChangeDto change) =>
         change.Delta.HasValue && change.Delta.Value != 0;
@@ -599,13 +694,100 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         var positions = positionRows
             .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => (int?)x.First().AbsolutePosition, StringComparer.Ordinal);
+        var deliveryProfiles = await LoadDeliveryProfilesByWbProductIdAsync(
+            latestRows.Select(x => x.WbProductId).Distinct(StringComparer.Ordinal).ToArray(),
+            cancellationToken);
 
         return latestRows
-            .Select(row => new CandidateFeature(row, BuildFeature(row), positions.GetValueOrDefault(row.WbProductId)))
+            .Select(row => new CandidateFeature(
+                row,
+                BuildFeature(row, deliveryProfiles.GetValueOrDefault(row.WbProductId)),
+                positions.GetValueOrDefault(row.WbProductId)))
             .ToList();
     }
 
-    private static MarketProductFeatureDto BuildFeature(WorkspaceMarketProduct product, ProductHistory history) =>
+    private async Task<IReadOnlyDictionary<string, MarketProductDeliveryProfileDto>> LoadDeliveryProfilesByWbProductIdAsync(
+        IReadOnlyCollection<string> wbProductIds,
+        CancellationToken cancellationToken)
+    {
+        var productIds = wbProductIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (productIds.Count == 0)
+            return new Dictionary<string, MarketProductDeliveryProfileDto>(StringComparer.Ordinal);
+
+        var rows = await _dbContext.ParserLogisticsSnapshotRows
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId)
+                && x.DeliveryProfileKey != null
+                && x.SourceRegionDest != null)
+            .Select(x => new DeliveryProfileRow(
+                x.WbProductId,
+                x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationAddress,
+                x.TotalQuantityObserved,
+                x.ProductTime1Raw,
+                x.ProductTime2Raw,
+                x.ProductDtypeRaw,
+                x.VisibleDeliveryLabel,
+                x.VisibleDeliveryDate,
+                x.ObservedAtUtc,
+                x.SourceLineNumber))
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .Select(group =>
+            {
+                var destinations = group
+                    .GroupBy(row => row.SourceRegionDest, StringComparer.Ordinal)
+                    .Select(destinationGroup => destinationGroup
+                        .OrderByDescending(row => row.ObservedAtUtc)
+                        .ThenByDescending(row => row.SourceLineNumber)
+                        .First())
+                    .OrderBy(row => row.DeliveryProfileKey, StringComparer.Ordinal)
+                    .ThenBy(row => row.SourceRegionDest, StringComparer.Ordinal)
+                    .Select(row =>
+                    {
+                        var calculated = WbVisibleDeliveryCalculator.Calculate(
+                            row.ProductTime1Raw,
+                            row.ProductTime2Raw,
+                            row.ProductDtypeRaw,
+                            row.TotalQuantityObserved,
+                            row.ObservedAtUtc);
+
+                        return new MarketProductDeliveryDestinationDto(
+                            RegionKeyFrom(row),
+                            RegionNameFrom(row),
+                            row.DeliveryDestinationCity ?? row.DeliveryDestinationName,
+                            row.DeliveryDestinationAddress,
+                            calculated.Label ?? row.VisibleDeliveryLabel,
+                            calculated.Date ?? row.VisibleDeliveryDate,
+                            DeliveryHoursFrom(row),
+                            DeliverySourceTypeFrom(row.ProductDtypeRaw),
+                            row.TotalQuantityObserved,
+                            calculated.ObservedAtUtc ?? row.ObservedAtUtc);
+                    })
+                    .Where(x => x.DeliveryHours.HasValue || x.VisibleDeliveryDate.HasValue)
+                    .ToList();
+
+                return new { group.Key, Destinations = destinations };
+            })
+            .Where(x => x.Destinations.Count > 0)
+            .ToDictionary(
+                x => x.Key,
+                x => new MarketProductDeliveryProfileDto(x.Destinations),
+                StringComparer.Ordinal);
+    }
+
+    private static MarketProductFeatureDto BuildFeature(
+        WorkspaceMarketProduct product,
+        ProductHistory history,
+        MarketProductDeliveryProfileDto? deliveryProfile) =>
         new(
             $"workspace:{product.Id:N}",
             product.WbProductId,
@@ -630,9 +812,12 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             Description: null,
             Characteristics: null,
             ImageCount: null,
-            ReviewSignals: null);
+            ReviewSignals: null,
+            DeliveryProfile: deliveryProfile);
 
-    private static MarketProductFeatureDto BuildFeature(ParserProductRow row) =>
+    private static MarketProductFeatureDto BuildFeature(
+        ParserProductRow row,
+        MarketProductDeliveryProfileDto? deliveryProfile) =>
         new(
             $"parser:{row.Id:N}",
             row.WbProductId,
@@ -657,7 +842,8 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             Description: null,
             Characteristics: null,
             ImageCount: row.ImageCount,
-            ReviewSignals: null);
+            ReviewSignals: null,
+            DeliveryProfile: deliveryProfile);
 
     private static WorkspaceProductHistoryDto BuildIntelligenceHistory(ProductHistory history) =>
         new(
@@ -873,10 +1059,21 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
 
     private async Task<ServiceResult> EnsureWorkspaceAccessAsync(Guid workspaceId, CancellationToken cancellationToken)
     {
+        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
+            return ServiceResult.Unauthorized("Authentication is required.");
+
+        return await EnsureWorkspaceAccessAsync(workspaceId, _currentUser.UserId.Value, cancellationToken);
+    }
+
+    private async Task<ServiceResult> EnsureWorkspaceAccessAsync(
+        Guid workspaceId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
         if (workspaceId == Guid.Empty)
             return ServiceResult.BadRequest("Workspace id is required.");
 
-        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
+        if (userId == Guid.Empty)
             return ServiceResult.Unauthorized("Authentication is required.");
 
         var exists = await _dbContext.Workspaces.AsNoTracking().AnyAsync(x => x.Id == workspaceId, cancellationToken);
@@ -885,7 +1082,7 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
 
         var hasAccess = await _dbContext.UserWorkspaces
             .AsNoTracking()
-            .AnyAsync(x => x.IdWorkspace == workspaceId && x.IdUser == _currentUser.UserId.Value, cancellationToken);
+            .AnyAsync(x => x.IdWorkspace == workspaceId && x.IdUser == userId, cancellationToken);
 
         return hasAccess
             ? ServiceResult.Success()
@@ -927,6 +1124,50 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             >= 2 and <= 4 => "места",
             _ => "мест"
         };
+    }
+
+    private static string RegionKeyFrom(DeliveryProfileRow row)
+    {
+        var value = row.DeliveryDestinationName ?? row.DeliveryDestinationCity ?? row.SourceRegionDest;
+        return value.Trim().ToLowerInvariant() switch
+        {
+            var x when x.Contains("моск", StringComparison.OrdinalIgnoreCase) => "central",
+            var x when x.Contains("санкт", StringComparison.OrdinalIgnoreCase) || x.Contains("петербург", StringComparison.OrdinalIgnoreCase) => "northwest",
+            var x when x.Contains("казан", StringComparison.OrdinalIgnoreCase) => "volga",
+            var x when x.Contains("екатеринбург", StringComparison.OrdinalIgnoreCase) => "ural",
+            var x when x.Contains("новосибирск", StringComparison.OrdinalIgnoreCase) => "siberia",
+            var x when x.Contains("краснодар", StringComparison.OrdinalIgnoreCase) => "south",
+            var x when x.Contains("хабаровск", StringComparison.OrdinalIgnoreCase) || x.Contains("владивосток", StringComparison.OrdinalIgnoreCase) => "far_east",
+            _ => row.SourceRegionDest
+        };
+    }
+
+    private static string RegionNameFrom(DeliveryProfileRow row) =>
+        RegionKeyFrom(row) switch
+        {
+            "central" => "Центральный регион",
+            "northwest" => "Северо-Запад",
+            "volga" => "Поволжье",
+            "ural" => "Урал",
+            "siberia" => "Сибирь",
+            "south" => "Юг",
+            "far_east" => "Дальний Восток",
+            _ => row.DeliveryDestinationName ?? row.DeliveryDestinationCity ?? row.SourceRegionDest
+        };
+
+    private static int? DeliveryHoursFrom(DeliveryProfileRow row) =>
+        row.ProductTime1Raw.HasValue && row.ProductTime2Raw.HasValue
+            ? row.ProductTime1Raw.Value + row.ProductTime2Raw.Value
+            : null;
+
+    private static string DeliverySourceTypeFrom(long? dtype)
+    {
+        if (!dtype.HasValue)
+            return "unknown";
+
+        return (dtype.Value & WbWarehouseDtypeFlag) != 0
+            ? "wb_warehouse"
+            : "seller_warehouse";
     }
 
     private static JsonDocument ToJsonDocument<T>(T value) =>
@@ -1008,6 +1249,22 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         WorkspaceOverviewChangeDto ReviewRating);
 
     private sealed record CandidateFeature(ParserProductRow Row, MarketProductFeatureDto Feature, int? Position);
+
+    private sealed record DeliveryProfileRow(
+        string WbProductId,
+        string SourceRegionDest,
+        string? DeliveryProfileKey,
+        string? DeliveryDestinationName,
+        string? DeliveryDestinationCity,
+        string? DeliveryDestinationAddress,
+        int? TotalQuantityObserved,
+        int? ProductTime1Raw,
+        int? ProductTime2Raw,
+        long? ProductDtypeRaw,
+        string? VisibleDeliveryLabel,
+        DateTime? VisibleDeliveryDate,
+        DateTime ObservedAtUtc,
+        long SourceLineNumber);
 
     private sealed record PendingAnalysis(
         Guid IdWorkspaceMarketProduct,

@@ -20,6 +20,14 @@ public sealed class ParserLogisticsSnapshotRow : IDisposable
         string sourceEndpoint,
         string requestFingerprint,
         string sourceRegionDest,
+        string? deliveryProfileKey,
+        string? deliveryDestinationName,
+        string? deliveryProfileVersion,
+        string? deliveryDestinationCity,
+        string? deliveryDestinationLabel,
+        string? deliveryDestinationAddress,
+        decimal? deliveryDestinationLatitude,
+        decimal? deliveryDestinationLongitude,
         string? sourceCategory,
         string? sourceSubcategory,
         string? sourceQuery,
@@ -36,6 +44,12 @@ public sealed class ParserLogisticsSnapshotRow : IDisposable
         int? productTime2Raw,
         long? productDtypeRaw,
         int? productDistRaw,
+        string? visibleDeliveryStatus,
+        string? visibleDeliveryLabel,
+        DateTime? visibleDeliveryDate,
+        string? visibleDeliverySource,
+        DateTime? visibleDeliveryObservedAtUtc,
+        JsonDocument? visibleDeliveryRawPayload,
         JsonDocument? rawObservedFields)
     {
         ParserStagingGuard.EnsureSource(idParserRun, idParserFile, sourceLineNumber, rowHash);
@@ -79,6 +93,14 @@ public sealed class ParserLogisticsSnapshotRow : IDisposable
         SourceEndpoint = sourceEndpoint;
         RequestFingerprint = requestFingerprint;
         SourceRegionDest = sourceRegionDest;
+        DeliveryProfileKey = deliveryProfileKey;
+        DeliveryDestinationName = deliveryDestinationName;
+        DeliveryProfileVersion = deliveryProfileVersion;
+        DeliveryDestinationCity = deliveryDestinationCity;
+        DeliveryDestinationLabel = deliveryDestinationLabel;
+        DeliveryDestinationAddress = deliveryDestinationAddress;
+        DeliveryDestinationLatitude = deliveryDestinationLatitude;
+        DeliveryDestinationLongitude = deliveryDestinationLongitude;
         SourceCategory = sourceCategory;
         SourceSubcategory = sourceSubcategory;
         SourceQuery = sourceQuery;
@@ -95,6 +117,12 @@ public sealed class ParserLogisticsSnapshotRow : IDisposable
         ProductTime2Raw = productTime2Raw;
         ProductDtypeRaw = productDtypeRaw;
         ProductDistRaw = productDistRaw;
+        VisibleDeliveryStatus = visibleDeliveryStatus;
+        VisibleDeliveryLabel = visibleDeliveryLabel;
+        VisibleDeliveryDate = visibleDeliveryDate;
+        VisibleDeliverySource = visibleDeliverySource;
+        VisibleDeliveryObservedAtUtc = visibleDeliveryObservedAtUtc;
+        VisibleDeliveryRawPayload = visibleDeliveryRawPayload;
         RawObservedFields = rawObservedFields;
     }
 
@@ -111,6 +139,14 @@ public sealed class ParserLogisticsSnapshotRow : IDisposable
     public string SourceEndpoint { get; private set; } = string.Empty;
     public string RequestFingerprint { get; private set; } = string.Empty;
     public string SourceRegionDest { get; private set; } = string.Empty;
+    public string? DeliveryProfileKey { get; private set; }
+    public string? DeliveryDestinationName { get; private set; }
+    public string? DeliveryProfileVersion { get; private set; }
+    public string? DeliveryDestinationCity { get; private set; }
+    public string? DeliveryDestinationLabel { get; private set; }
+    public string? DeliveryDestinationAddress { get; private set; }
+    public decimal? DeliveryDestinationLatitude { get; private set; }
+    public decimal? DeliveryDestinationLongitude { get; private set; }
     public string? SourceCategory { get; private set; }
     public string? SourceSubcategory { get; private set; }
     public string? SourceQuery { get; private set; }
@@ -127,10 +163,17 @@ public sealed class ParserLogisticsSnapshotRow : IDisposable
     public int? ProductTime2Raw { get; private set; }
     public long? ProductDtypeRaw { get; private set; }
     public int? ProductDistRaw { get; private set; }
+    public string? VisibleDeliveryStatus { get; private set; }
+    public string? VisibleDeliveryLabel { get; private set; }
+    public DateTime? VisibleDeliveryDate { get; private set; }
+    public string? VisibleDeliverySource { get; private set; }
+    public DateTime? VisibleDeliveryObservedAtUtc { get; private set; }
+    public JsonDocument? VisibleDeliveryRawPayload { get; private set; }
     public JsonDocument? RawObservedFields { get; private set; }
 
     public void Dispose()
     {
+        VisibleDeliveryRawPayload?.Dispose();
         RawObservedFields?.Dispose();
     }
 }

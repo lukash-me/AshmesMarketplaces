@@ -46,7 +46,9 @@
         "checkpoint_interval": 25,
         "retry_queue_passes": 1,
         "adaptive_delay": true,
-        "timeout_seconds": 300
+        "timeout_seconds": 300,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
       },
       "product_details": {
         "enabled": true,
@@ -97,7 +99,9 @@
         "checkpoint_interval": 100,
         "retry_queue_passes": 1,
         "adaptive_delay": true,
-        "timeout_seconds": 3600
+        "timeout_seconds": 3600,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
       },
       "product_details": {
         "enabled": true,
@@ -153,7 +157,9 @@
         "checkpoint_interval": 500,
         "retry_queue_passes": 1,
         "adaptive_delay": true,
-        "timeout_seconds": 172800
+        "timeout_seconds": 172800,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
       },
       "product_details": {
         "enabled": true,
@@ -208,7 +214,9 @@
         "checkpoint_interval": 500,
         "retry_queue_passes": 1,
         "adaptive_delay": true,
-        "timeout_seconds": 172800
+        "timeout_seconds": 172800,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
       },
       "product_details": {
         "enabled": true,

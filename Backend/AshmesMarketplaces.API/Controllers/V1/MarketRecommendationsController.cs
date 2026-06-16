@@ -1,11 +1,13 @@
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.Application.MarketRecommendations.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AshmesMarketplaces.API.Controllers.V1;
 
 [ApiController]
+[Authorize]
 [Route("api/v1/market/recommendations")]
 [Produces("application/json")]
 public sealed class MarketRecommendationsController : ControllerBase

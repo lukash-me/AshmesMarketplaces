@@ -21,13 +21,16 @@ Console.CancelKeyPress += (_, eventArgs) =>
 try
 {
     await using var dbContext = CreateDbContext(parsed);
-    if (parsed.Command is "audit-quality" or "purge-quality")
+    if (parsed.Command is "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps")
     {
         var maintenance = new ParserDataQualityMaintenance(dbContext);
         var maintenanceResult = parsed.Command switch
         {
             "audit-quality" => await maintenance.AuditAsync(parsed.Target, cancellation.Token),
             "purge-quality" => await maintenance.PurgeAsync(parsed.Target, parsed.Confirm, cancellation.Token),
+            "audit-defective-cards" => await maintenance.AuditDefectiveCardsAsync(parsed.Target, cancellation.Token),
+            "purge-defective-cards" => await maintenance.PurgeDefectiveCardsAsync(parsed.Target, parsed.Confirm, cancellation.Token),
+            "repair-parser-batch-timestamps" => await maintenance.RepairParserBatchTimestampsAsync(parsed.Target, parsed.Confirm, cancellation.Token),
             _ => throw new ArgumentException($"Unsupported command '{parsed.Command}'.")
         };
 
@@ -49,6 +52,8 @@ try
         "stage-ranks" => await service.StageRanksAsync(parsed.Target, options, cancellation.Token),
         "stage-logistics" => await service.StageLogisticsAsync(parsed.Target, options, cancellation.Token),
         "stage-product-details" => await service.StageProductDetailsAsync(parsed.Target, options, cancellation.Token),
+        "stage-complete-batch" => await service.StageCompleteBatchAsync(parsed.Target, options, cancellation.Token),
+        "complete-parser-pipeline" => await service.CompleteParserPipelineAsync(parsed.Target, options, cancellation.Token),
         "promote-products" => await service.PromoteProductsAsync(parsed.Target, options, cancellation.Token),
         _ => throw new ArgumentException($"Unsupported command '{parsed.Command}'.")
     };
@@ -101,8 +106,8 @@ internal sealed record CliArguments(
     bool ShowHelp)
 {
     public bool RequiresDatabase =>
-        Command is "promote-products" or "audit-quality" or "purge-quality"
-        || (!DryRun && Command is "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details");
+        Command is "promote-products" or "complete-parser-pipeline" or "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps"
+        || (!DryRun && Command is "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "stage-complete-batch");
 
     public static string HelpText =>
         """
@@ -119,12 +124,19 @@ internal sealed record CliArguments(
           stage-ranks <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           stage-logistics <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           stage-product-details <run-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
+          stage-complete-batch <batch-directory> [--dry-run] [--batch-size <rows>] [--limit <rows>]
+          complete-parser-pipeline <pipeline-run-id> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           promote-products <parser-run-id> [--dry-run] [--batch-size <rows>] [--limit <rows>]
           audit-quality <output-directory>
           purge-quality <output-directory> --confirm
+          audit-defective-cards <output-directory>
+          purge-defective-cards <output-directory> --confirm
+          repair-parser-batch-timestamps <output-directory> [--confirm]
 
         Write commands need --connection-string or ConnectionStrings__Postgres.
         purge-quality creates backup tables in schema ParserQualityBackups before deleting rows.
+        purge-defective-cards creates backup tables in schema ParserQualityBackups before deleting rows.
+        repair-parser-batch-timestamps writes a report and updates batch ParserRuns / parser-owned Products only with --confirm.
         Stage commands with --dry-run only read parser artifacts and do not need database access.
         Review staging preserves capped/root-level partial snapshot semantics and does not write domain Reviews.
         Rank staging preserves observed rank/page-fetch evidence and does not infer product positions.
@@ -140,10 +152,10 @@ internal sealed record CliArguments(
             throw new ArgumentException("A command and target are required. Use --help for syntax.");
 
         var command = args[0].Trim().ToLowerInvariant();
-        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "validate-product-details" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "promote-products" or "audit-quality" or "purge-quality"))
+        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "validate-product-details" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "stage-complete-batch" or "complete-parser-pipeline" or "promote-products" or "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps"))
             throw new ArgumentException($"Unsupported command '{args[0]}'. Use --help for syntax.");
 
-        var batchSize = command == "promote-products" ? 1000 : 5000;
+        var batchSize = command is "promote-products" or "stage-complete-batch" ? 1000 : 5000;
         long? maxRows = null;
         var dryRun = false;
         string? connectionString = null;

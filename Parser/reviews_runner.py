@@ -35,6 +35,7 @@ from review_exporters import (
     write_raw_root_payload,
 )
 from reviews_manifest import ReviewRunManifest
+from run_scope import parser_run_scope_from_env
 from wb_reviews_client import ReviewFetchResult, WbReviewsClient
 
 
@@ -455,6 +456,7 @@ def run_reviews(
                 "input_products_jsonl": str(source.products_jsonl),
                 "limit_products": source.limit_products,
                 "source_subcategory": source.source_subcategory,
+                **parser_run_scope_from_env(),
             },
             marketplace=config.marketplace,
             repo_dir=BASE_DIR.parent,

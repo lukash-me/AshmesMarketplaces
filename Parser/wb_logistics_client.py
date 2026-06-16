@@ -8,7 +8,11 @@ from typing import Any, Callable
 import requests
 
 from common_data import HEADERS
-from logistics_contracts import WB_CARD_DETAIL_ENDPOINT, build_card_detail_params, request_fingerprint
+from logistics_contracts import WB_CARD_DETAIL_ENDPOINT, build_card_detail_params, products_from_payload, request_fingerprint
+from visible_delivery import VisibleDeliveryEvidence, build_visible_delivery_evidence
+
+
+WB_SUPPLIER_SHIPMENT_ENDPOINT = "https://suppliers-shipment-2.wildberries.ru/api/v1/suppliers/{supplier_id}"
 
 
 @dataclass
@@ -24,6 +28,7 @@ class LogisticsFetchResult:
     http_status: int | None = None
     message: str | None = None
     is_transient: bool = False
+    visible_delivery: VisibleDeliveryEvidence | None = None
 
 
 class WbLogisticsClient:
@@ -79,6 +84,10 @@ class WbLogisticsClient:
                         )
 
                     if isinstance(payload, dict):
+                        visible_delivery = self._load_visible_delivery(
+                            payload=payload,
+                            wb_product_id=wb_product_id,
+                        )
                         return LogisticsFetchResult(
                             wb_product_id=wb_product_id,
                             endpoint=self.endpoint,
@@ -89,6 +98,7 @@ class WbLogisticsClient:
                             attempts=attempt,
                             retries=retries_used,
                             http_status=response.status_code,
+                            visible_delivery=visible_delivery,
                         )
 
                     return LogisticsFetchResult(
@@ -142,3 +152,49 @@ class WbLogisticsClient:
     @staticmethod
     def _is_retryable_status(status_code: int) -> bool:
         return status_code in {408, 425, 429, 498} or status_code >= 500
+
+    def _load_visible_delivery(
+        self,
+        *,
+        payload: dict[str, Any],
+        wb_product_id: str,
+    ) -> VisibleDeliveryEvidence | None:
+        product = next(
+            (item for item in products_from_payload(payload) if str(item.get("id")) == str(wb_product_id)),
+            None,
+        )
+        if product is None:
+            return None
+
+        supplier_payload = self._fetch_supplier_payload(product.get("supplierId"))
+        return build_visible_delivery_evidence(
+            product=product,
+            supplier_payload=supplier_payload,
+            observed_at_utc=_utc_now_iso(),
+        )
+
+    def _fetch_supplier_payload(self, supplier_id: Any) -> dict[str, Any] | None:
+        if supplier_id is None:
+            return None
+
+        try:
+            supplier_id_text = str(int(supplier_id))
+        except (TypeError, ValueError):
+            return None
+
+        try:
+            response = self.session.get(
+                WB_SUPPLIER_SHIPMENT_ENDPOINT.format(supplier_id=supplier_id_text),
+                headers={"X-Client-Name": "site"},
+                timeout=self.timeout_sec,
+            )
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+            return payload if isinstance(payload, dict) else None
+        except (requests.RequestException, ValueError):
+            return None
+
+
+def _utc_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

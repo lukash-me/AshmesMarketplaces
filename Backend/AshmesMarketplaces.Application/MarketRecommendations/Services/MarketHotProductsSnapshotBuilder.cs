@@ -3,6 +3,7 @@ using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.Application.MarketRecommendations.Intelligence;
 using AshmesMarketplaces.Application.MarketRecommendations.Options;
+using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.ParserIngestion;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
     private const int ReviewSentimentVersion = 2;
     private const string ReviewScopeProduct = "product";
     private const string ReviewScopeRoot = "root";
+    private const long WbWarehouseDtypeFlag = 8;
     private static readonly TimeSpan RecentReviewLookback = TimeSpan.FromDays(14);
 
     private readonly ApplicationDbContext _dbContext;
@@ -90,6 +92,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             : await LoadPositionsAsync(products, rankRunId, cancellationToken);
         var reviews = await LoadReviewEvidenceAsync(products, DateTime.UtcNow, cancellationToken);
         var productDetails = await LoadProductDetailsAsync(products, productRunId, cancellationToken);
+        var deliveryProfiles = await LoadDeliveryProfilesAsync(products, cancellationToken);
         var reviewRunIds = reviews.Values
             .Select(x => x.LatestReviewRunId)
             .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -123,6 +126,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 positions.TryGetValue(product.Id, out var position);
                 reviews.TryGetValue(product.Id, out var review);
                 productDetails.TryGetValue(product.Id, out var detail);
+                deliveryProfiles.TryGetValue(product.Id, out var deliveryProfile);
                 review ??= ReviewEvidence.Empty;
                 position ??= ProductPosition.Unknown(product.SourceCategory, product.SourceSubcategory);
 
@@ -165,7 +169,8 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                         review.LatestReviewRunId,
                         review.SentimentVersion,
                         review.ReviewScope,
-                        review.NegativeReviewEvidence));
+                        review.NegativeReviewEvidence),
+                    DeliveryProfile: deliveryProfile);
 
                 return new MarketProductFeatureSnapshot(
                     product.Id,
@@ -368,6 +373,93 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 detail.Description,
                 CloneUsableJson(detail.Characteristics) ?? CloneUsableJson(detail.GroupedOptions),
                 detail.MediaCount);
+        }
+
+        return result;
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, MarketProductDeliveryProfileDto>> LoadDeliveryProfilesAsync(
+        IReadOnlyList<ParserProductRow> products,
+        CancellationToken cancellationToken)
+    {
+        var productIds = products
+            .Select(x => x.WbProductId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (productIds.Count == 0)
+            return new Dictionary<Guid, MarketProductDeliveryProfileDto>();
+
+        var rows = await _dbContext.ParserLogisticsSnapshotRows
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId)
+                && x.DeliveryProfileKey != null
+                && x.SourceRegionDest != null)
+            .Select(x => new DeliveryProfileRow(
+                x.WbProductId,
+                x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationAddress,
+                x.TotalQuantityObserved,
+                x.ProductTime1Raw,
+                x.ProductTime2Raw,
+                x.ProductDtypeRaw,
+                x.VisibleDeliveryLabel,
+                x.VisibleDeliveryDate,
+                x.VisibleDeliveryStatus,
+                x.ObservedAtUtc,
+                x.SourceLineNumber))
+            .ToListAsync(cancellationToken);
+
+        var latestByProduct = rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x => x
+                    .GroupBy(row => row.SourceRegionDest, StringComparer.Ordinal)
+                    .Select(group => group
+                        .OrderByDescending(row => row.ObservedAtUtc)
+                        .ThenByDescending(row => row.SourceLineNumber)
+                        .First())
+                    .OrderBy(row => row.DeliveryProfileKey, StringComparer.Ordinal)
+                    .ThenBy(row => row.SourceRegionDest, StringComparer.Ordinal)
+                    .ToList(),
+                StringComparer.Ordinal);
+
+        var result = new Dictionary<Guid, MarketProductDeliveryProfileDto>();
+        foreach (var product in products)
+        {
+            if (!latestByProduct.TryGetValue(product.WbProductId, out var profileRows) || profileRows.Count == 0)
+                continue;
+
+            var destinations = profileRows
+                .Select(row =>
+                {
+                    var calculated = WbVisibleDeliveryCalculator.Calculate(
+                        row.ProductTime1Raw,
+                        row.ProductTime2Raw,
+                        row.ProductDtypeRaw,
+                        row.TotalQuantityObserved,
+                        row.ObservedAtUtc);
+
+                    return new MarketProductDeliveryDestinationDto(
+                        RegionKeyFrom(row),
+                        RegionNameFrom(row),
+                        row.DeliveryDestinationCity ?? row.DeliveryDestinationName,
+                        row.DeliveryDestinationAddress,
+                        calculated.Label ?? row.VisibleDeliveryLabel,
+                        calculated.Date ?? row.VisibleDeliveryDate,
+                        DeliveryHoursFrom(row),
+                        DeliverySourceTypeFrom(row.ProductDtypeRaw),
+                        row.TotalQuantityObserved,
+                        calculated.ObservedAtUtc ?? row.ObservedAtUtc);
+                })
+                .Where(x => x.DeliveryHours.HasValue || x.VisibleDeliveryDate.HasValue)
+                .ToList();
+
+            if (destinations.Count > 0)
+                result[product.Id] = new MarketProductDeliveryProfileDto(destinations);
         }
 
         return result;
@@ -619,6 +711,50 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
 
     private sealed record ProductDetailEvidence(string? Description, JsonElement? Characteristics, int? MediaCount);
 
+    private static string RegionKeyFrom(DeliveryProfileRow row)
+    {
+        var value = (row.DeliveryDestinationName ?? row.DeliveryDestinationCity ?? row.SourceRegionDest).Trim().ToLowerInvariant();
+        return value switch
+        {
+            var x when x.Contains("моск", StringComparison.OrdinalIgnoreCase) => "central",
+            var x when x.Contains("санкт", StringComparison.OrdinalIgnoreCase) || x.Contains("петербург", StringComparison.OrdinalIgnoreCase) => "northwest",
+            var x when x.Contains("казан", StringComparison.OrdinalIgnoreCase) => "volga",
+            var x when x.Contains("екатеринбург", StringComparison.OrdinalIgnoreCase) => "ural",
+            var x when x.Contains("новосибирск", StringComparison.OrdinalIgnoreCase) => "siberia",
+            var x when x.Contains("краснодар", StringComparison.OrdinalIgnoreCase) => "south",
+            var x when x.Contains("хабаровск", StringComparison.OrdinalIgnoreCase) || x.Contains("владивосток", StringComparison.OrdinalIgnoreCase) => "far_east",
+            _ => row.SourceRegionDest
+        };
+    }
+
+    private static string RegionNameFrom(DeliveryProfileRow row) =>
+        RegionKeyFrom(row) switch
+        {
+            "central" => "Центральный регион",
+            "northwest" => "Северо-Запад",
+            "volga" => "Поволжье",
+            "ural" => "Урал",
+            "siberia" => "Сибирь",
+            "south" => "Юг",
+            "far_east" => "Дальний Восток",
+            _ => row.DeliveryDestinationName ?? row.DeliveryDestinationCity ?? row.SourceRegionDest
+        };
+
+    private static int? DeliveryHoursFrom(DeliveryProfileRow row) =>
+        row.ProductTime1Raw.HasValue && row.ProductTime2Raw.HasValue
+            ? row.ProductTime1Raw.Value + row.ProductTime2Raw.Value
+            : null;
+
+    private static string DeliverySourceTypeFrom(long? dtype)
+    {
+        if (!dtype.HasValue)
+            return "unknown";
+
+        return (dtype.Value & WbWarehouseDtypeFlag) != 0
+            ? "wb_warehouse"
+            : "seller_warehouse";
+    }
+
     private sealed record ProductPosition(string PositionState, int? Position, int? ObservedRangeLimit)
     {
         public static ProductPosition Observed(int position) => new(PositionStateObserved, position, null);
@@ -674,5 +810,22 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         long SourceLineNumber,
         DateTime? CreatedAtOnMp,
         string? ReviewIdOnMp);
+
+    private sealed record DeliveryProfileRow(
+        string WbProductId,
+        string SourceRegionDest,
+        string? DeliveryProfileKey,
+        string? DeliveryDestinationName,
+        string? DeliveryDestinationCity,
+        string? DeliveryDestinationAddress,
+        int? TotalQuantityObserved,
+        int? ProductTime1Raw,
+        int? ProductTime2Raw,
+        long? ProductDtypeRaw,
+        string? VisibleDeliveryLabel,
+        DateTime? VisibleDeliveryDate,
+        string? VisibleDeliveryStatus,
+        DateTime ObservedAtUtc,
+        long SourceLineNumber);
 
 }

@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
-import { RefreshCw, X } from 'lucide-vue-next';
+import { storeToRefs } from 'pinia';
+import { X } from 'lucide-vue-next';
 
+import { useAuthStore } from '@/features/auth/auth.store';
 import MarketFilterSelect from '@/features/parser-products/MarketFilterSelect.vue';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
-import {
-  getHotProductsRecommendations,
-  recalculateHotProductsRecommendations
-} from '@/features/parser-products/hotProductsRecommendations.api';
+import { getHotProductsRecommendations } from '@/features/parser-products/hotProductsRecommendations.api';
 import type {
   HotProductRecommendationFactor,
   HotProductRecommendationItem,
@@ -50,7 +49,10 @@ const groupPriority = [
   'weak_description',
   'weak_visible_description',
   'missing_key_specs',
-  'fast_position_growth'
+  'fast_position_growth',
+  'slow_delivery',
+  'top_low_stock_slow_central_delivery',
+  'faster_than_peers_region_delivery'
 ];
 
 const factorCatalog: Record<string, { label: string; help: string }> = {
@@ -113,6 +115,30 @@ const factorCatalog: Record<string, { label: string; help: string }> = {
   fast_position_growth: {
     label: 'Быстрый рост',
     help: 'Позиция товара заметно улучшилась между наблюдениями.'
+  },
+  seller_stock_slow_central_delivery: {
+    label: 'Долгая доставка со склада продавца',
+    help: 'До московской контрольной точки доставка дольше послезавтра, источник доставки - склад продавца.'
+  },
+  top_low_stock_slow_central_delivery: {
+    label: 'Топ, низкий остаток и долгая доставка',
+    help: 'Товар высоко в выдаче, остаток низкий, доставка до Центрального региона дольше послезавтра.'
+  },
+  top_slow_cluster_region_delivery: {
+    label: 'Топ, долгая доставка в регион кластера',
+    help: 'Товар высоко в выдаче, но доставка в характерный регион похожих товаров дольше послезавтра.'
+  },
+  top_slow_central_delivery: {
+    label: 'Топ, долгая доставка в Центральный регион',
+    help: 'Товар высоко в выдаче, но доставка до московской контрольной точки дольше послезавтра.'
+  },
+  peers_slow_region_delivery: {
+    label: 'Похожие доставляются с задержкой',
+    help: 'У похожих карточек в выбранном регионе доставка обычно дольше послезавтра.'
+  },
+  faster_than_peers_region_delivery: {
+    label: 'Быстрее похожих',
+    help: 'Карточка доставляется в регион быстрее медианы похожих товаров.'
   }
 };
 
@@ -132,7 +158,46 @@ const negativeFactorCodes = new Set([
   'weak_description',
   'weak_visible_description',
   'missing_key_specs',
-  'repeated_review_complaint'
+  'repeated_review_complaint',
+  'seller_stock_slow_central_delivery',
+  'top_low_stock_slow_central_delivery',
+  'top_slow_central_delivery'
+]);
+
+const hiddenFactorCodes = new Set([
+  'top_slow_cluster_region_delivery'
+]);
+
+const factorLabelOverrides: Record<string, string> = {
+  slow_delivery: 'Долгая доставка',
+  seller_stock_slow_central_delivery: 'Долгая доставка со склада продавца',
+  top_slow_central_delivery: 'Товар в топе, доставка дольше похожих',
+  peers_slow_region_delivery: 'Похожие доставляются долго',
+  faster_than_peers_region_delivery: 'Быстрее похожих'
+};
+
+const factorHelpOverrides: Record<string, string> = {
+  slow_delivery: 'Карточки с долгой доставкой в значимые регионы.',
+  seller_stock_slow_central_delivery: 'Доставка до Центрального региона дольше послезавтра, источник - склад продавца.',
+  top_slow_central_delivery: 'Товар в топе, но доставка до региона дольше медианы похожих товаров минимум на сутки.',
+  peers_slow_region_delivery: 'У похожих карточек в регионе доставка обычно дольше послезавтра.',
+  faster_than_peers_region_delivery: 'Карточка доставляется в регион быстрее медианы похожих товаров.'
+};
+
+const compositeGroupFactorCodes: Record<string, string[]> = {
+  slow_delivery: [
+    'seller_stock_slow_central_delivery',
+    'top_slow_central_delivery',
+    'top_low_stock_slow_central_delivery'
+  ]
+};
+
+const combinableLogisticsFactorCodes = new Set([
+  'peers_slow_region_delivery',
+  'faster_than_peers_region_delivery',
+  'seller_stock_slow_central_delivery',
+  'top_slow_central_delivery',
+  'top_low_stock_slow_central_delivery'
 ]);
 
 const emptyFilterOptions: ParserProductFilterOptions = {
@@ -142,11 +207,12 @@ const emptyFilterOptions: ParserProductFilterOptions = {
   sellers: []
 };
 
+const authStore = useAuthStore();
+const { user } = storeToRefs(authStore);
 const response = ref<HotProductsListResponse | null>(null);
 const filterOptions = ref<ParserProductFilterOptions>(emptyFilterOptions);
 const selectedProduct = ref<ParserProductListItem | null>(null);
 const loading = ref(false);
-const recalculating = ref(false);
 const filterOptionsLoading = ref(false);
 const error = ref('');
 const filterError = ref('');
@@ -171,6 +237,33 @@ const selectedGroup = computed(() =>
   ?? orderedGroups.value[0]
   ?? null
 );
+
+const hotProductsScheduleText = computed(() => {
+  const schedule = user.value?.analysisSchedule;
+  if (!schedule) {
+    return 'Перспективные товары обновляются автоматически один раз в сутки.';
+  }
+
+  return `Обновляется ежедневно в ${schedule.hotProductsLocalTime}. Следующий запуск: ${formatScheduleDate(schedule.nextHotProductsRunAtUtc)}.`;
+});
+
+function formatScheduleDate(value: string | null | undefined): string {
+  if (!value) {
+    return 'ожидает назначения';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'ожидает назначения';
+  }
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
+}
 
 const factorSourceItems = computed(() => {
   if (!selectedGroup.value) {
@@ -295,30 +388,6 @@ async function loadOpportunities(): Promise<void> {
   }
 }
 
-async function recalculate(): Promise<void> {
-  if (recalculating.value) {
-    return;
-  }
-
-  recalculating.value = true;
-  error.value = '';
-
-  try {
-    await recalculateHotProductsRecommendations({
-      ...(filters.sourceSubcategory ? { sourceSubcategory: filters.sourceSubcategory } : {}),
-      maxProducts: 100000,
-      maxRecommendations: 200,
-      minProductsForScoring: 5,
-      forceRecalculate: true
-    });
-    await loadOpportunities();
-  } catch (err) {
-    error.value = getProblemMessage(err, 'Не удалось обновить подборки.');
-  } finally {
-    recalculating.value = false;
-  }
-}
-
 function applyFilters(): void {
   void loadOpportunities();
 }
@@ -367,7 +436,7 @@ function groupOrder(key: string): number {
 }
 
 function factorLabel(key: string, fallback?: string): string {
-  return factorCatalog[key]?.label ?? fallback ?? key;
+  return factorLabelOverrides[key] ?? factorCatalog[key]?.label ?? fallback ?? key;
 }
 
 function factorHelp(key: string, fallback?: string, value?: HotProductRecommendationFactor['value']): string {
@@ -378,6 +447,10 @@ function factorHelp(key: string, fallback?: string, value?: HotProductRecommenda
     const base = `Анализируются последние 10 отзывов: сначала отзывы за 14 дней, затем более старые до набора 10. Плохими временно считаются только оценки 1-3. Текст отзыва, плюсы и минусы сейчас не анализируются.${scope}`;
     const evidence = formatNegativeReviewEvidence(value);
     return evidence ? `${base} ${evidence}` : base;
+  }
+
+  if (factorHelpOverrides[key]) {
+    return factorHelpOverrides[key];
   }
 
   return factorCatalog[key]?.help ?? fallback ?? 'Фактор рассчитан по сохраненным рыночным данным.';
@@ -466,7 +539,45 @@ function matchesFactorFilter(item: HotProductRecommendationItem): boolean {
 }
 
 function visibleFactorTags(item: HotProductRecommendationItem): HotProductRecommendationFactor[] {
-  return item.factors.filter((factor) => !isHiddenLegacyFactor(factor));
+  return combineLogisticsFactorTags(item.factors.filter((factor) => !isHiddenLegacyFactor(factor)));
+}
+
+function combineLogisticsFactorTags(factors: HotProductRecommendationFactor[]): HotProductRecommendationFactor[] {
+  const result: HotProductRecommendationFactor[] = [];
+  const grouped = new Map<string, HotProductRecommendationFactor[]>();
+
+  factors.forEach((factor) => {
+    if (!combinableLogisticsFactorCodes.has(factor.code)) {
+      result.push(factor);
+      return;
+    }
+
+    const existing = grouped.get(factor.code);
+    if (existing) {
+      existing.push(factor);
+      return;
+    }
+
+    grouped.set(factor.code, [factor]);
+  });
+
+  grouped.forEach((items) => {
+    if (items.length === 1) {
+      result.push(items[0]);
+      return;
+    }
+
+    result.push({
+      ...items[0],
+      value: {
+        items: items
+          .map((item) => item.value)
+          .filter((value): value is Record<string, unknown> => value !== null && typeof value === 'object')
+      }
+    });
+  });
+
+  return result;
 }
 
 function visibleGroupItems(group: HotProductsGroup): HotProductRecommendationItem[] {
@@ -474,7 +585,8 @@ function visibleGroupItems(group: HotProductsGroup): HotProductRecommendationIte
 }
 
 function matchesGroupFactor(item: HotProductRecommendationItem, groupKey: string): boolean {
-  return visibleFactorTags(item).some((factor) => factor.code === groupKey);
+  const groupCodes = compositeGroupFactorCodes[groupKey] ?? [groupKey];
+  return visibleFactorTags(item).some((factor) => groupCodes.includes(factor.code));
 }
 
 function groupVisibleCount(group: HotProductsGroup): number {
@@ -489,11 +601,33 @@ function groupVisibleCount(group: HotProductsGroup): number {
 }
 
 function isHiddenLegacyFactor(factor: HotProductRecommendationFactor): boolean {
-  return deprecatedFactorCodes.has(factor.code)
+  return hiddenFactorCodes.has(factor.code)
+    || deprecatedFactorCodes.has(factor.code)
     || (contentEvidenceFactorCodes.has(factor.code)
       && (factor.value === null || typeof factor.value !== 'object'))
+    || isInvalidTopSlowCentralDeliveryFactor(factor)
     || isInvalidBadRecentReviewsFactor(factor)
     || isInvalidLowReviewCountFactor(factor);
+}
+
+function isInvalidTopSlowCentralDeliveryFactor(factor: HotProductRecommendationFactor): boolean {
+  if (factor.code !== 'top_slow_central_delivery') {
+    return false;
+  }
+
+  if (factor.value === null || typeof factor.value !== 'object') {
+    return true;
+  }
+
+  const deliveryHours = optionalNumericFactorField(factor.value, 'deliveryHours');
+  const peerMedianDeliveryHours = optionalNumericFactorField(factor.value, 'peerMedianDeliveryHours');
+  const peerSampleSize = optionalNumericFactorField(factor.value, 'peerSampleSize');
+
+  return deliveryHours === null
+    || peerMedianDeliveryHours === null
+    || peerSampleSize === null
+    || peerSampleSize < 5
+    || deliveryHours < peerMedianDeliveryHours + 24;
 }
 
 function isInvalidBadRecentReviewsFactor(factor: HotProductRecommendationFactor): boolean {
@@ -561,7 +695,143 @@ function optionalNumericFactorField(value: Record<string, unknown>, key: string)
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
 }
 
+function optionalStringFactorField(value: Record<string, unknown>, key: string): string | null {
+  const raw = value[key];
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+function deliveryDays(hours: number | null): number | null {
+  if (hours === null || hours <= 0) {
+    return null;
+  }
+
+  return Math.ceil(hours / 24);
+}
+
+function deliveryDaysText(hours: number | null): string | null {
+  const days = deliveryDays(hours);
+  return days === null ? null : `${days} д`;
+}
+
+function deliverySourcePhrase(value: Record<string, unknown>): string {
+  const sourceType = optionalStringFactorField(value, 'deliverySourceType');
+  if (sourceType === 'wb_warehouse') {
+    return 'со склада WB';
+  }
+
+  if (sourceType === 'seller_warehouse') {
+    return 'со склада продавца';
+  }
+
+  return '';
+}
+
+function logisticsRegionName(value: Record<string, unknown>): string {
+  return optionalStringFactorField(value, 'regionName')
+    ?? optionalStringFactorField(value, 'destinationCity')
+    ?? 'регион';
+}
+
+function withSource(text: string, source: string): string {
+  return source ? `${text} ${source}` : text;
+}
+
+function combinedLogisticsFactorHeader(code: string): string | null {
+  switch (code) {
+    case 'peers_slow_region_delivery':
+      return 'Похожие доставляются долго:';
+    case 'faster_than_peers_region_delivery':
+      return 'Доставляется быстрее похожих:';
+    case 'seller_stock_slow_central_delivery':
+      return 'Долгая доставка со склада продавца:';
+    case 'top_slow_central_delivery':
+      return 'Товар в топе, но доставка дольше похожих:';
+    case 'top_low_stock_slow_central_delivery':
+      return 'Топ, низкий остаток и долгая доставка:';
+    default:
+      return null;
+  }
+}
+
+function logisticsFactorLine(code: string, value: Record<string, unknown>): string | null {
+  const region = logisticsRegionName(value);
+  const days = deliveryDaysText(optionalNumericFactorField(value, 'deliveryHours'));
+  const peerDays = deliveryDaysText(optionalNumericFactorField(value, 'peerMedianDeliveryHours'));
+  const source = deliverySourcePhrase(value);
+
+  switch (code) {
+    case 'peers_slow_region_delivery':
+      return peerDays ? `${region}: медиана около ${peerDays}` : null;
+    case 'faster_than_peers_region_delivery':
+      return days && peerDays
+        ? `${withSource(`${region}: ${days}`, source)} против медианы похожих ${peerDays}`
+        : null;
+    case 'seller_stock_slow_central_delivery':
+      return days ? `${region}: ${days}` : null;
+    case 'top_slow_central_delivery':
+      return days && peerDays
+        ? `${withSource(`${region}: ${days}`, source)} против ${peerDays} у похожих`
+        : null;
+    case 'top_low_stock_slow_central_delivery':
+      return days ? withSource(`${region}: ${days}`, source) : null;
+    default:
+      return null;
+  }
+}
+
+function logisticsFactorText(factor: HotProductRecommendationFactor): string | null {
+  if (factor.value === null || typeof factor.value !== 'object') {
+    return null;
+  }
+
+  const value = factor.value;
+  if (Array.isArray(value.items)) {
+    const header = combinedLogisticsFactorHeader(factor.code);
+    const lines = value.items
+      .filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object')
+      .map((item) => logisticsFactorLine(factor.code, item))
+      .filter((line): line is string => Boolean(line));
+
+    return header && lines.length > 0
+      ? `${header}\n  ${lines.join('\n  ')}`
+      : null;
+  }
+
+  const region = logisticsRegionName(value);
+  const days = deliveryDaysText(optionalNumericFactorField(value, 'deliveryHours'));
+  const peerDays = deliveryDaysText(optionalNumericFactorField(value, 'peerMedianDeliveryHours'));
+  const source = deliverySourcePhrase(value);
+
+  switch (factor.code) {
+    case 'peers_slow_region_delivery':
+      return peerDays ? `Похожие доставляются долго: ${region}: медиана около ${peerDays}` : null;
+    case 'faster_than_peers_region_delivery':
+      return days && peerDays
+        ? `${withSource(`Доставляется быстрее похожих: ${region}: ${days}`, source)} против медианы похожих ${peerDays}`
+        : null;
+    case 'seller_stock_slow_central_delivery':
+      return days ? `Долгая доставка в ${region} со склада продавца: ${days}` : null;
+    case 'top_slow_central_delivery':
+      return days && peerDays
+        ? `${withSource(`Товар в топе, но доставка в ${region} дольше похожих: ${days}`, source)} против ${peerDays} у похожих`
+        : null;
+    case 'top_low_stock_slow_central_delivery':
+      return days ? withSource(`Топ, низкий остаток и долгая доставка в ${region}: ${days}`, source) : null;
+    case 'top_slow_cluster_region_delivery':
+      return days && peerDays
+        ? `${withSource(`Топ, но похожие доставляются быстрее в ${region}: ${days}`, source)} против ${peerDays} у похожих`
+        : null;
+    default:
+      return null;
+  }
+}
+
 function factorText(factor: HotProductRecommendationFactor): string {
+  const logisticsText = logisticsFactorText(factor);
+  if (logisticsText) {
+    return logisticsText;
+  }
+
   const label = factorLabel(factor.code, factor.label);
   const value = factor.value;
 
@@ -585,6 +855,14 @@ function factorText(factor: HotProductRecommendationFactor): string {
   }
 
   return `${label}: ${value}`;
+}
+
+function factorTagClasses(factor: HotProductRecommendationFactor): string[] {
+  const text = factorText(factor);
+  return [
+    `opportunity-tag--${factorTone(factor)}`,
+    text.includes('\n') ? 'opportunity-tag--multiline' : ''
+  ].filter(Boolean);
 }
 
 function hasPeerReviewComparison(value: unknown): boolean {
@@ -666,12 +944,8 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 
 <template>
   <div class="market-opportunities">
-    <PageHeader title="Перспективные товары">
-      <Button variant="primary" :loading="recalculating" @click="recalculate">
-        <RefreshCw :size="16" />
-        Обновить
-      </Button>
-    </PageHeader>
+    <PageHeader title="Перспективные товары" />
+    <p class="analysis-schedule-note">{{ hotProductsScheduleText }}</p>
 
     <form class="filters app-surface" @submit.prevent="applyFilters">
       <div class="filters__search">
@@ -728,10 +1002,6 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
       title="Подборки еще не рассчитаны"
       description="Запустите обновление, чтобы увидеть проверяемые идеи по выбранным нишам."
     >
-      <Button variant="primary" :loading="recalculating" @click="recalculate">
-        <RefreshCw :size="16" />
-        Обновить
-      </Button>
     </EmptyState>
 
     <template v-else>
@@ -843,7 +1113,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                     v-for="factor in visibleFactorTags(item)"
                     :key="`${item.id}:${factor.code}`"
                     class="opportunity-tag"
-                    :class="`opportunity-tag--${factorTone(factor)}`"
+                    :class="factorTagClasses(factor)"
                   >
                     {{ factorText(factor) }}
                     <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
@@ -875,10 +1145,6 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
           title="Обновите анализ, чтобы увидеть подборки"
           description="Текущий сохраненный анализ не содержит проверяемых групп."
         >
-          <Button variant="primary" :loading="recalculating" @click="recalculate">
-            <RefreshCw :size="16" />
-            Обновить
-          </Button>
         </EmptyState>
 
         <div v-if="fallbackItems.length" class="opportunities-fallback">
@@ -903,7 +1169,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                     v-for="factor in visibleFactorTags(item)"
                     :key="`${item.id}:${factor.code}`"
                     class="opportunity-tag"
-                    :class="`opportunity-tag--${factorTone(factor)}`"
+                    :class="factorTagClasses(factor)"
                   >
                     {{ factorText(factor) }}
                     <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
@@ -928,6 +1194,12 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 .market-opportunities {
   display: grid;
   gap: var(--space-4);
+}
+
+.analysis-schedule-note {
+  margin: calc(var(--space-2) * -1) 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
 }
 
 .filters {
@@ -967,8 +1239,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 
 .filters__chips,
 .factor-filter__chips,
-.opportunities-tabs,
-.opportunity-tags {
+.opportunities-tabs {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
@@ -1151,20 +1422,39 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   line-height: 1.25;
 }
 
+.opportunity-tags {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
 .opportunity-tag {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   width: fit-content;
   max-width: 100%;
-  align-items: center;
-  gap: var(--space-1);
+  box-sizing: border-box;
+  align-items: flex-start;
+  gap: 0.35rem;
   border: 1px solid var(--operator-border-muted);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--operator-metric-bg);
   color: var(--color-text);
   font-size: var(--operator-meta-size);
   font-weight: 760;
   line-height: 1.25;
-  padding: 0.32rem 0.65rem;
+  overflow-wrap: anywhere;
+  padding: 0.34rem 0.55rem;
+  text-align: left;
+  white-space: pre-line;
+}
+
+.opportunity-tag--multiline {
+  border-radius: 4px;
+  padding: 0.42rem 0.6rem;
 }
 
 .opportunity-tag--positive {

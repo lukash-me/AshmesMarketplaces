@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { Eye, History, RefreshCw } from 'lucide-vue-next';
+import { storeToRefs } from 'pinia';
+import { Eye, History } from 'lucide-vue-next';
 
 import {
   getWorkspaceOverview,
-  markWorkspaceOverviewViewed,
-  recalculateWorkspaceOverview
+  markWorkspaceOverviewViewed
 } from '@/features/overview/workspaceOverview.api';
 import type {
   WorkspaceOverview,
@@ -19,6 +19,7 @@ import type {
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
 import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
+import { useAuthStore } from '@/features/auth/auth.store';
 import { useActiveWorkspace } from '@/features/workspace-market-products/useActiveWorkspace';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import Button from '@/shared/ui/Button.vue';
@@ -38,9 +39,10 @@ type TagItem = {
 };
 
 const workspace = useActiveWorkspace();
+const authStore = useAuthStore();
+const { user } = storeToRefs(authStore);
 const overview = ref<WorkspaceOverview | null>(null);
 const loading = ref(false);
-const recalculating = ref(false);
 const error = ref('');
 const selectedProduct = ref<ParserProductListItem | null>(null);
 const activeSimilarGroups = ref<Record<string, string>>({});
@@ -53,6 +55,14 @@ const hasProducts = computed(() => (overview.value?.workspaceProductCount ?? 0) 
 const groups = computed<WorkspaceOverviewGroup[]>(() =>
   overview.value ? [overview.value.newItems] : []
 );
+const overviewScheduleText = computed(() => {
+  const schedule = user.value?.analysisSchedule;
+  if (!schedule) {
+    return 'Обзор обновляется автоматически один раз в сутки.';
+  }
+
+  return `Обновляется ежедневно в ${schedule.overviewLocalTime}. Следующий запуск: ${formatScheduleDate(schedule.nextOverviewRunAtUtc)}.`;
+});
 
 watch(
   activeWorkspaceId,
@@ -92,23 +102,22 @@ async function loadOverview(): Promise<void> {
   }
 }
 
-async function recalculate(): Promise<void> {
-  const workspaceId = activeWorkspaceId.value;
-  if (!workspaceId || recalculating.value) {
-    return;
+function formatScheduleDate(value: string | null | undefined): string {
+  if (!value) {
+    return 'ожидает назначения';
   }
 
-  recalculating.value = true;
-  error.value = '';
-
-  try {
-    await recalculateWorkspaceOverview(workspaceId);
-    await loadOverview();
-  } catch (requestError) {
-    error.value = getProblemMessage(requestError, 'Не удалось обновить анализ рабочей области.');
-  } finally {
-    recalculating.value = false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'ожидает назначения';
   }
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
 }
 
 async function markViewed(product: WorkspaceOverviewProduct): Promise<void> {
@@ -319,7 +328,8 @@ function similarGroupTitle(group: WorkspaceOverviewSimilarProductGroup): string 
     review_count_disadvantage: 'Больше отзывов',
     rating_disadvantage: 'Оценка выше',
     stock_disadvantage: 'Остаток выше',
-    weak_competitor_cards: 'Слабые похожие'
+    weak_competitor_cards: 'Слабые похожие',
+    similar_faster_region_delivery: 'Похожие доставляют быстрее'
   };
 
   return titles[group.key] ?? group.title;
@@ -341,7 +351,28 @@ function similarGroupItemTags(
       : [{ key: 'weak', label: 'Слабые параметры', tone: 'negative' }];
   }
 
+  if (groupKey === 'similar_faster_region_delivery') {
+    const facts = item.tags.length > 0 ? item.tags : item.facts;
+    return facts.length > 0
+      ? [{
+          key: 'delivery',
+          label: compactDeliveryFacts(facts),
+          tone: 'positive'
+        }]
+      : [{ key: 'delivery', label: 'Похожая доставляется быстрее', tone: 'positive' }];
+  }
+
   return comparisonTags(product, item.product);
+}
+
+function compactDeliveryFacts(facts: string[]): string {
+  const lines = facts
+    .map((fact) => fact.replace(/^Похожая быстрее в\s+/i, '').trim())
+    .filter(Boolean);
+
+  return lines.length > 1
+    ? `Похожие доставляют быстрее:\n  ${lines.join('\n  ')}`
+    : `Похожие доставляют быстрее: ${lines[0]}`;
 }
 
 function compactWeakFact(value: string): string {
@@ -391,6 +422,7 @@ function preferredSimilarGroup(groups: WorkspaceOverviewSimilarProductGroup[]): 
     'review_count_disadvantage',
     'rating_disadvantage',
     'stock_disadvantage',
+    'similar_faster_region_delivery',
     'weak_competitor_cards'
   ];
   for (const key of priority) {
@@ -609,12 +641,8 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
     <PageHeader
       title="Обзор"
       description="Сводка по товарам, которые добавлены в рабочую область."
-    >
-      <Button variant="primary" :loading="recalculating" :disabled="!activeWorkspaceId" @click="recalculate">
-        <RefreshCw :size="16" />
-        Обновить анализ
-      </Button>
-    </PageHeader>
+    />
+    <p class="analysis-schedule-note">{{ overviewScheduleText }}</p>
 
     <p v-if="error" class="overview-error">{{ error }}</p>
 
@@ -681,7 +709,7 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
               </div>
 
               <div class="overview-card__metrics">
-                <div v-for="metric in productMetrics(product)" :key="metric.label" class="overview-metric app-operator-metric">
+                <div v-for="metric in productMetrics(product)" :key="metric.label" class="app-operator-metric app-operator-value-metric">
                   <span>{{ metric.label }}</span>
                   <strong>{{ metric.value }}</strong>
                 </div>
@@ -827,29 +855,10 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
   gap: var(--space-5);
 }
 
-.overview-metric {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-3);
-  font-variant-numeric: tabular-nums;
-}
-
-.overview-metric span {
-  overflow-wrap: anywhere;
-  color: var(--color-text-muted);
-  font-size: var(--operator-meta-size);
-  font-weight: 760;
-  letter-spacing: 0.025em;
-  text-transform: uppercase;
-}
-
-.overview-metric strong {
-  overflow-wrap: anywhere;
-  color: var(--color-text);
-  font-size: var(--operator-value-size);
-  font-weight: 800;
-  line-height: 1.2;
+.analysis-schedule-note {
+  margin: calc(var(--space-3) * -1) 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
 }
 
 .overview-error {
@@ -983,7 +992,7 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
   width: fit-content;
   max-width: 100%;
   min-height: 1.75rem;
-  align-items: center;
+  align-items: flex-start;
   border: 1px solid var(--operator-border-muted);
   border-radius: 999px;
   background: var(--operator-metric-bg);
@@ -992,7 +1001,8 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
   font-size: var(--operator-meta-size);
   font-weight: 760;
   line-height: 1.18;
-  white-space: normal;
+  text-align: left;
+  white-space: pre-line;
 }
 
 .overview-tag--positive {

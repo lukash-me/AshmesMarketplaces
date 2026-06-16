@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AshmesMarketplaces.Domain.Shared;
 
 namespace AshmesMarketplaces.Domain.Entities.Workspaces;
@@ -15,7 +16,8 @@ public sealed class WorkspaceMarketProductUserReadState
         int? baselinePosition,
         int? baselineStock,
         int? baselineFeedbackCount,
-        decimal? baselineReviewRating)
+        decimal? baselineReviewRating,
+        JsonDocument? baselineLogisticsFactors = null)
     {
         if (idWorkspaceMarketProduct == Guid.Empty)
             throw new ArgumentException("Workspace market product id is required.", nameof(idWorkspaceMarketProduct));
@@ -36,7 +38,8 @@ public sealed class WorkspaceMarketProductUserReadState
             baselinePosition,
             baselineStock,
             baselineFeedbackCount,
-            baselineReviewRating);
+            baselineReviewRating,
+            baselineLogisticsFactors);
     }
 
     public Guid Id { get; private set; }
@@ -49,6 +52,7 @@ public sealed class WorkspaceMarketProductUserReadState
     public int? BaselineStock { get; private set; }
     public int? BaselineFeedbackCount { get; private set; }
     public decimal? BaselineReviewRating { get; private set; }
+    public JsonDocument? BaselineLogisticsFactors { get; private set; }
 
     public void Update(
         DateTime lastViewedAtUtc,
@@ -57,7 +61,8 @@ public sealed class WorkspaceMarketProductUserReadState
         int? baselinePosition,
         int? baselineStock,
         int? baselineFeedbackCount,
-        decimal? baselineReviewRating)
+        decimal? baselineReviewRating,
+        JsonDocument? baselineLogisticsFactors = null)
     {
         DateTimeUtc.EnsureUtc(lastViewedAtUtc, nameof(lastViewedAtUtc));
         DateTimeUtc.EnsureUtc(baselineObservedAtUtc, nameof(baselineObservedAtUtc));
@@ -69,5 +74,6 @@ public sealed class WorkspaceMarketProductUserReadState
         BaselineStock = baselineStock;
         BaselineFeedbackCount = baselineFeedbackCount;
         BaselineReviewRating = baselineReviewRating;
+        BaselineLogisticsFactors = baselineLogisticsFactors;
     }
 }

@@ -52,7 +52,6 @@ const ALLOWED_OBSERVED_MARKET_EVENT_SORT_VALUES = new Set([
   '-observedAtUtc'
 ]);
 const OBSERVED_MARKET_EVENT_TABS = new Set<ObservedMarketEventTab>([
-  'all',
   'assumed-orders',
   'new-products',
   'restocks'
@@ -284,7 +283,7 @@ export function toObservedMarketEventRouteQuery(
   state: ObservedMarketEventQueryState
 ): LocationQueryRaw {
   return {
-    tab: state.tab === 'all' ? undefined : state.tab,
+    tab: state.tab === 'assumed-orders' ? undefined : state.tab,
     page: state.page === DEFAULT_PAGE ? undefined : String(state.page),
     pageSize: state.pageSize === DEFAULT_PAGE_SIZE ? undefined : String(state.pageSize),
     search: state.search || undefined,
@@ -361,14 +360,18 @@ function readMinQuantityChange(value: LocationQuery[string]): string {
 }
 
 function readObservedMarketEventTab(value: LocationQuery[string]): ObservedMarketEventTab {
-  const raw = readString(value);
+  const raw = readString(value) || 'assumed-orders';
 
   if (raw === 'stock-changes') {
     return 'restocks';
   }
 
+  if (raw === 'all') {
+    return 'assumed-orders';
+  }
+
   const text = raw as ObservedMarketEventTab;
-  return OBSERVED_MARKET_EVENT_TABS.has(text) ? text : 'all';
+  return OBSERVED_MARKET_EVENT_TABS.has(text) ? text : 'assumed-orders';
 }
 
 function toUtcStartOfDay(value: string): string {

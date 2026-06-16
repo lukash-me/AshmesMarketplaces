@@ -210,6 +210,31 @@ a {
   background: var(--operator-metric-bg);
 }
 
+.app-operator-value-metric {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-operator-value-metric span {
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+  font-size: var(--operator-meta-size);
+  font-weight: 760;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.app-operator-value-metric strong {
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: var(--operator-value-size);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 .app-operator-link,
 .app-operator-link.button,
 .app-operator-link.button--ghost {

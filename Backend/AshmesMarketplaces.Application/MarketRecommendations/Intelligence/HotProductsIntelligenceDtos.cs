@@ -23,6 +23,21 @@ public sealed record HotProductsIntelligenceOptions(
     int? MinProductsForScoring,
     string? Algorithm);
 
+public sealed record MarketProductDeliveryProfileDto(
+    IReadOnlyList<MarketProductDeliveryDestinationDto> Destinations);
+
+public sealed record MarketProductDeliveryDestinationDto(
+    string? RegionKey,
+    string? RegionName,
+    string? DestinationCity,
+    string? DestinationAddress,
+    string? VisibleDeliveryLabel,
+    DateTime? VisibleDeliveryDate,
+    int? DeliveryHours,
+    string? DeliverySourceType,
+    int? TotalQuantityObserved,
+    DateTime? ObservedAtUtc);
+
 public sealed record MarketProductFeatureDto(
     string ProductKey,
     string? WbProductId,
@@ -47,7 +62,8 @@ public sealed record MarketProductFeatureDto(
     string? Description,
     JsonElement? Characteristics,
     int? ImageCount,
-    MarketProductReviewSignalDto? ReviewSignals);
+    MarketProductReviewSignalDto? ReviewSignals,
+    MarketProductDeliveryProfileDto? DeliveryProfile = null);
 
 public sealed record MarketProductReviewSignalDto(
     int ParsedReviewCount,

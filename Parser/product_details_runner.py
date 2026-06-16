@@ -33,6 +33,7 @@ from product_details_contracts import (
     map_product_detail_payload,
 )
 from product_details_manifest import ProductDetailsRunManifest
+from run_scope import parser_run_scope_from_env
 from wb_product_details_client import ProductDetailFetchResult, WbProductDetailsClient
 
 
@@ -339,6 +340,7 @@ def run_product_details(
                 "product_ids": args.product_id or [],
                 "limit": args.limit,
                 "source_request_family": SOURCE_REQUEST_FAMILY,
+                **parser_run_scope_from_env(),
             },
             marketplace=args.marketplace,
             source_request_family=SOURCE_REQUEST_FAMILY,

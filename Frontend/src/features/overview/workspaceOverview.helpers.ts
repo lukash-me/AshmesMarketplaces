@@ -159,12 +159,14 @@ export function signalTags(product: WorkspaceOverviewProduct): TagItem[] {
 
 export function similarGroupTitle(group: WorkspaceOverviewSimilarProductGroup): string {
   const titles: Record<string, string> = {
+    duplicate_cards: 'Одинаковые карточки',
     price_disadvantage: 'Дешевле',
     position_disadvantage: 'Выше в выдаче',
     review_count_disadvantage: 'Больше отзывов',
     rating_disadvantage: 'Оценка выше',
     stock_disadvantage: 'Остаток выше',
-    weak_competitor_cards: 'Слабые похожие'
+    weak_competitor_cards: 'Слабые похожие',
+    similar_faster_region_delivery: 'Похожие доставляют быстрее'
   };
 
   return titles[group.key] ?? group.title;
@@ -175,6 +177,14 @@ export function similarGroupItemTags(
   item: WorkspaceOverviewSimilarProductGroupItem,
   groupKey: string
 ): TagItem[] {
+  if (groupKey === 'duplicate_cards') {
+    return [{
+      key: 'duplicate',
+      label: 'Одинаковая карточка',
+      tone: 'warning'
+    }];
+  }
+
   if (groupKey === 'weak_competitor_cards') {
     const facts = item.tags.length > 0 ? item.tags : item.facts;
     return facts.length > 0
@@ -186,7 +196,28 @@ export function similarGroupItemTags(
       : [{ key: 'weak', label: 'Слабые параметры', tone: 'negative' }];
   }
 
+  if (groupKey === 'similar_faster_region_delivery') {
+    const facts = item.tags.length > 0 ? item.tags : item.facts;
+    return facts.length > 0
+      ? [{
+          key: 'delivery',
+          label: compactDeliveryFacts(facts),
+          tone: 'positive'
+        }]
+      : [{ key: 'delivery', label: 'Похожая доставляется быстрее', tone: 'positive' }];
+  }
+
   return comparisonTags(product, item.product);
+}
+
+function compactDeliveryFacts(facts: string[]): string {
+  const lines = facts
+    .map((fact) => fact.replace(/^Похожая быстрее в\s+/i, '').trim())
+    .filter(Boolean);
+
+  return lines.length > 1
+    ? `Похожие доставляют быстрее:\n  ${lines.join('\n  ')}`
+    : `Похожие доставляют быстрее: ${lines[0]}`;
 }
 
 export function similarGroupTabs(product: WorkspaceOverviewProduct): WorkspaceOverviewSimilarProductGroup[] {
@@ -195,11 +226,13 @@ export function similarGroupTabs(product: WorkspaceOverviewProduct): WorkspaceOv
 
 export function preferredSimilarGroup(groups: WorkspaceOverviewSimilarProductGroup[]): WorkspaceOverviewSimilarProductGroup {
   const priority = [
+    'duplicate_cards',
     'price_disadvantage',
     'position_disadvantage',
     'review_count_disadvantage',
     'rating_disadvantage',
     'stock_disadvantage',
+    'similar_faster_region_delivery',
     'weak_competitor_cards'
   ];
   for (const key of priority) {

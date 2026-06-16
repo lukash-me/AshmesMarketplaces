@@ -7,8 +7,10 @@ import random
 import re
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 try:
     import httpx  # noqa: F401
@@ -37,11 +39,26 @@ from get_token import get_token
 from images_parser import add_images
 from manifest import CategoryResult, RunManifest, get_git_commit, utc_now_iso
 from models import Items
+from run_scope import parser_run_scope_from_env
 from SearchPhraseParser import SearchPhraseParser
 from WbCatalogFetcher import WbCatalogFetcher
 
 
 STATIC_MENU_URL = "https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json"
+
+
+@dataclass(frozen=True)
+class ProductDiscoveryBatch:
+    batch_index: int
+    rows: list[dict[str, Any]]
+    parent_run_dir: Path
+    parent_parser_run_id: str
+
+
+@dataclass(frozen=True)
+class ProductDiscoveryBatchResult:
+    status: str
+    reason: str | None = None
 
 
 def _slug(value: str) -> str:
@@ -67,6 +84,7 @@ def _make_manifest(config: ParserConfig, run_dir: Path, parser_run_id: str) -> R
             "parent_category": config.parent_category,
             "subcategory_allowlist": config.subcategory_allowlist,
             "product_fetch_mode": config.product_fetch_mode,
+            **parser_run_scope_from_env(),
         },
     )
     manifest.set_output_files(
@@ -214,7 +232,19 @@ def _final_status(manifest: RunManifest, interrupted: bool) -> str:
     return "succeeded"
 
 
-def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
+def _run_parser_core(
+    config: ParserConfig,
+    *,
+    smoke_only: bool = False,
+    streaming_batch_size: int | None = None,
+    batch_handler: Callable[[ProductDiscoveryBatch], ProductDiscoveryBatchResult | None] | None = None,
+    resume_seen_product_ids: set[str] | None = None,
+) -> Path:
+    if streaming_batch_size is not None and streaming_batch_size <= 0:
+        raise ValueError("streaming_batch_size must be positive.")
+    if streaming_batch_size is not None and batch_handler is None:
+        raise ValueError("batch_handler is required for streaming parser runs.")
+
     parser_run_id = _make_run_id()
     run_dir = config.output_base_dir / "runs" / parser_run_id
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -227,7 +257,36 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
 
     rows: list[dict] = []
     seen_keys: set[tuple[str, str]] = set()
+    resume_seen = {str(value) for value in (resume_seen_product_ids or set()) if str(value).strip()}
+    pending_streaming_rows: list[dict[str, Any]] = []
+    streaming_batch_index = 0
+    stop_discovery = False
     interrupted = False
+
+    def flush_streaming_batch() -> bool:
+        nonlocal pending_streaming_rows, streaming_batch_index
+        if streaming_batch_size is None or batch_handler is None or not pending_streaming_rows:
+            return True
+
+        streaming_batch_index += 1
+        batch = ProductDiscoveryBatch(
+            batch_index=streaming_batch_index,
+            rows=list(pending_streaming_rows),
+            parent_run_dir=run_dir,
+            parent_parser_run_id=parser_run_id,
+        )
+        pending_streaming_rows = []
+        result = batch_handler(batch)
+        status = (result.status if result else "staged").strip().lower()
+        if status == "failed" and config.fail_fast:
+            manifest.record_error(
+                phase="streaming_batch",
+                message="Streaming batch handler failed and fail_fast is enabled.",
+                action="stopped",
+                details={"batch_index": streaming_batch_index, "reason": result.reason if result else None},
+            )
+            return False
+        return True
 
     try:
         selected = _selected_subcategories(config)
@@ -317,66 +376,114 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
                     source_category=config.parent_category,
                     source_subcategory=subcategory_name,
                 )
-                results = asyncio.run(fetcher.fetch_all())
+                raw_samples: list[dict] = []
 
-                if config.enable_raw_samples:
-                    _write_raw_samples(run_dir, subcategory_name, results, config.raw_sample_limit)
+                def process_result_batch(result_batch: list[dict]) -> bool:
+                    nonlocal stop_discovery
+                    if config.enable_raw_samples and len(raw_samples) < config.raw_sample_limit:
+                        remaining = config.raw_sample_limit - len(raw_samples)
+                        raw_samples.extend(result_batch[:remaining])
 
-                product_models = []
-                for raw_data in results:
-                    if "products" not in raw_data:
-                        manifest.record_error(
-                            phase="catalog",
+                    product_models = []
+                    for raw_data in result_batch:
+                        if "products" not in raw_data:
+                            manifest.record_error(
+                                phase="catalog",
+                                source_category=config.parent_category,
+                                source_subcategory=subcategory_name,
+                                source_query=source_query,
+                                message="Response without products was skipped.",
+                                action="skipped",
+                            )
+                            continue
+
+                        items_info = Items.model_validate(raw_data)
+                        if items_info.products:
+                            product_models.extend(items_info.products)
+
+                    product_models = add_images(product_models)
+                    if config.include_wb_wallet_prices:
+                        product_models = add_price_with_wb_wallet(product_models)
+
+                    for product in product_models:
+                        if stop_discovery:
+                            return False
+                        if (
+                                config.max_items_per_subcategory
+                                and category_result.total_rows >= config.max_items_per_subcategory):
+                            manifest.record_warning("item_cap")
+                            return False
+
+                        category_result.total_rows += 1
+                        manifest.row_counts["total_rows"] += 1
+                        product_id = str(product.id)
+                        key = (config.marketplace, product_id)
+                        if key in seen_keys:
+                            category_result.duplicate_rows += 1
+                            manifest.row_counts["duplicate_rows"] += 1
+                            continue
+                        if product_id in resume_seen:
+                            seen_keys.add(key)
+                            category_result.duplicate_rows += 1
+                            manifest.row_counts["duplicate_rows"] += 1
+                            continue
+
+                        seen_keys.add(key)
+                        row = product_to_canonical_row(
+                            item=product,
+                            parser_run_id=parser_run_id,
+                            parsed_at_utc=utc_now_iso(),
+                            marketplace=config.marketplace,
                             source_category=config.parent_category,
                             source_subcategory=subcategory_name,
                             source_query=source_query,
-                            message="Response without products was skipped.",
-                            action="skipped",
+                            source_region_dest=config.source_region_dest,
                         )
-                        continue
+                        append_jsonl(products_jsonl, row)
+                        rows.append(row)
+                        category_result.unique_rows += 1
+                        manifest.row_counts["unique_rows"] += 1
+                        if streaming_batch_size is not None:
+                            pending_streaming_rows.append(row)
+                            if len(pending_streaming_rows) >= streaming_batch_size:
+                                logger.info(
+                                    "STREAM DISCOVERY products_seen={} pending_batch={}",
+                                    manifest.row_counts["unique_rows"],
+                                    len(pending_streaming_rows),
+                                )
+                                if not flush_streaming_batch():
+                                    stop_discovery = True
+                                    return False
+                                manifest.write()
 
-                    items_info = Items.model_validate(raw_data)
-                    if items_info.products:
-                        product_models.extend(items_info.products)
+                    if streaming_batch_size is not None:
+                        logger.info(
+                            "STREAM DISCOVERY products_seen={} pending_batch={}",
+                            manifest.row_counts["unique_rows"],
+                            len(pending_streaming_rows),
+                        )
+                        manifest.write()
+                    return True
 
-                product_models = add_images(product_models)
-                if config.include_wb_wallet_prices:
-                    product_models = add_price_with_wb_wallet(product_models)
+                if streaming_batch_size is not None:
+                    async def consume_streaming_batches() -> None:
+                        async for result_batch in fetcher.iter_result_batches():
+                            if not process_result_batch(result_batch):
+                                break
 
-                for product in product_models:
-                    if (
-                            config.max_items_per_subcategory
-                            and category_result.total_rows >= config.max_items_per_subcategory):
-                        manifest.record_warning("item_cap")
-                        break
+                    asyncio.run(consume_streaming_batches())
+                else:
+                    results = asyncio.run(fetcher.fetch_all())
+                    process_result_batch(results)
 
-                    category_result.total_rows += 1
-                    manifest.row_counts["total_rows"] += 1
-                    key = (config.marketplace, str(product.id))
-                    if key in seen_keys:
-                        category_result.duplicate_rows += 1
-                        manifest.row_counts["duplicate_rows"] += 1
-                        continue
-
-                    seen_keys.add(key)
-                    row = product_to_canonical_row(
-                        item=product,
-                        parser_run_id=parser_run_id,
-                        parsed_at_utc=utc_now_iso(),
-                        marketplace=config.marketplace,
-                        source_category=config.parent_category,
-                        source_subcategory=subcategory_name,
-                        source_query=source_query,
-                        source_region_dest=config.source_region_dest,
-                    )
-                    append_jsonl(products_jsonl, row)
-                    rows.append(row)
-                    category_result.unique_rows += 1
-                    manifest.row_counts["unique_rows"] += 1
+                if config.enable_raw_samples and raw_samples:
+                    _write_raw_samples(run_dir, subcategory_name, raw_samples, config.raw_sample_limit)
 
                 category_result.status = "succeeded" if category_result.unique_rows else "partial"
                 manifest.add_category_result(category_result)
                 manifest.write()
+                if stop_discovery:
+                    break
                 time.sleep(random.uniform(config.batch_delay_min_seconds, config.batch_delay_max_seconds))
             except KeyboardInterrupt:
                 interrupted = True
@@ -400,6 +507,7 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
                 if config.fail_fast:
                     break
 
+        flush_streaming_batch()
         write_csv(products_csv, rows)
         if config.include_xlsx:
             write_xlsx(products_xlsx, rows)
@@ -423,6 +531,27 @@ def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
         manifest.write()
 
     return run_dir
+
+
+def run_parser(config: ParserConfig, *, smoke_only: bool = False) -> Path:
+    return _run_parser_core(config, smoke_only=smoke_only)
+
+
+def run_parser_streaming(
+    config: ParserConfig,
+    streaming_batch_size: int,
+    batch_handler: Callable[[ProductDiscoveryBatch], ProductDiscoveryBatchResult | None],
+    *,
+    smoke_only: bool = False,
+    resume_seen_product_ids: set[str] | None = None,
+) -> Path:
+    return _run_parser_core(
+        config,
+        smoke_only=smoke_only,
+        streaming_batch_size=streaming_batch_size,
+        batch_handler=batch_handler,
+        resume_seen_product_ids=resume_seen_product_ids,
+    )
 
 
 def parse_args() -> argparse.Namespace:

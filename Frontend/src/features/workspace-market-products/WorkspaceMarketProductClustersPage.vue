@@ -202,11 +202,13 @@ function responseHasGroup(response: WorkspaceOverview, groupKey: string): boolea
 
 function groupPriority(key: string): number {
   const priority = [
+    'duplicate_cards',
     'price_disadvantage',
     'position_disadvantage',
     'review_count_disadvantage',
     'rating_disadvantage',
     'stock_disadvantage',
+    'similar_faster_region_delivery',
     'weak_competitor_cards'
   ];
   const index = priority.indexOf(key);
@@ -366,7 +368,7 @@ function groupPriority(key: string): number {
                         v-for="tag in similarGroupItemTags(product, item, group.key)"
                         :key="tag.key"
                         class="cluster-tag"
-                        :class="tagClass(tag, 'cluster-tag')"
+                        :class="[tagClass(tag, 'cluster-tag'), tag.label.includes('\n') ? 'cluster-tag--multiline' : '']"
                       >
                         {{ tag.label }}
                       </span>
@@ -614,23 +616,35 @@ function groupPriority(key: string): number {
 
 .cluster-tags {
   display: flex;
-  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-1);
+  gap: 0.35rem;
 }
 
 .cluster-tag {
-  display: inline-flex;
+  display: inline-block;
   width: fit-content;
   max-width: 100%;
+  box-sizing: border-box;
+  align-items: flex-start;
   border: 1px solid var(--operator-border-muted);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--operator-metric-bg);
   color: var(--color-text);
   font-size: var(--operator-meta-size);
   font-weight: 760;
   line-height: 1.25;
-  padding: 0.28rem 0.55rem;
+  overflow-wrap: anywhere;
+  padding: 0.3rem 0.52rem;
+  text-align: left;
+  white-space: pre-line;
+}
+
+.cluster-tag--multiline {
+  border-radius: 4px;
+  padding: 0.38rem 0.58rem;
 }
 
 .cluster-tag--positive {

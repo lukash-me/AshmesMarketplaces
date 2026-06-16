@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
@@ -28,6 +29,7 @@ DEFAULT_MIN_CONFIDENCE = 0.45
 DEFAULT_MIN_PRODUCTS_FOR_SCORING = 20
 MIN_ELIGIBLE_PRODUCTS = 5
 DEFAULT_VALID_FOR_HOURS = 24
+MAX_CLUSTER_SIZE = 30
 
 FACTOR_WEIGHTS = {
     "position": 0.30,
@@ -54,6 +56,12 @@ OPPORTUNITY_FACTOR_WEIGHTS = {
     "good_reviews_weak_card": 0.73,
     "good_reviews_low_stock": 0.73,
     "good_reviews_high_price": 0.72,
+    "seller_stock_slow_central_delivery": 0.76,
+    "top_low_stock_slow_central_delivery": 0.84,
+    "top_slow_cluster_region_delivery": 0.80,
+    "top_slow_central_delivery": 0.78,
+    "peers_slow_region_delivery": 0.72,
+    "faster_than_peers_region_delivery": 0.70,
 }
 
 
@@ -81,6 +89,41 @@ class EligibleProduct:
     observed_range_limit: int | None
     total_quantity: int | None
     source_subcategory: str
+
+
+@dataclass(frozen=True)
+class SkippedProduct:
+    index: int
+    product_key: str | None
+    wb_product_id: str | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class ProductCluster:
+    cluster_id: str
+    products: list[EligibleProduct]
+
+
+@dataclass(frozen=True)
+class ClusterContext:
+    cluster_id: str
+    products: list[EligibleProduct]
+    positions: list[int]
+    prices: list[float]
+    review_counts: list[int]
+    root_counts: dict[str, int]
+    name_counts: dict[str, int]
+    delivery_hours_by_region: dict[str, list[tuple[str, int]]]
+
+
+LOGISTICS_FACTOR_CODES = {
+    "seller_stock_slow_central_delivery",
+    "top_low_stock_slow_central_delivery",
+    "top_slow_central_delivery",
+    "peers_slow_region_delivery",
+    "faster_than_peers_region_delivery",
+}
 
 
 def _utc_now() -> datetime:
@@ -132,7 +175,7 @@ def _selected_review_count(product: MarketProductFeatureDto) -> int | None:
     return max(useful_values) if useful_values else None
 
 
-def _eligible_product(product: MarketProductFeatureDto) -> EligibleProduct | None:
+def _eligible_product_with_skip_reason(product: MarketProductFeatureDto) -> tuple[EligibleProduct | None, str | None]:
     source_category = (product.source_category or "").strip()
     source_subcategory = (product.source_subcategory or "").strip()
     wb_product_id = product.wb_product_id.strip() if product.wb_product_id else None
@@ -141,7 +184,14 @@ def _eligible_product(product: MarketProductFeatureDto) -> EligibleProduct | Non
         product_key = f"wildberries:{wb_product_id}"
 
     if not product_key or not source_category or not source_subcategory:
-        return None
+        missing = []
+        if not product_key:
+            missing.append("product_identity")
+        if not source_category:
+            missing.append("source_category")
+        if not source_subcategory:
+            missing.append("source_subcategory")
+        return None, f"missing_{'_'.join(missing)}"
 
     position = _valid_position(product.position)
     rating = _valid_rating(product.rating)
@@ -161,7 +211,7 @@ def _eligible_product(product: MarketProductFeatureDto) -> EligibleProduct | Non
         )
     )
     if not has_signal:
-        return None
+        return None, "missing_comparable_signals"
 
     return EligibleProduct(
         product=product,
@@ -174,7 +224,12 @@ def _eligible_product(product: MarketProductFeatureDto) -> EligibleProduct | Non
         observed_range_limit=observed_range_limit,
         total_quantity=total_quantity,
         source_subcategory=source_subcategory,
-    )
+    ), None
+
+
+def _eligible_product(product: MarketProductFeatureDto) -> EligibleProduct | None:
+    eligible, _ = _eligible_product_with_skip_reason(product)
+    return eligible
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -461,6 +516,189 @@ def _is_top_visible(item: EligibleProduct, all_positions: list[int]) -> bool:
     return item.position is not None and item.position <= _top_position_limit(item, all_positions)
 
 
+def _cluster_sort_key(item: EligibleProduct) -> tuple[Any, ...]:
+    return (
+        item.source_subcategory.lower(),
+        item.price if item.price is not None else math.inf,
+        item.position if item.position is not None else math.inf,
+        _normalized_name(item.product.name),
+        item.product_key,
+    )
+
+
+def _can_join_cluster(
+    item: EligibleProduct,
+    cluster: ProductCluster,
+    max_cluster_size: int = MAX_CLUSTER_SIZE,
+) -> bool:
+    if len(cluster.products) >= max_cluster_size:
+        return False
+
+    seed = cluster.products[0]
+    if item.source_subcategory != seed.source_subcategory:
+        return False
+
+    if item.price is not None and seed.price is not None:
+        if item.price < seed.price * 0.70 or item.price > seed.price * 1.30:
+            return False
+
+    if item.position is not None and seed.position is not None:
+        if item.position > max(50, seed.position * 2):
+            return False
+
+    return True
+
+
+def build_product_clusters(
+    eligible: list[EligibleProduct],
+    max_cluster_size: int = MAX_CLUSTER_SIZE,
+) -> list[ProductCluster]:
+    clusters: list[ProductCluster] = []
+    for item in sorted(eligible, key=_cluster_sort_key):
+        assigned = False
+        for cluster in clusters:
+            if len(cluster.products) >= max_cluster_size:
+                continue
+            if _can_join_cluster(item, cluster, max_cluster_size):
+                cluster.products.append(item)
+                assigned = True
+                break
+
+        if not assigned:
+            clusters.append(ProductCluster(f"cluster_{len(clusters) + 1:03d}", [item]))
+
+    return clusters
+
+
+def _cluster_context(cluster: ProductCluster) -> ClusterContext:
+    root_counts = Counter(
+        str(item.product.wb_root_id)
+        for item in cluster.products
+        if item.product.wb_root_id
+    )
+    name_counts = Counter(
+        normalized
+        for item in cluster.products
+        if (normalized := _normalized_name(item.product.name))
+    )
+    delivery_hours_by_region: dict[str, list[tuple[str, int]]] = {}
+    for item in cluster.products:
+        for destination in _valid_delivery_destinations(item):
+            key = _destination_key(destination)
+            if not key or destination.delivery_hours is None:
+                continue
+            delivery_hours_by_region.setdefault(key, []).append((item.product_key, int(destination.delivery_hours)))
+
+    return ClusterContext(
+        cluster_id=cluster.cluster_id,
+        products=cluster.products,
+        positions=[item.position for item in cluster.products if item.position is not None],
+        prices=[item.price for item in cluster.products if item.price is not None],
+        review_counts=[item.review_count for item in cluster.products if item.review_count is not None],
+        root_counts=dict(root_counts),
+        name_counts=dict(name_counts),
+        delivery_hours_by_region=delivery_hours_by_region,
+    )
+
+
+def _cluster_peer_review_counts_for_item(item: EligibleProduct, context: ClusterContext) -> list[int]:
+    return [
+        peer.review_count
+        for peer in context.products
+        if peer.product_key != item.product_key and peer.review_count is not None
+    ]
+
+
+def _cluster_peer_delivery_hours_by_region(
+    item: EligibleProduct,
+    context: ClusterContext,
+) -> dict[str, list[int]]:
+    return {
+        key: [hours for product_key, hours in values if product_key != item.product_key]
+        for key, values in context.delivery_hours_by_region.items()
+    }
+
+
+def _cluster_diagnostics_summary(
+    *,
+    total_products: int,
+    clusters: list[ProductCluster],
+    skipped_products: list[SkippedProduct],
+    factor_codes_by_product: dict[str, set[str]],
+) -> dict[str, Any]:
+    assignments = {
+        cluster.cluster_id: [item.product_key for item in cluster.products]
+        for cluster in clusters
+    }
+    seen: Counter[str] = Counter(
+        product_key
+        for product_keys in assignments.values()
+        for product_key in product_keys
+    )
+    duplicate_assignments = [
+        {"productKey": product_key, "count": count}
+        for product_key, count in sorted(seen.items())
+        if count > 1
+    ]
+    cluster_sizes = [len(cluster.products) for cluster in clusters]
+    delivery_products = [
+        item
+        for cluster in clusters
+        for item in cluster.products
+        if _valid_delivery_destinations(item)
+    ]
+    products_with_delivery_tags = [
+        product_key
+        for product_key, codes in factor_codes_by_product.items()
+        if codes & LOGISTICS_FACTOR_CODES
+    ]
+    delivery_without_tags = [
+        item.product_key
+        for item in delivery_products
+        if not (factor_codes_by_product.get(item.product_key, set()) & LOGISTICS_FACTOR_CODES)
+    ]
+
+    warnings: list[dict[str, Any]] = []
+    if duplicate_assignments:
+        warnings.append({"code": "duplicate_cluster_assignment", "items": duplicate_assignments})
+    clusters_over_20 = [
+        {"clusterId": cluster.cluster_id, "size": len(cluster.products)}
+        for cluster in clusters
+        if len(cluster.products) > 20
+    ]
+    if clusters_over_20:
+        warnings.append({"code": "cluster_size_over_20", "items": clusters_over_20})
+    if delivery_without_tags:
+        warnings.append({
+            "code": "delivery_data_without_logistics_tags",
+            "count": len(delivery_without_tags),
+        })
+
+    return {
+        "totalProducts": total_products,
+        "eligibleProducts": sum(cluster_sizes),
+        "totalClusters": len(clusters),
+        "maxClusterSize": max(cluster_sizes, default=0),
+        "clusterSizes": cluster_sizes,
+        "productsAssignedToClusters": assignments,
+        "skippedProducts": [
+            {
+                "index": skipped.index,
+                "productKey": skipped.product_key,
+                "wbProductId": skipped.wb_product_id,
+                "reason": skipped.reason,
+            }
+            for skipped in skipped_products
+        ],
+        "duplicateAssignments": duplicate_assignments,
+        "clustersOver20": clusters_over_20,
+        "productsWithDeliveryLogisticsTags": len(set(products_with_delivery_tags)),
+        "productsWithAllRequiredHeuristicsCalculated": sum(cluster_sizes),
+        "productsWithDeliveryDataWithoutLogisticsTags": len(delivery_without_tags),
+        "warnings": warnings,
+    }
+
+
 def _peer_review_counts_for_item(item: EligibleProduct, all_items: list[EligibleProduct]) -> list[int]:
     counts: list[int] = []
     item_price = item.price
@@ -494,22 +732,363 @@ def _peer_review_counts_for_item(item: EligibleProduct, all_items: list[Eligible
     return counts
 
 
+def _peer_items_for_item(item: EligibleProduct, all_items: list[EligibleProduct]) -> list[EligibleProduct]:
+    peers: list[EligibleProduct] = []
+    item_price = item.price
+    item_position = item.position
+
+    for peer in all_items:
+        if peer.product_key == item.product_key:
+            continue
+        if peer.source_subcategory != item.source_subcategory:
+            continue
+
+        if item_price is not None:
+            if peer.price is None:
+                continue
+            if peer.price < item_price * 0.70 or peer.price > item_price * 1.30:
+                continue
+
+        if item_position is not None:
+            if peer.position is None:
+                continue
+            if peer.position > max(50, item_position * 2):
+                continue
+
+        peers.append(peer)
+
+    return peers
+
+
+def _valid_delivery_destinations(item: EligibleProduct) -> list[Any]:
+    profile = item.product.delivery_profile
+    if profile is None:
+        return []
+
+    destinations: list[Any] = []
+    for destination in profile.destinations:
+        hours = destination.delivery_hours
+        if hours is None or hours <= 0:
+            continue
+        if destination.visible_delivery_date is None:
+            continue
+        if destination.total_quantity_observed is not None and destination.total_quantity_observed <= 0:
+            continue
+        destinations.append(destination)
+    return destinations
+
+
+def _destination_key(destination: Any) -> str:
+    raw = destination.region_key or destination.destination_city or destination.region_name or ""
+    return str(raw).strip().lower()
+
+
+def _destination_region_name(destination: Any) -> str:
+    return (
+        (destination.region_name or "").strip()
+        or (destination.destination_city or "").strip()
+        or (destination.region_key or "").strip()
+        or "регион"
+    )
+
+
+def _central_destination(item: EligibleProduct) -> Any | None:
+    for destination in _valid_delivery_destinations(item):
+        if _is_central_destination(destination):
+            return destination
+    return None
+
+
+def _is_central_destination(destination: Any) -> bool:
+    text = " ".join([
+        destination.region_key or "",
+        destination.region_name or "",
+        destination.destination_city or "",
+    ]).lower()
+    return "central" in text or "моск" in text or "централь" in text
+
+
+def _is_slow_delivery(destination: Any) -> bool:
+    return destination.delivery_hours is not None and destination.delivery_hours > 48
+
+
+def _delivery_value(
+    *,
+    destination: Any,
+    label: str,
+    peer_median_hours: float | None = None,
+    peer_sample_size: int | None = None,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "label": label,
+        "regionKey": destination.region_key,
+        "regionName": _destination_region_name(destination),
+        "destinationCity": destination.destination_city,
+        "destinationAddress": destination.destination_address,
+        "visibleDeliveryLabel": destination.visible_delivery_label,
+        "visibleDeliveryDate": destination.visible_delivery_date.isoformat() if destination.visible_delivery_date else None,
+        "deliveryHours": destination.delivery_hours,
+        "deliverySourceType": destination.delivery_source_type or "unknown",
+        "totalQuantityObserved": destination.total_quantity_observed,
+    }
+    if peer_median_hours is not None:
+        value["peerMedianDeliveryHours"] = round(peer_median_hours)
+    if peer_sample_size is not None:
+        value["peerSampleSize"] = peer_sample_size
+    return value
+
+
+def _delivery_label(destination: Any) -> str:
+    return destination.visible_delivery_label or f"{destination.delivery_hours} ч"
+
+
+def _delivery_days(hours: float | int | None) -> int | None:
+    if hours is None:
+        return None
+    value = float(hours)
+    if not math.isfinite(value) or value <= 0:
+        return None
+    return int(math.ceil(value / 24))
+
+
+def _warehouse_label(destination: Any) -> str:
+    source_type = (destination.delivery_source_type or "").strip().lower()
+    if source_type == "wb_warehouse":
+        return "склада WB"
+    if source_type == "seller_warehouse":
+        return "склада продавца"
+    return ""
+
+
+def _warehouse_phrase(destination: Any) -> str:
+    label = _warehouse_label(destination)
+    return f" со {label}" if label else ""
+
+
+def _delivery_days_text(hours: float | int | None) -> str:
+    days = _delivery_days(hours)
+    return f"{days} д" if days is not None else "нет данных"
+
+
+def _peer_delivery_hours_by_region(item: EligibleProduct, context: ClusterContext) -> dict[str, list[int]]:
+    return _cluster_peer_delivery_hours_by_region(item, context)
+
+
+def _cluster_region_delivery_comparison(
+    item: EligibleProduct,
+    context: ClusterContext,
+) -> tuple[Any, float, int] | None:
+    peer_hours = _peer_delivery_hours_by_region(item, context)
+    if not peer_hours:
+        return None
+
+    comparisons: list[tuple[Any, float, int]] = []
+    for destination in _valid_delivery_destinations(item):
+        key = _destination_key(destination)
+        hours = peer_hours.get(key, [])
+        if len(hours) < 5:
+            continue
+        median_hours = _median_or_none([float(value) for value in hours])
+        if median_hours is None:
+            continue
+        if destination.delivery_hours is None:
+            continue
+        if destination.delivery_hours <= median_hours + 24:
+            continue
+        comparisons.append((destination, median_hours, len(hours)))
+
+    if comparisons:
+        return max(comparisons, key=lambda item: item[0].delivery_hours - item[1])
+    return None
+
+
+def _relevant_slow_delivery_contexts(
+    item: EligibleProduct,
+    context: ClusterContext,
+) -> list[tuple[Any, float | None, int | None]]:
+    peer_hours = _peer_delivery_hours_by_region(item, context)
+    contexts: dict[str, tuple[Any, float | None, int | None]] = {}
+
+    for destination in _valid_delivery_destinations(item):
+        if not _is_slow_delivery(destination):
+            continue
+
+        key = _destination_key(destination)
+        if not key:
+            continue
+
+        hours = peer_hours.get(key, [])
+        peer_median_hours = _median_or_none([float(value) for value in hours]) if len(hours) >= 5 else None
+        peer_sample_size = len(hours) if peer_median_hours is not None else None
+
+        if not _is_central_destination(destination) and peer_sample_size is None:
+            continue
+
+        contexts[key] = (destination, peer_median_hours, peer_sample_size)
+
+    return sorted(
+        contexts.values(),
+        key=lambda context: (
+            0 if _is_central_destination(context[0]) else 1,
+            _destination_region_name(context[0]),
+        ),
+    )
+
+
+def _logistics_opportunity_factors(
+    item: EligibleProduct,
+    context: ClusterContext,
+    top_visible: bool,
+    low_stock: bool,
+) -> list[FactorScore]:
+    factors: list[FactorScore] = []
+    for destination, peer_median_hours, peer_sample_size in _relevant_slow_delivery_contexts(item, context):
+        region = _destination_region_name(destination)
+        if (destination.delivery_source_type or "").strip().lower() == "seller_warehouse":
+            factors.append(FactorScore(
+                code="seller_stock_slow_central_delivery",
+                label=f"Долгая доставка в {region} со склада продавца",
+                value=_delivery_value(
+                    destination=destination,
+                    label=(
+                        f"Долгая доставка в {region} "
+                        f"со склада продавца: {_delivery_days_text(destination.delivery_hours)}"
+                    ),
+                    peer_median_hours=peer_median_hours,
+                    peer_sample_size=peer_sample_size,
+                ),
+                score=76,
+                confidence=0.72,
+                weight=OPPORTUNITY_FACTOR_WEIGHTS["seller_stock_slow_central_delivery"],
+                direction=FactorDirection.NEGATIVE,
+                debug={
+                    "deliveryHours": destination.delivery_hours,
+                    "source": destination.delivery_source_type,
+                    "peerMedianHours": peer_median_hours,
+                    "peerSampleSize": peer_sample_size,
+                },
+            ))
+
+        has_faster_peer_delivery = (
+            peer_median_hours is not None
+            and peer_sample_size is not None
+            and peer_sample_size >= 5
+            and destination.delivery_hours is not None
+            and destination.delivery_hours >= peer_median_hours + 24
+        )
+        if top_visible and has_faster_peer_delivery:
+            factors.append(FactorScore(
+                code="top_slow_central_delivery",
+                label=f"Товар в топе, но доставка в {region} дольше похожих",
+                value=_delivery_value(
+                    destination=destination,
+                    label=(
+                        f"Товар в топе, но доставка в {region} дольше похожих: "
+                        f"{_delivery_days_text(destination.delivery_hours)}{_warehouse_phrase(destination)}"
+                        f" против {_delivery_days_text(peer_median_hours)} у похожих"
+                    ),
+                    peer_median_hours=peer_median_hours,
+                    peer_sample_size=peer_sample_size,
+                ),
+                score=78,
+                confidence=0.74,
+                weight=OPPORTUNITY_FACTOR_WEIGHTS["top_slow_central_delivery"],
+                direction=FactorDirection.NEGATIVE,
+                debug={
+                    "position": item.position,
+                    "deliveryHours": destination.delivery_hours,
+                    "peerMedianHours": peer_median_hours,
+                    "peerSampleSize": peer_sample_size,
+                },
+            ))
+
+        if top_visible and low_stock:
+            factors.append(FactorScore(
+                code="top_low_stock_slow_central_delivery",
+                label=f"Топ, низкий остаток и долгая доставка в {region}",
+                value=_delivery_value(
+                    destination=destination,
+                    label=(
+                        f"Топ, низкий остаток и долгая доставка в {region}: "
+                        f"{_delivery_days_text(destination.delivery_hours)}{_warehouse_phrase(destination)}"
+                    ),
+                    peer_median_hours=peer_median_hours,
+                    peer_sample_size=peer_sample_size,
+                ),
+                score=84,
+                confidence=0.78,
+                weight=OPPORTUNITY_FACTOR_WEIGHTS["top_low_stock_slow_central_delivery"],
+                direction=FactorDirection.NEGATIVE,
+                debug={
+                    "position": item.position,
+                    "stock": item.total_quantity,
+                    "deliveryHours": destination.delivery_hours,
+                    "peerMedianHours": peer_median_hours,
+                    "peerSampleSize": peer_sample_size,
+                },
+            ))
+
+    peer_hours = _peer_delivery_hours_by_region(item, context)
+    for destination in _valid_delivery_destinations(item):
+        key = _destination_key(destination)
+        hours = peer_hours.get(key, [])
+        if len(hours) < 5:
+            continue
+        median_hours = _median_or_none([float(value) for value in hours])
+        if median_hours is None:
+            continue
+
+        region = _destination_region_name(destination)
+        if median_hours > 48:
+            factors.append(FactorScore(
+                code="peers_slow_region_delivery",
+                label=f"Похожие доставляются долго: {region}",
+                value=_delivery_value(
+                    destination=destination,
+                    label=f"Похожие доставляются долго: {region}: медиана около {_delivery_days_text(median_hours)}",
+                    peer_median_hours=median_hours,
+                    peer_sample_size=len(hours),
+                ),
+                score=72,
+                confidence=0.68,
+                weight=OPPORTUNITY_FACTOR_WEIGHTS["peers_slow_region_delivery"],
+                direction=FactorDirection.NEUTRAL,
+                debug={"region": region, "peerMedianHours": median_hours, "peerSampleSize": len(hours)},
+            ))
+
+        if destination.delivery_hours is not None and destination.delivery_hours <= median_hours - 24:
+            factors.append(FactorScore(
+                code="faster_than_peers_region_delivery",
+                label=f"Доставляется быстрее похожих: {region}",
+                value=_delivery_value(
+                    destination=destination,
+                    label=(
+                        f"Доставляется быстрее похожих: {region}: "
+                        f"{_delivery_days_text(destination.delivery_hours)}{_warehouse_phrase(destination)} "
+                        f"против медианы похожих {_delivery_days_text(median_hours)}"
+                    ),
+                    peer_median_hours=median_hours,
+                    peer_sample_size=len(hours),
+                ),
+                score=70,
+                confidence=0.66,
+                weight=OPPORTUNITY_FACTOR_WEIGHTS["faster_than_peers_region_delivery"],
+                direction=FactorDirection.POSITIVE,
+                debug={"region": region, "deliveryHours": destination.delivery_hours, "peerMedianHours": median_hours},
+            ))
+
+    return factors
+
+
 def _opportunity_factors(
     *,
     item: EligibleProduct,
-    all_positions: list[int],
-    all_prices: list[float],
-    all_review_counts: list[int],
-    all_items: list[EligibleProduct],
-    subcategory_prices: list[float],
-    subcategory_review_counts: list[int],
+    cluster_context: ClusterContext,
 ) -> list[FactorScore]:
     factors: list[FactorScore] = []
-    top_visible = _is_top_visible(item, all_positions)
-    median_price = _median_or_none(subcategory_prices) or _median_or_none(all_prices)
-    median_reviews = _median_or_none([float(value) for value in subcategory_review_counts]) or _median_or_none(
-        [float(value) for value in all_review_counts]
-    )
+    top_visible = _is_top_visible(item, cluster_context.positions)
+    median_price = _median_or_none(cluster_context.prices)
+    median_reviews = _median_or_none([float(value) for value in cluster_context.review_counts])
 
     weak_rating = item.rating is not None and item.rating < 4.5
     weak_reviews = item.review_count is not None and item.review_count < 25
@@ -727,25 +1306,13 @@ def _score_product(
     *,
     request: HotProductsRequest,
     item: EligibleProduct,
-    all_items: list[EligibleProduct],
-    all_positions: list[int],
-    all_prices: list[float],
-    all_review_counts: list[int],
-    subcategory_prices: list[float],
-    subcategory_review_counts: list[int],
+    factors: list[FactorScore],
+    cluster_context: ClusterContext,
+    cluster_diagnostics_summary: dict[str, Any],
     computed_at: datetime,
     valid_for_hours: int,
     include_debug: bool,
 ) -> HotProductRecommendationDto:
-    factors = _opportunity_factors(
-        item=item,
-        all_positions=all_positions,
-        all_prices=all_prices,
-        all_review_counts=all_review_counts,
-        all_items=all_items,
-        subcategory_prices=subcategory_prices,
-        subcategory_review_counts=subcategory_review_counts,
-    )
     score = 0.0 if not factors else _clamp(max(factor.score for factor in factors), 0, 100)
     confidence = 0.0 if not factors else _clamp(sum(factor.confidence for factor in factors) / len(factors), 0, 1)
     snapshot_hash = _snapshot_hash(request, item)
@@ -765,6 +1332,9 @@ def _score_product(
         debug = {
             "score": round(score, 4),
             "confidence": round(confidence, 4),
+            "clusterId": cluster_context.cluster_id,
+            "clusterSize": len(cluster_context.products),
+            "clusterDiagnosticsSummary": cluster_diagnostics_summary,
             "factorScores": {
                 factor.code: {
                     "score": round(factor.score, 4),
@@ -827,19 +1397,12 @@ def _card_content_value(
 def _opportunity_factors(
     *,
     item: EligibleProduct,
-    all_positions: list[int],
-    all_prices: list[float],
-    all_review_counts: list[int],
-    all_items: list[EligibleProduct],
-    subcategory_prices: list[float],
-    subcategory_review_counts: list[int],
+    cluster_context: ClusterContext,
 ) -> list[FactorScore]:
     factors: list[FactorScore] = []
-    top_visible = _is_top_visible(item, all_positions)
-    median_price = _median_or_none(subcategory_prices) or _median_or_none(all_prices)
-    median_reviews = _median_or_none([float(value) for value in subcategory_review_counts]) or _median_or_none(
-        [float(value) for value in all_review_counts]
-    )
+    top_visible = _is_top_visible(item, cluster_context.positions)
+    median_price = _median_or_none(cluster_context.prices)
+    median_reviews = _median_or_none([float(value) for value in cluster_context.review_counts])
 
     review_signals = item.product.review_signals
     rated_reviews = review_signals.rated_review_count if review_signals else 0
@@ -859,6 +1422,7 @@ def _opportunity_factors(
         or evidence.source_wb_product_id == item.wb_product_id
     ]
     low_stock = item.total_quantity is not None and item.total_quantity <= 5
+    factors.extend(_logistics_opportunity_factors(item, cluster_context, top_visible, low_stock))
 
     description = (item.product.description or "").strip()
     has_description_data = item.product.description is not None
@@ -917,7 +1481,7 @@ def _opportunity_factors(
             },
         ))
 
-    peer_review_counts = _peer_review_counts_for_item(item, all_items)
+    peer_review_counts = _cluster_peer_review_counts_for_item(item, cluster_context)
     peer_median_reviews = _median_or_none([float(value) for value in peer_review_counts])
     if (
         top_visible
@@ -1094,11 +1658,11 @@ def _opportunity_factors(
 
     same_root_count = 0
     if item.product.wb_root_id:
-        same_root_count = sum(1 for peer in all_items if peer.product.wb_root_id == item.product.wb_root_id)
+        same_root_count = cluster_context.root_counts.get(str(item.product.wb_root_id), 0)
     normalized_name = _normalized_name(item.product.name)
     same_name_count = 0
     if normalized_name:
-        same_name_count = sum(1 for peer in all_items if _normalized_name(peer.product.name) == normalized_name)
+        same_name_count = cluster_context.name_counts.get(normalized_name, 0)
     duplicate_count = max(same_root_count, same_name_count)
     if duplicate_count >= 3:
         factors.append(FactorScore(
@@ -1119,25 +1683,13 @@ def _score_product(
     *,
     request: HotProductsRequest,
     item: EligibleProduct,
-    all_items: list[EligibleProduct],
-    all_positions: list[int],
-    all_prices: list[float],
-    all_review_counts: list[int],
-    subcategory_prices: list[float],
-    subcategory_review_counts: list[int],
+    factors: list[FactorScore],
+    cluster_context: ClusterContext,
+    cluster_diagnostics_summary: dict[str, Any],
     computed_at: datetime,
     valid_for_hours: int,
     include_debug: bool,
 ) -> HotProductRecommendationDto:
-    factors = _opportunity_factors(
-        item=item,
-        all_positions=all_positions,
-        all_prices=all_prices,
-        all_review_counts=all_review_counts,
-        all_items=all_items,
-        subcategory_prices=subcategory_prices,
-        subcategory_review_counts=subcategory_review_counts,
-    )
     score = 0.0 if not factors else _clamp(max(factor.score for factor in factors), 0, 100)
     confidence = 0.0 if not factors else _clamp(sum(factor.confidence for factor in factors) / len(factors), 0, 1)
     snapshot_hash = _snapshot_hash(request, item)
@@ -1157,6 +1709,9 @@ def _score_product(
         debug = {
             "score": round(score, 4),
             "confidence": round(confidence, 4),
+            "clusterId": cluster_context.cluster_id,
+            "clusterSize": len(cluster_context.products),
+            "clusterDiagnosticsSummary": cluster_diagnostics_summary,
             "factorScores": {
                 factor.code: {
                     "score": round(factor.score, 4),
@@ -1224,7 +1779,19 @@ class HotProductsService:
                 ],
             )
 
-        eligible = [item for item in (_eligible_product(product) for product in request.products) if item is not None]
+        eligible: list[EligibleProduct] = []
+        skipped_products: list[SkippedProduct] = []
+        for index, product in enumerate(request.products):
+            item, skip_reason = _eligible_product_with_skip_reason(product)
+            if item is None:
+                skipped_products.append(SkippedProduct(
+                    index=index,
+                    product_key=product.product_key,
+                    wb_product_id=product.wb_product_id,
+                    reason=skip_reason or "not_eligible",
+                ))
+            else:
+                eligible.append(item)
         if len(eligible) < MIN_ELIGIBLE_PRODUCTS:
             return self._not_enough_data(
                 request=request,
@@ -1235,39 +1802,51 @@ class HotProductsService:
                 ],
             )
 
-        all_positions = [item.position for item in eligible if item.position is not None]
-        all_prices = [item.price for item in eligible if item.price is not None]
-        all_review_counts = [item.review_count for item in eligible if item.review_count is not None]
         include_debug = self._settings.enable_debug or options.include_debug
         valid_for_hours = min(options.valid_for_hours, DEFAULT_VALID_FOR_HOURS)
+        clusters = build_product_clusters(eligible, MAX_CLUSTER_SIZE)
+        cluster_contexts = {
+            cluster.cluster_id: _cluster_context(cluster)
+            for cluster in clusters
+        }
+        context_by_product = {
+            item.product_key: cluster_contexts[cluster.cluster_id]
+            for cluster in clusters
+            for item in cluster.products
+        }
+        factor_scores_by_product: dict[str, list[FactorScore]] = {}
+        factor_codes_by_product: dict[str, set[str]] = {}
+        for cluster in clusters:
+            context = cluster_contexts[cluster.cluster_id]
+            for item in cluster.products:
+                factors = _opportunity_factors(item=item, cluster_context=context)
+                factor_scores_by_product[item.product_key] = factors
+                factor_codes_by_product[item.product_key] = {factor.code for factor in factors}
+
+        cluster_diagnostics_summary = _cluster_diagnostics_summary(
+            total_products=len(request.products),
+            clusters=clusters,
+            skipped_products=skipped_products,
+            factor_codes_by_product=factor_codes_by_product,
+        )
 
         recommendations: list[HotProductRecommendationDto] = []
-        for item in eligible:
-            subcategory_prices = [
-                peer.price
-                for peer in eligible
-                if peer.source_subcategory == item.source_subcategory and peer.price is not None
-            ]
-            subcategory_review_counts = [
-                peer.review_count
-                for peer in eligible
-                if peer.source_subcategory == item.source_subcategory and peer.review_count is not None
-            ]
-            recommendation = _score_product(
-                request=request,
-                item=item,
-                all_items=eligible,
-                all_positions=all_positions,
-                all_prices=all_prices,
-                all_review_counts=all_review_counts,
-                subcategory_prices=subcategory_prices,
-                subcategory_review_counts=subcategory_review_counts,
-                computed_at=computed_at,
-                valid_for_hours=valid_for_hours,
-                include_debug=include_debug,
-            )
-            if recommendation.score >= MIN_SCORE and recommendation.confidence >= effective_min_confidence:
-                recommendations.append(recommendation)
+        for cluster in clusters:
+            for item in cluster.products:
+                factors = factor_scores_by_product[item.product_key]
+                context = context_by_product[item.product_key]
+                recommendation = _score_product(
+                    request=request,
+                    item=item,
+                    factors=factors,
+                    cluster_context=context,
+                    cluster_diagnostics_summary=cluster_diagnostics_summary,
+                    computed_at=computed_at,
+                    valid_for_hours=valid_for_hours,
+                    include_debug=include_debug,
+                )
+                if recommendation.score >= MIN_SCORE and recommendation.confidence >= effective_min_confidence:
+                    recommendations.append(recommendation)
 
         recommendations.sort(key=lambda item: item.score, reverse=True)
         recommendations = recommendations[: options.max_recommendations]

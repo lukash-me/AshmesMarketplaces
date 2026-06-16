@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 
@@ -25,12 +26,17 @@ class FakeExecutor:
         output_base_dir: Path,
         failures: set[str] | None = None,
         partials: set[str] | None = None,
+        incomplete_steps: set[str] | None = None,
+        events: list[str] | None = None,
     ) -> None:
         self.output_base_dir = output_base_dir
         self.failures = failures or set()
         self.partials = partials or set()
+        self.incomplete_steps = incomplete_steps or set()
+        self.events = events
         self.calls: list[list[str]] = []
-        self.counters = {"rank": 0, "products": 0, "logistics": 0, "reviews": 0}
+        self.envs: list[dict[str, str]] = []
+        self.counters = {"rank": 0, "products": 0, "logistics": 0, "reviews": 0, "product_details": 0}
 
     def __call__(
         self,
@@ -42,7 +48,10 @@ class FakeExecutor:
         output_callback=None,
     ) -> runner.CommandResult:
         self.calls.append(command)
+        self.envs.append(env)
         step = self._step_for(command)
+        if self.events is not None:
+            self.events.append(f"exec:{step}")
         self.counters[step] += 1
         if step in self.failures:
             return runner.CommandResult(exit_code=2, stderr=f"{step} failed")
@@ -79,17 +88,73 @@ class FakeExecutor:
                 "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in product_rows),
                 encoding="utf-8",
             )
+        if step in {"logistics", "reviews", "product_details"} and step not in self.incomplete_steps:
+            self._write_enrichment_artifacts(step=step, command=command, run_dir=run_dir)
 
         marker = {
             "rank": "Rank run directory:",
             "products": "Run directory:",
             "logistics": "Logistics run directory:",
             "reviews": "Review run directory:",
+            "product_details": "Product details run directory:",
         }[step]
         output = f"{marker} {run_dir}"
         if output_callback:
             output_callback(output)
         return runner.CommandResult(exit_code=0, stdout=output + "\n")
+
+    @staticmethod
+    def _products_run_dir(command: list[str]) -> Path | None:
+        if "--products-run-dir" not in command:
+            return None
+        return Path(command[command.index("--products-run-dir") + 1])
+
+    def _input_product_rows(self, command: list[str]) -> list[dict[str, Any]]:
+        product_run_dir = self._products_run_dir(command)
+        if product_run_dir is None:
+            return []
+        products_jsonl = product_run_dir / "products.jsonl"
+        if not products_jsonl.exists():
+            return []
+        return [json.loads(line) for line in products_jsonl.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def _write_enrichment_artifacts(self, *, step: str, command: list[str], run_dir: Path) -> None:
+        rows = self._input_product_rows(command)
+        if step == "logistics":
+            (run_dir / "logistics_snapshots.jsonl").write_text(
+                "".join(
+                    json.dumps({"wb_product_id": row["wb_product_id"], "status": "succeeded"}, ensure_ascii=False) + "\n"
+                    for row in rows
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "warehouse_availability.jsonl").write_text("", encoding="utf-8")
+        elif step == "reviews":
+            root_ids = sorted({str(row["wb_root_id"]) for row in rows if row.get("wb_root_id")})
+            (run_dir / "review_fetch_results.jsonl").write_text(
+                "".join(
+                    json.dumps({"source_wb_root_id": root_id, "status": "empty"}, ensure_ascii=False) + "\n"
+                    for root_id in root_ids
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "reviews.jsonl").write_text("", encoding="utf-8")
+            (run_dir / "review_replies.jsonl").write_text("", encoding="utf-8")
+        elif step == "product_details":
+            (run_dir / "product_detail_fetch_results.jsonl").write_text(
+                "".join(
+                    json.dumps({"wb_product_id": row["wb_product_id"], "status": "succeeded"}, ensure_ascii=False) + "\n"
+                    for row in rows
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "product_details.jsonl").write_text(
+                "".join(
+                    json.dumps({"wb_product_id": row["wb_product_id"], "status": "succeeded"}, ensure_ascii=False) + "\n"
+                    for row in rows
+                ),
+                encoding="utf-8",
+            )
 
     @staticmethod
     def _step_for(command: list[str]) -> str:
@@ -100,13 +165,22 @@ class FakeExecutor:
             return "logistics"
         if "reviews_runner.py" in joined:
             return "reviews"
+        if "product_details_runner.py" in joined:
+            return "product_details"
         return "products"
 
 
 class FakeStagingExecutor:
-    def __init__(self, *, failure_kind: str | None = None, leak_secret: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        failure_kind: str | None = None,
+        leak_secret: str | None = None,
+        events: list[str] | None = None,
+    ) -> None:
         self.failure_kind = failure_kind
         self.leak_secret = leak_secret
+        self.events = events
         self.calls: list[list[str]] = []
 
     def __call__(
@@ -120,6 +194,8 @@ class FakeStagingExecutor:
     ) -> runner.CommandResult:
         self.calls.append(command)
         kind = self._kind_for(command)
+        if self.events is not None:
+            self.events.append(f"stage:{kind}")
         if self.failure_kind == kind:
             return runner.CommandResult(
                 exit_code=1,
@@ -142,6 +218,10 @@ class FakeStagingExecutor:
 
     @staticmethod
     def _kind_for(command: list[str]) -> str:
+        if "stage-complete-batch" in command:
+            return "complete_batch"
+        if "complete-parser-pipeline" in command:
+            return "complete_pipeline"
         for item in command:
             if item == "stage-ranks":
                 return "ranks"
@@ -201,6 +281,437 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         config_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         return runner.PipelineConfig.load(config_path)
 
+    def test_batch_product_run_dirs_split_products_and_rewrite_batch_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            product_run_dir = temp_dir / "runs" / "wb_products_parent"
+            product_run_dir.mkdir(parents=True)
+            source_rows = [
+                {
+                    "schema_version": 1,
+                    "marketplace": "wildberries",
+                    "parser_run_id": "wb_products_parent",
+                    "parsed_at_utc": "2026-06-15T10:00:00Z",
+                    "wb_product_id": str(1000 + index),
+                    "wb_root_id": str(9000 + index),
+                    "name": f"Product {index}",
+                }
+                for index in range(250)
+            ]
+            (product_run_dir / "products.jsonl").write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in source_rows),
+                encoding="utf-8",
+            )
+            (product_run_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "parser_run_id": "wb_products_parent",
+                        "started_at_utc": "2026-06-15T10:00:00Z",
+                        "finished_at_utc": "2026-06-15T10:05:00Z",
+                        "status": "succeeded",
+                        "marketplace": "wildberries",
+                        "requested_scope": {"pipeline_run_id": "parent-pipeline"},
+                        "source_region_dest": "12354108",
+                        "row_counts": {"total_rows": 250, "unique_rows": 250, "duplicate_rows": 0},
+                        "category_results": [],
+                        "parser_version": "test",
+                        "config_snapshot": {},
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            batches = runner._create_product_batch_run_dirs(
+                product_run_dir=product_run_dir,
+                batches_dir=temp_dir / "batches",
+                pipeline_run_id="market_refresh_test",
+                batch_size=100,
+                worker_id="worker-a",
+                shard_key="three-niches",
+            )
+            first_manifest = json.loads((batches[0].product_run_dir / "manifest.json").read_text(encoding="utf-8"))
+            first_row = json.loads((batches[0].product_run_dir / "products.jsonl").read_text(encoding="utf-8").splitlines()[0])
+
+        self.assertEqual([batch.size for batch in batches], [100, 100, 50])
+        self.assertEqual([batch.batch_index for batch in batches], [1, 2, 3])
+        self.assertEqual(first_manifest["parser_run_id"], "market_refresh_test_batch_0001_products")
+        self.assertTrue(first_manifest["requested_scope"]["is_complete_card_batch"])
+        self.assertEqual(first_manifest["requested_scope"]["batch_id"], "market_refresh_test:batch:0001")
+        self.assertEqual(first_manifest["requested_scope"]["worker_id"], "worker-a")
+        self.assertEqual(first_row["parser_run_id"], "market_refresh_test_batch_0001_products")
+
+    def test_batch_product_run_dir_uses_batch_timestamp_for_manifest_and_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            parent_manifest = {
+                "schema_version": 1,
+                "parser_run_id": "wb_products_parent",
+                "started_at_utc": "2026-06-15T10:00:00Z",
+                "finished_at_utc": "2026-06-15T10:05:00Z",
+                "status": "succeeded",
+                "marketplace": "wildberries",
+                "requested_scope": {"pipeline_run_id": "parent-pipeline"},
+                "source_region_dest": "12354108",
+                "parser_version": "test",
+                "config_snapshot": {},
+            }
+            rows = [
+                {
+                    "schema_version": 1,
+                    "marketplace": "wildberries",
+                    "parser_run_id": "wb_products_parent",
+                    "parsed_at_utc": "2026-06-15T10:00:01Z",
+                    "wb_product_id": "1001",
+                    "wb_root_id": "5001",
+                    "name": "Product 1",
+                    "source_subcategory": "one",
+                },
+                {
+                    "schema_version": 1,
+                    "marketplace": "wildberries",
+                    "parser_run_id": "wb_products_parent",
+                    "parsed_at_utc": "2026-06-15T10:00:02Z",
+                    "wb_product_id": "1002",
+                    "wb_root_id": "5002",
+                    "name": "Product 2",
+                    "source_subcategory": "one",
+                },
+            ]
+
+            batch = runner._create_product_batch_run_dir_from_rows(
+                parent_manifest=parent_manifest,
+                batch_rows=rows,
+                source_product_run_dir=temp_dir / "parent",
+                batches_dir=temp_dir / "batches",
+                pipeline_run_id="market_refresh_test",
+                batch_index=1,
+                worker_id="worker-a",
+                shard_key="three-niches",
+            )
+            manifest = json.loads((batch.product_run_dir / "manifest.json").read_text(encoding="utf-8"))
+            child_rows = [
+                json.loads(line)
+                for line in (batch.product_run_dir / "products.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+
+        self.assertNotEqual(manifest["started_at_utc"], parent_manifest["started_at_utc"])
+        self.assertEqual(manifest["finished_at_utc"], manifest["started_at_utc"])
+        self.assertEqual({row["parsed_at_utc"] for row in child_rows}, {manifest["started_at_utc"]})
+
+    def test_complete_batch_staging_command_uses_single_batch_dir(self) -> None:
+        command = runner._complete_batch_staging_command(
+            batch_dir=Path("C:/tmp/batches/batch_0001"),
+            connection_string="Host=localhost;Password=secret",
+        )
+
+        self.assertIn("stage-complete-batch", command)
+        self.assertIn("C:/tmp/batches/batch_0001", [part.replace("\\", "/") for part in command])
+        self.assertEqual(command[-2:], ["--connection-string", "Host=localhost;Password=secret"])
+
+    def test_batched_full_enrichment_stages_each_complete_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "product_details": {
+                    "enabled": True,
+                    "limit_products": 2,
+                    "delay_ms": 1,
+                    "timeout_sec": 1,
+                    "retries": 0,
+                },
+            }
+            config.modes = dict(config.payload["modes"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            staging = FakeStagingExecutor()
+
+            def streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 3, "unique_rows": 3, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                rows = [
+                    {"wb_product_id": "1001", "wb_root_id": "5001", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "1002", "wb_root_id": "5002", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "1003", "wb_root_id": "5003", "marketplace": "wildberries", "source_subcategory": "two"},
+                ]
+                (parent_dir / "products.jsonl").write_text(
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                kwargs["batch_handler"](SimpleNamespace(batch_index=1, rows=rows[:2], parent_run_dir=parent_dir))
+                kwargs["batch_handler"](SimpleNamespace(batch_index=2, rows=rows[2:], parent_run_dir=parent_dir))
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+                streaming_product_runner=streaming_runner,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+            first_batch_manifest = json.loads(
+                (
+                    Path(manifest["batching"]["batches"][0]["batch_dir"])
+                    / "batch_manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            [fake._step_for(command) for command in fake.calls],
+            [
+                "rank",
+                "logistics",
+                "reviews",
+                "product_details",
+                "logistics",
+                "reviews",
+                "product_details",
+            ],
+        )
+        self.assertEqual(
+            [FakeStagingExecutor._kind_for(command) for command in staging.calls],
+            ["ranks", "complete_batch", "complete_batch", "complete_pipeline"],
+        )
+        self.assertEqual(manifest["batching"]["total_batches"], 2)
+        self.assertEqual([batch["status"] for batch in manifest["batching"]["batches"]], ["staged", "staged"])
+        self.assertEqual(manifest["staging"]["status"], "succeeded")
+        self.assertEqual([step["step"] for step in first_batch_manifest["steps"]], ["logistics", "reviews", "product_details"])
+        self.assertTrue(all(step["output_run_dirs"] for step in first_batch_manifest["steps"]))
+
+    def test_batched_full_enrichment_streams_first_batch_before_discovery_finishes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
+            }
+            config.modes = dict(config.payload["modes"])
+            events: list[str] = []
+            fake = FakeExecutor(output_base_dir=config.output_base_dir, events=events)
+            staging = FakeStagingExecutor(events=events)
+
+            def streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "running",
+                    "marketplace": "wildberries",
+                    "requested_scope": {"pipeline_run_id": "stream-parent"},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 0, "unique_rows": 0, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                rows = [
+                    {"wb_product_id": "2001", "wb_root_id": "6001", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "2002", "wb_root_id": "6002", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "2003", "wb_root_id": "6003", "marketplace": "wildberries", "source_subcategory": "two"},
+                ]
+                batch_handler = kwargs["batch_handler"]
+                events.append("discover:batch1")
+                batch_handler(SimpleNamespace(batch_index=1, rows=rows[:2], parent_run_dir=parent_dir))
+                events.append("discover:batch2")
+                batch_handler(SimpleNamespace(batch_index=2, rows=rows[2:], parent_run_dir=parent_dir))
+                parent_manifest["status"] = "succeeded"
+                parent_manifest["row_counts"] = {"total_rows": 3, "unique_rows": 3, "duplicate_rows": 0}
+                (parent_dir / "products.jsonl").write_text(
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+                streaming_product_runner=streaming_runner,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertNotIn("exec:products", events)
+        self.assertLess(events.index("stage:complete_batch"), events.index("discover:batch2"))
+        self.assertEqual(manifest["batching"]["total_batches"], 2)
+        self.assertEqual([batch["status"] for batch in manifest["batching"]["batches"]], ["staged", "staged"])
+
+    def test_batched_full_enrichment_quarantines_incomplete_batch_before_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
+            }
+            config.modes = dict(config.payload["modes"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir, incomplete_steps={"product_details"})
+            staging = FakeStagingExecutor()
+
+            def streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 2, "unique_rows": 2, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                rows = [
+                    {"wb_product_id": "3001", "wb_root_id": "7001", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "3002", "wb_root_id": "7002", "marketplace": "wildberries", "source_subcategory": "one"},
+                ]
+                (parent_dir / "products.jsonl").write_text(
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                kwargs["batch_handler"](SimpleNamespace(batch_index=1, rows=rows, parent_run_dir=parent_dir))
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+                streaming_product_runner=streaming_runner,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "complete_pipeline"])
+        self.assertEqual(manifest["batching"]["batches"][0]["status"], "quarantined")
+        self.assertEqual(manifest["batching"]["quarantined_batches"], 1)
+        self.assertEqual(manifest["batching"]["quarantined_products"], 2)
+
+    def test_batched_full_enrichment_resume_passes_staged_product_ids_to_streaming_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
+            }
+            config.modes = dict(config.payload["modes"])
+
+            def first_streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream_first"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream_first",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 2, "unique_rows": 2, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                rows = [
+                    {"wb_product_id": "4001", "wb_root_id": "8001", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "4002", "wb_root_id": "8002", "marketplace": "wildberries", "source_subcategory": "one"},
+                ]
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                (parent_dir / "products.jsonl").write_text(
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                kwargs["batch_handler"](SimpleNamespace(batch_index=1, rows=rows, parent_run_dir=parent_dir))
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=FakeExecutor(output_base_dir=config.output_base_dir),
+                staging_executor=FakeStagingExecutor(),
+                streaming_product_runner=first_streaming_runner,
+            )
+            seen_on_resume: set[str] = set()
+
+            def resumed_streaming_runner(**kwargs: Any) -> Path:
+                seen_on_resume.update(str(value) for value in kwargs["resume_seen_product_ids"])
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream_resume"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream_resume",
+                    "started_at_utc": "2026-06-15T10:10:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 0, "unique_rows": 0, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                (parent_dir / "products.jsonl").write_text("", encoding="utf-8")
+                return parent_dir
+
+            resumed_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                resume_run_dir=run_dir,
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=FakeExecutor(output_base_dir=config.output_base_dir),
+                staging_executor=FakeStagingExecutor(),
+                streaming_product_runner=resumed_streaming_runner,
+            )
+            manifest = json.loads((resumed_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(seen_on_resume, {"4001", "4002"})
+        self.assertEqual(len(manifest["batching"]["batches"]), 1)
+
     def test_dry_run_writes_planned_commands_without_execution(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
@@ -240,6 +751,30 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             ["stage-ranks", "stage-products", "stage-logistics", "stage-reviews"],
         )
         self.assertEqual(manifest["staging"]["status"], "not_requested")
+
+    def test_test_run_scope_is_passed_to_child_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="smoke",
+                test_run=True,
+                test_label="delivery-profile-100",
+                executor=fake,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(manifest["is_test_run"])
+        self.assertEqual(manifest["test_label"], "delivery-profile-100")
+        self.assertGreater(len(fake.envs), 0)
+        for env in fake.envs:
+            self.assertEqual(env["PARSER_IS_TEST_RUN"], "true")
+            self.assertEqual(env["PARSER_TEST_LABEL"], "delivery-profile-100")
+            self.assertEqual(env["PARSER_RUN_PURPOSE"], "parser_testing")
+            self.assertEqual(env["PARSER_PIPELINE_RUN_ID"], manifest["pipeline_run_id"])
 
     def test_product_failure_blocks_reviews_and_keeps_rank_partial(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

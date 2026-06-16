@@ -620,7 +620,8 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
               <div><dt>Категория</dt><dd>{{ fieldValue(positionSummary.sourceCategory) }}</dd></div>
               <div><dt>Запрос</dt><dd>{{ fieldValue(positionSummary.query) }}</dd></div>
               <div><dt>Подкатегория</dt><dd>{{ fieldValue(positionSummary.sourceSubcategory) }}</dd></div>
-              <div><dt>Обновлено</dt><dd>{{ formatDateTime(positionSummary.observedAtUtc) }}</dd></div>
+              <div><dt>Карточка обновлена</dt><dd>{{ formatDateTime(displayProduct?.parsedAtUtc ?? null) }}</dd></div>
+              <div><dt>Позиция проверена</dt><dd>{{ formatDateTime(positionSummary.observedAtUtc) }}</dd></div>
             </dl>
             <p v-if="positionSummary.state === 'unknown'" class="drawer__empty">Позиция пока не определена для этой карточки.</p>
           </section>

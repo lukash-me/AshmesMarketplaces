@@ -29,6 +29,7 @@ from rank_contracts import (
 )
 from rank_exporters import append_jsonl, append_many_jsonl
 from rank_manifest import RankContextResult, RankRunManifest
+from run_scope import parser_run_scope_from_env
 from wb_rank_fetcher import WbRankFetcher
 
 
@@ -63,6 +64,7 @@ def _make_manifest(config: RankParserConfig, run_dir: Path, parser_run_id: str) 
                 for context in config.contexts
             ],
             "page_size": config.page_size,
+            **parser_run_scope_from_env(),
         },
     )
     manifest.set_output_files(

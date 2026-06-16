@@ -45,6 +45,33 @@ def fixture_products(count: int = 24) -> list[dict]:
     return [product_payload(index) for index in range(count)]
 
 
+def delivery_destination(
+    region_key: str,
+    region_name: str,
+    hours: int | None,
+    *,
+    source_type: str = "wb_warehouse",
+    quantity: int = 30,
+    city: str | None = None,
+) -> dict:
+    return {
+        "regionKey": region_key,
+        "regionName": region_name,
+        "destinationCity": city or region_name,
+        "destinationAddress": f"{city or region_name}, контрольный ПВЗ",
+        "visibleDeliveryLabel": None if hours is None else ("Послезавтра" if hours <= 48 else "19 июня"),
+        "visibleDeliveryDate": None if hours is None else ("2026-06-16T00:00:00Z" if hours <= 48 else "2026-06-19T00:00:00Z"),
+        "deliveryHours": hours,
+        "deliverySourceType": source_type,
+        "totalQuantityObserved": quantity,
+        "observedAtUtc": "2026-06-14T12:00:00Z",
+    }
+
+
+def delivery_profile(destinations: list[dict]) -> dict:
+    return {"destinations": destinations}
+
+
 def hot_products_payload(products: list[dict], options: dict | None = None) -> dict:
     return {
         "requestId": "req-hot-1",
@@ -182,6 +209,127 @@ class RecommendationContractTests(unittest.TestCase):
         self.assertNotIn("products", debug_payload["recommendations"][0]["debug"])
         self.assertNotIn("raw", debug_payload["recommendations"][0]["debug"])
 
+    def test_hot_products_builds_clusters_once_with_max_size_30(self) -> None:
+        products = [
+            product_payload(
+                index,
+                price=1000,
+                walletPrice=1000,
+                priceWithoutDiscount=1200,
+                position=index + 1,
+                observedRangeLimit=120,
+                totalQuantity=20,
+            )
+            for index in range(65)
+        ]
+
+        response = self.post_hot_products(products, {"maxRecommendations": 65, "includeDebug": True})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        first_debug = payload["recommendations"][0]["debug"]
+        diagnostics = first_debug["clusterDiagnosticsSummary"]
+
+        self.assertEqual(diagnostics["totalProducts"], 65)
+        self.assertEqual(diagnostics["eligibleProducts"], 65)
+        self.assertEqual(diagnostics["totalClusters"], 3)
+        self.assertEqual(diagnostics["maxClusterSize"], 30)
+        self.assertEqual(diagnostics["clusterSizes"], [30, 30, 5])
+        self.assertEqual(diagnostics["duplicateAssignments"], [])
+        assigned = diagnostics["productsAssignedToClusters"]
+        assigned_keys = [product_key for product_keys in assigned.values() for product_key in product_keys]
+        self.assertEqual(len(assigned_keys), 65)
+        self.assertEqual(len(set(assigned_keys)), 65)
+        self.assertTrue(all(debugged["debug"]["clusterSize"] <= 30 for debugged in payload["recommendations"]))
+
+    def test_hot_products_single_cluster_for_30_similar_products(self) -> None:
+        products = [
+            product_payload(
+                index,
+                price=1000,
+                walletPrice=1000,
+                priceWithoutDiscount=1200,
+                position=index + 1,
+                observedRangeLimit=100,
+            )
+            for index in range(30)
+        ]
+
+        response = self.post_hot_products(products, {"maxRecommendations": 30, "includeDebug": True})
+
+        self.assertEqual(response.status_code, 200)
+        diagnostics = response.json()["recommendations"][0]["debug"]["clusterDiagnosticsSummary"]
+        self.assertEqual(diagnostics["totalClusters"], 1)
+        self.assertEqual(diagnostics["clusterSizes"], [30])
+
+    def test_hot_products_splits_21_products_when_similarity_groups_differ(self) -> None:
+        products = [
+            product_payload(
+                index,
+                sourceSubcategory="cluster-a" if index < 10 else "cluster-b",
+                price=1000 if index < 10 else 4000,
+                walletPrice=1000 if index < 10 else 4000,
+                priceWithoutDiscount=1200 if index < 10 else 4500,
+                position=index + 1,
+            )
+            for index in range(21)
+        ]
+
+        response = self.post_hot_products(products, {"maxRecommendations": 21, "includeDebug": True})
+
+        self.assertEqual(response.status_code, 200)
+        diagnostics = response.json()["recommendations"][0]["debug"]["clusterDiagnosticsSummary"]
+        self.assertEqual(diagnostics["totalClusters"], 2)
+        self.assertEqual(diagnostics["clusterSizes"], [10, 11])
+        self.assertTrue(all(size <= 30 for size in diagnostics["clusterSizes"]))
+
+    def test_hot_products_reports_skipped_products_with_reasons(self) -> None:
+        products = fixture_products(24)
+        products[23]["productKey"] = None
+        products[23]["wbProductId"] = None
+        products[23]["sourceCategory"] = None
+
+        response = self.post_hot_products(products, {"maxRecommendations": 23, "includeDebug": True})
+
+        self.assertEqual(response.status_code, 200)
+        diagnostics = response.json()["recommendations"][0]["debug"]["clusterDiagnosticsSummary"]
+        self.assertEqual(diagnostics["totalProducts"], 24)
+        self.assertEqual(diagnostics["eligibleProducts"], 23)
+        self.assertEqual(len(diagnostics["skippedProducts"]), 1)
+        self.assertIn("reason", diagnostics["skippedProducts"][0])
+
+    def test_delivery_peer_median_uses_assigned_cluster_not_all_products(self) -> None:
+        products = []
+        for index in range(31):
+            products.append(product_payload(
+                index,
+                price=1000,
+                walletPrice=1000,
+                priceWithoutDiscount=1200,
+                position=index + 1,
+                observedRangeLimit=120,
+                deliveryProfile=delivery_profile([
+                    delivery_destination("central", "Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЂРµРіРёРѕРЅ", 24, city="РњРѕСЃРєРІР°")
+                ]),
+            ))
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЂРµРіРёРѕРЅ", 72, city="РњРѕСЃРєРІР°", source_type="seller_warehouse")
+        ])
+        products[30]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЂРµРіРёРѕРЅ", 120, city="РњРѕСЃРєРІР°")
+        ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 31, "includeDebug": True})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        factor = next(factor for factor in target["factors"] if factor["code"] == "top_slow_central_delivery")
+
+        self.assertEqual(factor["value"]["peerMedianDeliveryHours"], 24)
+        self.assertEqual(factor["value"]["peerSampleSize"], 29)
+        self.assertNotEqual(factor["value"]["peerMedianDeliveryHours"], 120)
+
     def test_factor_labels_are_seller_friendly_and_reason_is_conservative(self) -> None:
         payload = self.post_hot_products(fixture_products(24)).json()
         banned = [
@@ -211,6 +359,12 @@ class RecommendationContractTests(unittest.TestCase):
             "missing_key_specs",
             "low_review_count_top_position",
             "good_reviews_weak_visibility",
+            "seller_stock_slow_central_delivery",
+            "top_low_stock_slow_central_delivery",
+            "top_slow_cluster_region_delivery",
+            "top_slow_central_delivery",
+            "peers_slow_region_delivery",
+            "faster_than_peers_region_delivery",
         }
 
         for recommendation in payload["recommendations"]:
@@ -532,6 +686,223 @@ class RecommendationContractTests(unittest.TestCase):
 
         self.assertNotIn("bad_recent_reviews", codes)
 
+    def test_seller_stock_slow_central_delivery_creates_factor(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination(
+                "central",
+                "Центральный регион",
+                96,
+                source_type="seller_warehouse",
+                city="Москва",
+            )
+        ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        factor = next(factor for factor in target["factors"] if factor["code"] == "seller_stock_slow_central_delivery")
+
+        self.assertEqual(factor["direction"], "negative")
+        self.assertEqual(factor["value"]["regionName"], "Центральный регион")
+        self.assertEqual(factor["value"]["deliveryHours"], 96)
+        self.assertEqual(factor["value"]["deliverySourceType"], "seller_warehouse")
+        self.assertEqual(factor["value"]["label"], "Долгая доставка в Центральный регион со склада продавца: 4 д")
+
+    def test_top_low_stock_slow_central_delivery_creates_factor(self) -> None:
+        products = fixture_products(24)
+        products[0]["totalQuantity"] = 4
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Центральный регион", 96, city="Москва", quantity=4)
+        ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertIn("top_low_stock_slow_central_delivery", codes)
+        self.assertNotIn("top_slow_central_delivery", codes)
+
+    def test_top_slow_central_delivery_requires_peer_comparison(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Центральный регион", 72, city="Москва", source_type="seller_warehouse")
+        ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertIn("seller_stock_slow_central_delivery", codes)
+        self.assertNotIn("top_slow_central_delivery", codes)
+
+    def test_top_slow_central_delivery_requires_peer_median_at_least_24h_faster(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Центральный регион", 72, city="Москва", source_type="seller_warehouse")
+        ])
+        for index in range(1, 8):
+            products[index]["price"] = products[0]["price"] + index
+            products[index]["walletPrice"] = products[0]["walletPrice"] + index
+            products[index]["deliveryProfile"] = delivery_profile([
+                delivery_destination("central", "Центральный регион", 60, city="Москва")
+            ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertIn("seller_stock_slow_central_delivery", codes)
+        self.assertNotIn("top_slow_central_delivery", codes)
+
+    def test_top_slow_central_delivery_compares_against_peer_median(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Центральный регион", 72, city="Москва", source_type="seller_warehouse")
+        ])
+        for index in range(1, 8):
+            products[index]["price"] = products[0]["price"] + index
+            products[index]["walletPrice"] = products[0]["walletPrice"] + index
+            products[index]["deliveryProfile"] = delivery_profile([
+                delivery_destination("central", "Центральный регион", 48, city="Москва")
+            ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        factor = next(factor for factor in target["factors"] if factor["code"] == "top_slow_central_delivery")
+
+        self.assertEqual(factor["value"]["regionName"], "Центральный регион")
+        self.assertEqual(factor["value"]["deliveryHours"], 72)
+        self.assertEqual(factor["value"]["peerMedianDeliveryHours"], 48)
+        self.assertEqual(factor["value"]["peerSampleSize"], 7)
+        self.assertEqual(
+            factor["value"]["label"],
+            "Товар в топе, но доставка в Центральный регион дольше похожих: 3 д со склада продавца против 2 д у похожих",
+        )
+
+    def test_faster_than_peers_region_delivery_creates_factor_with_peer_sample(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Центральный регион", 24, city="Москва")
+        ])
+        for index in range(1, 8):
+            products[index]["price"] = products[0]["price"] + index
+            products[index]["walletPrice"] = products[0]["walletPrice"] + index
+            products[index]["deliveryProfile"] = delivery_profile([
+                delivery_destination("central", "Центральный регион", 96, city="Москва")
+            ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        factor = next(factor for factor in target["factors"] if factor["code"] == "faster_than_peers_region_delivery")
+
+        self.assertEqual(factor["direction"], "positive")
+        self.assertEqual(factor["value"]["regionName"], "Центральный регион")
+        self.assertEqual(factor["value"]["peerSampleSize"], 7)
+        self.assertEqual(factor["value"]["peerMedianDeliveryHours"], 96)
+        self.assertEqual(
+            factor["value"]["label"],
+            "Доставляется быстрее похожих: Центральный регион: 1 д со склада WB против медианы похожих 4 д",
+        )
+
+    def test_peers_slow_region_delivery_label_uses_days_not_hours(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("siberia", "Сибирь", 72, city="Новосибирск")
+        ])
+        for index in range(1, 8):
+            products[index]["price"] = products[0]["price"] + index
+            products[index]["walletPrice"] = products[0]["walletPrice"] + index
+            products[index]["deliveryProfile"] = delivery_profile([
+                delivery_destination("siberia", "Сибирь", 78, city="Новосибирск")
+            ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        factor = next(factor for factor in target["factors"] if factor["code"] == "peers_slow_region_delivery")
+
+        self.assertEqual(factor["value"]["label"], "Похожие доставляются долго: Сибирь: медиана около 4 д")
+
+    def test_top_slow_cluster_region_delivery_requires_peers_to_be_faster(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("south", "Юг", 96, city="Краснодар", source_type="seller_warehouse")
+        ])
+        for index in range(1, 8):
+            products[index]["price"] = products[0]["price"] + index
+            products[index]["walletPrice"] = products[0]["walletPrice"] + index
+            products[index]["deliveryProfile"] = delivery_profile([
+                delivery_destination("south", "Юг", 120, city="Краснодар")
+            ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("top_slow_cluster_region_delivery", codes)
+
+    def test_cluster_region_slow_delivery_uses_broader_regional_factors(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("south", "Юг", 96, city="Краснодар", source_type="seller_warehouse")
+        ])
+        for index in range(1, 8):
+            products[index]["price"] = products[0]["price"] + index
+            products[index]["walletPrice"] = products[0]["walletPrice"] + index
+            products[index]["deliveryProfile"] = delivery_profile([
+                delivery_destination("south", "Юг", 24, city="Краснодар")
+            ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        factors = {factor["code"]: factor for factor in target["factors"]}
+
+        self.assertNotIn("top_slow_cluster_region_delivery", factors)
+        self.assertIn("seller_stock_slow_central_delivery", factors)
+        self.assertIn("top_slow_central_delivery", factors)
+        self.assertEqual(factors["seller_stock_slow_central_delivery"]["value"]["regionName"], "Юг")
+        self.assertEqual(factors["seller_stock_slow_central_delivery"]["value"]["peerMedianDeliveryHours"], 24)
+        self.assertEqual(factors["top_slow_central_delivery"]["value"]["regionName"], "Юг")
+        self.assertEqual(factors["top_slow_central_delivery"]["value"]["peerMedianDeliveryHours"], 24)
+
+    def test_logistics_factors_require_visible_delivery_hours(self) -> None:
+        products = fixture_products(24)
+        products[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination(
+                "central",
+                "Центральный регион",
+                None,
+                source_type="seller_warehouse",
+                city="Москва",
+            )
+        ])
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        target = next(item for item in payload["recommendations"] if item["wbProductId"] == str(products[0]["wbProductId"]))
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertNotIn("seller_stock_slow_central_delivery", codes)
+        self.assertNotIn("top_slow_central_delivery", codes)
+
     def test_low_review_count_top_position_uses_peer_cluster_comparison(self) -> None:
         products = fixture_products(24)
         products[0].update({
@@ -729,6 +1100,131 @@ class RecommendationContractTests(unittest.TestCase):
         text = str(payload).lower()
         for word in ("demand", "profit", "sales", "forecast", "risk"):
             self.assertNotIn(word, text)
+
+    def test_workspace_product_analysis_returns_delivery_comparison_groups(self) -> None:
+        product = product_payload(
+            0,
+            position=8,
+            totalQuantity=12,
+            deliveryProfile=delivery_profile([
+                delivery_destination("central", "Центральный регион", 96, city="Москва")
+            ]),
+        )
+        candidates = fixture_products(8)
+        candidates[0]["deliveryProfile"] = delivery_profile([
+            delivery_destination("central", "Центральный регион", 24, city="Москва")
+        ])
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-delivery-1",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [],
+                    "positionObservations": [],
+                    "stockObservations": [],
+                    "feedbackObservations": [],
+                },
+                "candidates": candidates,
+                "options": {"maxSimilarProducts": 5},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        group_titles = {group["key"]: group["title"] for group in payload["similarProductGroups"]}
+        self.assertIn("similar_faster_region_delivery", group_titles)
+        group = next(group for group in payload["similarProductGroups"] if group["key"] == "similar_faster_region_delivery")
+        self.assertTrue(any("Москва" in " ".join(item["tags"]) for item in group["items"]))
+
+    def test_workspace_product_analysis_groups_duplicate_cards_by_model_size_and_color(self) -> None:
+        product = product_payload(
+            0,
+            productKey="workspace:986542381",
+            wbProductId=986542381,
+            wbRootId=1695553755,
+            name="Коврик для ванной Мечта 40x60 см бежевый",
+            sourceCategory="Товары для дома",
+            sourceSubcategory="Коврики для ванной",
+            walletPrice=540,
+            price=552,
+            totalQuantity=15,
+        )
+        candidates = [
+            product_payload(
+                1,
+                productKey="parser:903892357",
+                wbProductId=903892357,
+                wbRootId=1154363376,
+                name="Коврик для ванной Мечта 40х60 см бежевый",
+                sourceCategory="Товары для дома",
+                sourceSubcategory="Коврики для ванной",
+                walletPrice=503,
+                price=514,
+                totalQuantity=15,
+            ),
+            product_payload(
+                2,
+                productKey="parser:1003841038",
+                wbProductId=1003841038,
+                wbRootId=1838092259,
+                name="Коврик «Мечта», 40×60 см, бежевый",
+                sourceCategory="Товары для дома",
+                sourceSubcategory="Коврики для ванной",
+                walletPrice=544,
+                price=556,
+                totalQuantity=50,
+            ),
+            product_payload(
+                3,
+                productKey="parser:generic-beige",
+                wbProductId=1128361866,
+                name="Коврик для ванной 40х60 см бежевый",
+                sourceCategory="Товары для дома",
+                sourceSubcategory="Коврики для ванной",
+                walletPrice=541,
+                price=552,
+                totalQuantity=15,
+            ),
+            product_payload(
+                4,
+                productKey="parser:bukli-beige",
+                wbProductId=940227640,
+                name="Коврик для ванной Букли длинные бежевый 40х60 см",
+                sourceCategory="Товары для дома",
+                sourceSubcategory="Коврики для ванной",
+                walletPrice=543,
+                price=554,
+                totalQuantity=15,
+            ),
+        ]
+
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-duplicates-1",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [],
+                    "positionObservations": [],
+                    "stockObservations": [],
+                    "feedbackObservations": [],
+                },
+                "candidates": candidates,
+                "options": {"maxSimilarProducts": 10},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        group = next(group for group in payload["similarProductGroups"] if group["key"] == "duplicate_cards")
+        duplicate_keys = {item["productKey"] for item in group["items"]}
+        self.assertEqual(duplicate_keys, {"parser:903892357", "parser:1003841038"})
+        self.assertTrue(all("Одинаковая карточка" in item["tags"] for item in group["items"]))
 
     def test_product_advice_job_generates_job_id_and_request_id_when_missing(self) -> None:
         response = self.client.post(

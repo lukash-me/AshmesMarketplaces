@@ -54,6 +54,23 @@ class QuantityObservationDto(ContractModel):
     total_quantity: int | None = Field(default=None, alias="totalQuantity")
 
 
+class ProductDeliveryDestinationDto(ContractModel):
+    region_key: str | None = Field(default=None, alias="regionKey")
+    region_name: str | None = Field(default=None, alias="regionName")
+    destination_city: str | None = Field(default=None, alias="destinationCity")
+    destination_address: str | None = Field(default=None, alias="destinationAddress")
+    visible_delivery_label: str | None = Field(default=None, alias="visibleDeliveryLabel")
+    visible_delivery_date: datetime | None = Field(default=None, alias="visibleDeliveryDate")
+    delivery_hours: int | None = Field(default=None, alias="deliveryHours")
+    delivery_source_type: str | None = Field(default=None, alias="deliverySourceType")
+    total_quantity_observed: int | None = Field(default=None, alias="totalQuantityObserved")
+    observed_at_utc: datetime | None = Field(default=None, alias="observedAtUtc")
+
+
+class ProductDeliveryProfileDto(ContractModel):
+    destinations: list[ProductDeliveryDestinationDto] = Field(default_factory=list)
+
+
 class MarketProductReviewSignalDto(ContractModel):
     parsed_review_count: int = Field(default=0, alias="parsedReviewCount")
     parsed_reply_count: int = Field(default=0, alias="parsedReplyCount")
@@ -115,6 +132,7 @@ class MarketProductFeatureDto(ContractModel):
     characteristics: dict[str, Any] | list[Any] | None = None
     image_count: int | None = Field(default=None, alias="imageCount")
     review_signals: MarketProductReviewSignalDto | None = Field(default=None, alias="reviewSignals")
+    delivery_profile: ProductDeliveryProfileDto | None = Field(default=None, alias="deliveryProfile")
     history: ProductHistoryDto | None = None
 
 

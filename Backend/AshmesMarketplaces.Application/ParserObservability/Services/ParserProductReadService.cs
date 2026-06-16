@@ -15,6 +15,7 @@ public sealed class ParserProductReadService : IParserProductReadService
     private const string RanksKind = "ranks";
     private const string LogisticsKind = "logistics";
     private const string SucceededStatus = "succeeded";
+    private const string PartialStatus = "partial";
     private const string DefaultAttributionMode = "root_payload";
     private const string PositionStateObserved = "observed";
     private const string PositionStateBeyondObservedRange = "beyondObservedRange";
@@ -23,6 +24,10 @@ public sealed class ParserProductReadService : IParserProductReadService
     private const string WarningWarehouseIdsAreExternalMarketplaceIds = "warehouse_ids_are_external_marketplace_ids";
     private const string WarningLatestProductsAndLogisticsOverlapIsPartial = "latest_products_and_logistics_overlap_is_partial";
     private const string WarningLatestLogisticsRunNotFound = "latest_logistics_run_not_found";
+    private const string MoscowDeliveryDestination = "1259570991";
+    private const string MoscowDeliveryCity = "Москва";
+    private const string MoscowDeliveryLabel = "Москва, ПВЗ WB на улице Зацепа 32";
+    private const string MoscowDeliveryAddress = "г Москва, улица Зацепа 32";
 
     private static readonly ParserProductReviewEvidenceDto EmptyReviewEvidence = new(
         RootFetchCount: 0,
@@ -47,7 +52,8 @@ public sealed class ParserProductReadService : IParserProductReadService
     {
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
-        var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, cancellationToken);
+        var runScope = ParserRunScope.From(query.IncludeTestRuns, query.TestRunsOnly, query.TestLabel);
+        var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, runScope, cancellationToken);
         if (rows is null)
         {
             return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
@@ -55,6 +61,7 @@ public sealed class ParserProductReadService : IParserProductReadService
         }
 
         rows = ApplyFilters(rows, query);
+        rows = await ApplyRequireDeliveryProfileFilterAsync(rows, query, runScope, cancellationToken);
 
         int totalCount;
         List<ParserProductRow> pageRows;
@@ -65,6 +72,7 @@ public sealed class ParserProductReadService : IParserProductReadService
                 page,
                 pageSize,
                 query.Sort!.Trim().StartsWith("-", StringComparison.Ordinal),
+                runScope,
                 cancellationToken);
         }
         else
@@ -77,7 +85,7 @@ public sealed class ParserProductReadService : IParserProductReadService
                 .ToListAsync(cancellationToken);
         }
 
-        var evidence = await LoadEvidenceAsync(pageRows, includeLogisticsDetail: false, cancellationToken);
+        var evidence = await LoadEvidenceAsync(pageRows, includeLogisticsDetail: false, runScope, cancellationToken);
         var items = pageRows
             .Select(row => MapToListItem(row, evidence))
             .ToList();
@@ -90,7 +98,8 @@ public sealed class ParserProductReadService : IParserProductReadService
         ParserProductFilterOptionsQuery query,
         CancellationToken cancellationToken)
     {
-        var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, cancellationToken);
+        var runScope = ParserRunScope.From(query.IncludeTestRuns, query.TestRunsOnly, query.TestLabel);
+        var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, runScope, cancellationToken);
         if (rows is null)
             return ServiceResult<ParserProductFilterOptionsDto>.Success(EmptyFilterOptions());
 
@@ -121,8 +130,9 @@ public sealed class ParserProductReadService : IParserProductReadService
         ParserProductLogisticsSummaryQuery query,
         CancellationToken cancellationToken)
     {
-        var productRunId = await ResolveEffectiveProductRunIdAsync(query.ParserRunId, cancellationToken);
-        var latestLogisticsRunId = await ResolveLatestParserRunIdAsync(LogisticsKind, cancellationToken);
+        var runScope = ParserRunScope.From(query.IncludeTestRuns, query.TestRunsOnly, query.TestLabel);
+        var productRunId = await ResolveEffectiveProductRunIdAsync(query.ParserRunId, runScope, cancellationToken);
+        var latestLogisticsRunId = await ResolveLatestParserRunIdAsync(LogisticsKind, runScope, cancellationToken);
 
         if (productRunId is null)
         {
@@ -132,7 +142,8 @@ public sealed class ParserProductReadService : IParserProductReadService
                     logisticsRunId: latestLogisticsRunId,
                     query,
                     productsTotal: 0,
-                    observations: []));
+                    observations: [],
+                    destinationSummaries: []));
         }
 
         var rows = _dbContext.ParserProductRows
@@ -149,10 +160,15 @@ public sealed class ParserProductReadService : IParserProductReadService
                     latestLogisticsRunId,
                     query,
                     products.Count,
-                    observations: []));
+                    observations: [],
+                    destinationSummaries: []));
         }
 
         var observations = await LoadSelectedLogisticsObservationsAsync(
+            products,
+            latestLogisticsRunId,
+            cancellationToken);
+        var destinationSummaries = await LoadLogisticsDestinationSummariesAsync(
             products,
             latestLogisticsRunId,
             cancellationToken);
@@ -163,7 +179,8 @@ public sealed class ParserProductReadService : IParserProductReadService
                 latestLogisticsRunId,
                 query,
                 products.Count,
-                observations));
+                observations,
+                destinationSummaries));
     }
 
     public async Task<ServiceResult<ParserProductDetailDto>> GetByIdAsync(
@@ -183,7 +200,8 @@ public sealed class ParserProductReadService : IParserProductReadService
         var sourceFile = await _dbContext.ParserFiles
             .AsNoTracking()
             .FirstAsync(x => x.Id == row.IdParserFile, cancellationToken);
-        var evidence = await LoadEvidenceAsync([row], includeLogisticsDetail: true, cancellationToken);
+        var runScope = await LoadScopeForParserRunAsync(row.ParserRunId, cancellationToken);
+        var evidence = await LoadEvidenceAsync([row], includeLogisticsDetail: true, runScope, cancellationToken);
         var details = await LoadProductDetailAsync(row, cancellationToken);
 
         return ServiceResult<ParserProductDetailDto>.Success(MapToDetail(row, sourceFile, evidence, details));
@@ -191,13 +209,14 @@ public sealed class ParserProductReadService : IParserProductReadService
 
     private async Task<IQueryable<ParserProductRow>?> BuildEffectiveProductRowsAsync(
         string? parserRunId,
+        ParserRunScope runScope,
         CancellationToken cancellationToken)
     {
         var rows = _dbContext.ParserProductRows.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(parserRunId))
             return rows.Where(x => x.ParserRunId == parserRunId.Trim());
 
-        var latestProductRunId = await ResolveEffectiveProductRunIdAsync(parserRunId, cancellationToken);
+        var latestProductRunId = await ResolveEffectiveProductRunIdAsync(parserRunId, runScope, cancellationToken);
         return latestProductRunId is null
             ? null
             : rows.Where(x => x.ParserRunId == latestProductRunId);
@@ -205,11 +224,12 @@ public sealed class ParserProductReadService : IParserProductReadService
 
     private async Task<string?> ResolveEffectiveProductRunIdAsync(
         string? parserRunId,
+        ParserRunScope runScope,
         CancellationToken cancellationToken)
     {
         return !string.IsNullOrWhiteSpace(parserRunId)
             ? parserRunId.Trim()
-            : await ResolveLatestParserRunIdAsync(ProductsKind, cancellationToken);
+            : await ResolveLatestParserRunIdAsync(ProductsKind, runScope, cancellationToken);
     }
 
     private static ParserProductFilterOptionsDto EmptyFilterOptions()
@@ -273,19 +293,66 @@ public sealed class ParserProductReadService : IParserProductReadService
             .ToList();
     }
 
-    private async Task<string?> ResolveLatestParserRunIdAsync(
-        string kind,
+    private async Task<IQueryable<ParserProductRow>> ApplyRequireDeliveryProfileFilterAsync(
+        IQueryable<ParserProductRow> rows,
+        ParserProductListQuery query,
+        ParserRunScope runScope,
         CancellationToken cancellationToken)
     {
-        return await _dbContext.ParserRuns
+        if (!query.RequireDeliveryProfile)
+            return rows;
+
+        var latestLogisticsRunId = await ResolveLatestParserRunIdAsync(LogisticsKind, runScope, cancellationToken);
+        if (latestLogisticsRunId is null)
+            return rows.Where(_ => false);
+
+        return rows.Where(product => _dbContext.ParserLogisticsSnapshotRows
             .AsNoTracking()
-            .Where(x => x.Kind == kind && x.ManifestStatus == SucceededStatus)
+            .Any(logistics =>
+                logistics.ParserRunId == latestLogisticsRunId
+                && logistics.WbProductId == product.WbProductId
+                && logistics.DeliveryProfileKey != null
+                && logistics.DeliveryProfileKey != ""));
+    }
+
+    private async Task<string?> ResolveLatestParserRunIdAsync(
+        string kind,
+        ParserRunScope runScope,
+        CancellationToken cancellationToken)
+    {
+        var candidates = await _dbContext.ParserRuns
+            .AsNoTracking()
+            .Where(x =>
+                x.Kind == kind
+                && (x.ManifestStatus == SucceededStatus
+                    || (kind == ProductsKind && x.ManifestStatus == PartialStatus)))
             .OrderByDescending(x => x.FinishedAtUtc.HasValue)
             .ThenByDescending(x => x.FinishedAtUtc)
             .ThenByDescending(x => x.DateRegisteredUtc)
             .ThenByDescending(x => x.StartedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return candidates
+            .Where(runScope.Matches)
             .Select(x => x.ParserRunId)
-            .FirstOrDefaultAsync(cancellationToken);
+            .FirstOrDefault();
+    }
+
+    private async Task<ParserRunScope> LoadScopeForParserRunAsync(
+        string parserRunId,
+        CancellationToken cancellationToken)
+    {
+        var run = await _dbContext.ParserRuns
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.ParserRunId == parserRunId, cancellationToken);
+
+        if (run is null || !ParserRunScope.IsTestRun(run))
+            return ParserRunScope.Production;
+
+        return new ParserRunScope(
+            IncludeTestRuns: true,
+            TestRunsOnly: true,
+            TestLabel: ParserRunScope.TestLabelOf(run));
     }
 
     private async Task<ParserProductDetailRow?> LoadProductDetailAsync(
@@ -306,12 +373,13 @@ public sealed class ParserProductReadService : IParserProductReadService
     private async Task<ProductEvidenceLookup> LoadEvidenceAsync(
         IReadOnlyList<ParserProductRow> products,
         bool includeLogisticsDetail,
+        ParserRunScope runScope,
         CancellationToken cancellationToken)
     {
         if (products.Count == 0)
             return ProductEvidenceLookup.Empty;
 
-        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, cancellationToken);
+        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, runScope, cancellationToken);
         var ranks = latestRankRunId is null
             ? new Dictionary<Guid, ParserProductRankSummaryDto>()
             : await LoadRankSummariesAsync(products, latestRankRunId, cancellationToken);
@@ -319,11 +387,11 @@ public sealed class ParserProductReadService : IParserProductReadService
             ? BuildUnknownPositions(products)
             : await LoadPositionSummariesAsync(products, latestRankRunId, ranks, cancellationToken);
         var reviews = await LoadReviewEvidenceAsync(products, cancellationToken);
-        var latestLogisticsRunId = await ResolveLatestParserRunIdAsync(LogisticsKind, cancellationToken);
+        var latestLogisticsRunId = await ResolveLatestParserRunIdAsync(LogisticsKind, runScope, cancellationToken);
         var logistics = latestLogisticsRunId is null
             ? ProductLogisticsEvidence.Empty
             : await LoadLogisticsEvidenceAsync(products, latestLogisticsRunId, includeLogisticsDetail, cancellationToken);
-        return new ProductEvidenceLookup(ranks, positions, reviews, logistics.Summaries, logistics.Details);
+        return new ProductEvidenceLookup(ranks, positions, reviews, logistics.Summaries, logistics.Details, logistics.DeliveryProfiles);
     }
 
     private async Task<IReadOnlyDictionary<Guid, ParserProductRankSummaryDto>> LoadRankSummariesAsync(
@@ -591,6 +659,14 @@ public sealed class ParserProductReadService : IParserProductReadService
                 x.ParserRunId,
                 x.ObservedAtUtc,
                 x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryProfileVersion,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationLabel,
+                x.DeliveryDestinationAddress,
+                x.DeliveryDestinationLatitude,
+                x.DeliveryDestinationLongitude,
                 x.WbProductId,
                 x.TotalQuantityObserved,
                 x.QuantityIsCapped,
@@ -600,7 +676,13 @@ public sealed class ParserProductReadService : IParserProductReadService
                 x.ProductTime1Raw,
                 x.ProductTime2Raw,
                 x.ProductDtypeRaw,
-                x.ProductDistRaw))
+                x.ProductDistRaw,
+                x.VisibleDeliveryStatus,
+                x.VisibleDeliveryLabel,
+                x.VisibleDeliveryDate,
+                x.VisibleDeliverySource,
+                x.VisibleDeliveryObservedAtUtc,
+                x.VisibleDeliveryRawPayload))
             .ToListAsync(cancellationToken);
         if (snapshots.Count == 0)
             return ProductLogisticsEvidence.Empty;
@@ -614,6 +696,14 @@ public sealed class ParserProductReadService : IParserProductReadService
                 x.SourceLineNumber,
                 x.ParserRunId,
                 x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryProfileVersion,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationLabel,
+                x.DeliveryDestinationAddress,
+                x.DeliveryDestinationLatitude,
+                x.DeliveryDestinationLongitude,
                 x.WbProductId,
                 x.WarehouseIdOnMp,
                 x.OptionId,
@@ -647,6 +737,9 @@ public sealed class ParserProductReadService : IParserProductReadService
         var details = includeDetails
             ? new Dictionary<Guid, ParserProductLogisticsDetailDto>()
             : new Dictionary<Guid, ParserProductLogisticsDetailDto>();
+        var deliveryProfiles = includeDetails
+            ? new Dictionary<Guid, ParserProductDeliveryProfileDto>()
+            : new Dictionary<Guid, ParserProductDeliveryProfileDto>();
 
         foreach (var product in products)
         {
@@ -674,15 +767,147 @@ public sealed class ParserProductReadService : IParserProductReadService
                 details[product.Id] = new ParserProductLogisticsDetailDto(
                     summary,
                     selected.ProductWhRaw,
+                    selected.DeliveryProfileKey,
+                    selected.DeliveryDestinationName,
+                    selected.DeliveryProfileVersion,
+                    DeliveryDestinationCity(selected.SourceRegionDest, selected.DeliveryDestinationCity, selected.DeliveryDestinationName),
+                    DeliveryDestinationLabel(selected.SourceRegionDest, selected.DeliveryDestinationLabel),
+                    DeliveryDestinationAddress(selected.SourceRegionDest, selected.DeliveryDestinationAddress),
+                    selected.DeliveryDestinationLatitude,
+                    selected.DeliveryDestinationLongitude,
                     selected.ProductTime1Raw,
                     selected.ProductTime2Raw,
                     selected.ProductDtypeRaw,
                     selected.ProductDistRaw,
                     selectedWarehouseRows.Select(MapWarehouseAvailability).ToList());
+                deliveryProfiles[product.Id] = MapDeliveryProfile(
+                    latestLogisticsRunId,
+                    candidates,
+                    warehouseByProductAndDestination);
             }
         }
 
-        return new ProductLogisticsEvidence(summaries, details);
+        return new ProductLogisticsEvidence(summaries, details, deliveryProfiles);
+    }
+
+    private static ParserProductDeliveryProfileDto MapDeliveryProfile(
+        string latestLogisticsRunId,
+        IReadOnlyList<LogisticsSnapshotCandidate> candidates,
+        IReadOnlyDictionary<LogisticsWarehouseKey, List<WarehouseAvailabilityCandidate>> warehouseByProductAndDestination)
+    {
+        var latestByDestination = candidates
+            .GroupBy(x => x.SourceRegionDest)
+            .Select(x => x
+                .OrderByDescending(row => row.ObservedAtUtc)
+                .ThenByDescending(row => row.SourceLineNumber)
+                .First())
+            .OrderBy(x => x.DeliveryProfileKey)
+            .ThenBy(x => x.SourceRegionDest, StringComparer.Ordinal)
+            .ToList();
+        var signals = latestByDestination
+            .Select(snapshot =>
+            {
+                var key = new LogisticsWarehouseKey(snapshot.WbProductId, snapshot.SourceRegionDest);
+                warehouseByProductAndDestination.TryGetValue(key, out var warehouseRows);
+                warehouseRows ??= [];
+                var warehouseCount = warehouseRows
+                    .Select(x => x.WarehouseIdOnMp)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.Ordinal)
+                    .Count();
+                var visibleDelivery = WbVisibleDeliveryCalculator.Calculate(
+                    snapshot.ProductTime1Raw,
+                    snapshot.ProductTime2Raw,
+                    snapshot.ProductDtypeRaw,
+                    snapshot.TotalQuantityObserved,
+                    snapshot.ObservedAtUtc);
+                return new ParserProductDeliveryDestinationSignalDto(
+                    snapshot.SourceRegionDest,
+                    snapshot.DeliveryProfileKey,
+                    snapshot.DeliveryDestinationName,
+                    snapshot.DeliveryProfileVersion,
+                    DeliveryDestinationCity(snapshot.SourceRegionDest, snapshot.DeliveryDestinationCity, snapshot.DeliveryDestinationName),
+                    DeliveryDestinationLabel(snapshot.SourceRegionDest, snapshot.DeliveryDestinationLabel),
+                    DeliveryDestinationAddress(snapshot.SourceRegionDest, snapshot.DeliveryDestinationAddress),
+                    snapshot.DeliveryDestinationLatitude,
+                    snapshot.DeliveryDestinationLongitude,
+                    snapshot.TotalQuantityObserved,
+                    warehouseCount,
+                    snapshot.ProductTime1Raw,
+                    snapshot.ProductTime2Raw,
+                    snapshot.ProductDistRaw,
+                    visibleDelivery.Status,
+                    visibleDelivery.Label,
+                    visibleDelivery.Date,
+                    visibleDelivery.Source,
+                    visibleDelivery.ObservedAtUtc,
+                    visibleDelivery.RawPayload,
+                    snapshot.ObservedAtUtc);
+            })
+            .ToList();
+        var time1Values = signals
+            .Select(x => x.ProductTime1Raw)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .ToList();
+        var warehouseSourceCount = signals.Sum(x => x.WarehouseCount);
+        var locationEstimate = WbDeliveryLocationEstimator.Estimate(signals
+            .Select(x => new WbDeliveryLocationSignal(
+                x.DeliveryDestinationName ?? x.DeliveryDestinationCity ?? x.Destination,
+                x.VisibleDeliveryLabel,
+                DeliveryHoursFrom(x),
+                x.TotalQuantityObserved,
+                x.VisibleDeliveryStatus))
+            .ToList());
+
+        return new ParserProductDeliveryProfileDto(
+            latestLogisticsRunId,
+            signals.Count,
+            warehouseSourceCount,
+            time1Values.Count == 0 ? null : time1Values.Min(),
+            time1Values.Count == 0 ? null : time1Values.Max(),
+            time1Values.Count == 0 ? null : time1Values.Max() - time1Values.Min(),
+            MapLocationEstimate(locationEstimate),
+            signals);
+    }
+
+    private static int? DeliveryHoursFrom(ParserProductDeliveryDestinationSignalDto signal)
+    {
+        if (signal.VisibleDeliveryRawPayload is { ValueKind: JsonValueKind.Object } rawPayload)
+        {
+            if (rawPayload.TryGetProperty("deliveryHours", out var camelCaseHours)
+                && camelCaseHours.TryGetInt32(out var deliveryHours))
+            {
+                return deliveryHours;
+            }
+
+            if (rawPayload.TryGetProperty("delivery_hours", out var snakeCaseHours)
+                && snakeCaseHours.TryGetInt32(out deliveryHours))
+            {
+                return deliveryHours;
+            }
+        }
+
+        return signal.ProductTime1Raw.HasValue && signal.ProductTime2Raw.HasValue
+            ? signal.ProductTime1Raw.Value + signal.ProductTime2Raw.Value
+            : null;
+    }
+
+    private static ParserProductDeliveryLocationEstimateDto MapLocationEstimate(WbDeliveryLocationEstimate estimate)
+    {
+        return new ParserProductDeliveryLocationEstimateDto(
+            estimate.Status,
+            estimate.ZoneKey,
+            estimate.ZoneTitle,
+            estimate.Confidence,
+            estimate.NearestDestinationName,
+            estimate.NearestDeliveryLabel,
+            estimate.NearestDeliveryHours,
+            estimate.SecondDestinationName,
+            estimate.SecondDeliveryHours,
+            estimate.FarthestDestinationName,
+            estimate.DeliverySpreadHours,
+            estimate.Evidence);
     }
 
     private static LogisticsSnapshotCandidate? SelectLogisticsSnapshot(
@@ -697,6 +922,17 @@ public sealed class ParserProductReadService : IParserProductReadService
                 .ToList();
             if (sameDestination.Count > 0)
                 scopedCandidates = sameDestination;
+        }
+
+        if (ReferenceEquals(scopedCandidates, candidates))
+        {
+            var moscowCandidates = candidates
+                .Where(x =>
+                    x.DeliveryProfileKey == "moscow_baseline_v1"
+                    || x.DeliveryProfileKey == "nationwide_v1" && x.DeliveryDestinationName == "Москва")
+                .ToList();
+            if (moscowCandidates.Count > 0)
+                scopedCandidates = moscowCandidates;
         }
 
         return scopedCandidates
@@ -718,9 +954,40 @@ public sealed class ParserProductReadService : IParserProductReadService
             row.QuantitySemantics,
             warehouseCount,
             row.SourceRegionDest,
+            row.DeliveryProfileKey,
+            row.DeliveryDestinationName,
+            row.DeliveryProfileVersion,
+            DeliveryDestinationCity(row.SourceRegionDest, row.DeliveryDestinationCity, row.DeliveryDestinationName),
+            DeliveryDestinationLabel(row.SourceRegionDest, row.DeliveryDestinationLabel),
+            DeliveryDestinationAddress(row.SourceRegionDest, row.DeliveryDestinationAddress),
+            row.DeliveryDestinationLatitude,
+            row.DeliveryDestinationLongitude,
             row.ParserRunId,
             row.ObservedAtUtc,
             hasWarehouseRows);
+    }
+
+    private static string? DeliveryDestinationCity(string sourceRegionDest, string? city, string? destinationName)
+    {
+        if (!string.IsNullOrWhiteSpace(city))
+            return city;
+        if (!string.IsNullOrWhiteSpace(destinationName))
+            return destinationName;
+        return sourceRegionDest == MoscowDeliveryDestination ? MoscowDeliveryCity : null;
+    }
+
+    private static string? DeliveryDestinationLabel(string sourceRegionDest, string? label)
+    {
+        if (!string.IsNullOrWhiteSpace(label))
+            return label;
+        return sourceRegionDest == MoscowDeliveryDestination ? MoscowDeliveryLabel : null;
+    }
+
+    private static string? DeliveryDestinationAddress(string sourceRegionDest, string? address)
+    {
+        if (!string.IsNullOrWhiteSpace(address))
+            return address;
+        return sourceRegionDest == MoscowDeliveryDestination ? MoscowDeliveryAddress : null;
     }
 
     private static string QuantityLabel(
@@ -740,6 +1007,14 @@ public sealed class ParserProductReadService : IParserProductReadService
     {
         return new ParserWarehouseAvailabilityDto(
             row.WarehouseIdOnMp,
+            row.DeliveryProfileKey,
+            row.DeliveryDestinationName,
+            row.DeliveryProfileVersion,
+            DeliveryDestinationCity(row.SourceRegionDest, row.DeliveryDestinationCity, row.DeliveryDestinationName),
+            DeliveryDestinationLabel(row.SourceRegionDest, row.DeliveryDestinationLabel),
+            DeliveryDestinationAddress(row.SourceRegionDest, row.DeliveryDestinationAddress),
+            row.DeliveryDestinationLatitude,
+            row.DeliveryDestinationLongitude,
             row.OptionId,
             row.SizeName,
             row.SizeOrigName,
@@ -781,6 +1056,14 @@ public sealed class ParserProductReadService : IParserProductReadService
                 x.ParserRunId,
                 x.ObservedAtUtc,
                 x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryProfileVersion,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationLabel,
+                x.DeliveryDestinationAddress,
+                x.DeliveryDestinationLatitude,
+                x.DeliveryDestinationLongitude,
                 x.WbProductId,
                 x.TotalQuantityObserved,
                 x.QuantityIsCapped,
@@ -790,7 +1073,13 @@ public sealed class ParserProductReadService : IParserProductReadService
                 x.ProductTime1Raw,
                 x.ProductTime2Raw,
                 x.ProductDtypeRaw,
-                x.ProductDistRaw))
+                x.ProductDistRaw,
+                x.VisibleDeliveryStatus,
+                x.VisibleDeliveryLabel,
+                x.VisibleDeliveryDate,
+                x.VisibleDeliverySource,
+                x.VisibleDeliveryObservedAtUtc,
+                x.VisibleDeliveryRawPayload))
             .ToListAsync(cancellationToken);
         if (snapshots.Count == 0)
             return [];
@@ -804,6 +1093,14 @@ public sealed class ParserProductReadService : IParserProductReadService
                 x.SourceLineNumber,
                 x.ParserRunId,
                 x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryProfileVersion,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationLabel,
+                x.DeliveryDestinationAddress,
+                x.DeliveryDestinationLatitude,
+                x.DeliveryDestinationLongitude,
                 x.WbProductId,
                 x.WarehouseIdOnMp,
                 x.OptionId,
@@ -857,12 +1154,78 @@ public sealed class ParserProductReadService : IParserProductReadService
         return observations;
     }
 
+    private async Task<IReadOnlyList<ParserProductLogisticsDestinationSummaryDto>> LoadLogisticsDestinationSummariesAsync(
+        IReadOnlyList<ParserProductRow> products,
+        string latestLogisticsRunId,
+        CancellationToken cancellationToken)
+    {
+        var productIds = products
+            .Select(x => x.WbProductId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+        if (productIds.Count == 0)
+            return [];
+
+        var snapshots = await _dbContext.ParserLogisticsSnapshotRows
+            .AsNoTracking()
+            .Where(x =>
+                x.ParserRunId == latestLogisticsRunId
+                && productIds.Contains(x.WbProductId))
+            .Select(x => new
+            {
+                x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryProfileVersion,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationLabel,
+                x.DeliveryDestinationAddress,
+                x.DeliveryDestinationLatitude,
+                x.DeliveryDestinationLongitude,
+                x.WbProductId,
+                x.ObservedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return snapshots
+            .GroupBy(x => new
+            {
+                x.SourceRegionDest,
+                x.DeliveryProfileKey,
+                x.DeliveryDestinationName,
+                x.DeliveryProfileVersion,
+                x.DeliveryDestinationCity,
+                x.DeliveryDestinationLabel,
+                x.DeliveryDestinationAddress,
+                x.DeliveryDestinationLatitude,
+                x.DeliveryDestinationLongitude
+            })
+            .OrderBy(x => x.Key.DeliveryProfileKey)
+            .ThenBy(x => x.Key.DeliveryDestinationName)
+            .ThenBy(x => x.Key.SourceRegionDest, StringComparer.Ordinal)
+            .Select(x => new ParserProductLogisticsDestinationSummaryDto(
+                x.Key.SourceRegionDest,
+                x.Key.DeliveryProfileKey,
+                x.Key.DeliveryDestinationName,
+                x.Key.DeliveryProfileVersion,
+                DeliveryDestinationCity(x.Key.SourceRegionDest, x.Key.DeliveryDestinationCity, x.Key.DeliveryDestinationName),
+                DeliveryDestinationLabel(x.Key.SourceRegionDest, x.Key.DeliveryDestinationLabel),
+                DeliveryDestinationAddress(x.Key.SourceRegionDest, x.Key.DeliveryDestinationAddress),
+                x.Key.DeliveryDestinationLatitude,
+                x.Key.DeliveryDestinationLongitude,
+                x.Select(row => row.WbProductId).Distinct(StringComparer.Ordinal).Count(),
+                x.Max(row => row.ObservedAtUtc)))
+            .ToList();
+    }
+
     private static ParserProductLogisticsSummaryAggregateDto BuildLogisticsAggregate(
         string? productRunId,
         string? logisticsRunId,
         ParserProductLogisticsSummaryQuery query,
         int productsTotal,
-        IReadOnlyList<SelectedLogisticsObservation> observations)
+        IReadOnlyList<SelectedLogisticsObservation> observations,
+        IReadOnlyList<ParserProductLogisticsDestinationSummaryDto> destinationSummaries)
     {
         var productsWithLogistics = observations.Count;
         var productsWithoutLogistics = productsTotal - productsWithLogistics;
@@ -888,14 +1251,7 @@ public sealed class ParserProductReadService : IParserProductReadService
         var averageWarehousesPerProduct = productsWithLogistics == 0
             ? 0m
             : RoundMetric((decimal)distinctWarehouseCountSum / productsWithLogistics);
-        var destinations = observations
-            .GroupBy(x => x.Snapshot.SourceRegionDest)
-            .OrderBy(x => x.Key, StringComparer.Ordinal)
-            .Select(x => new ParserProductLogisticsDestinationSummaryDto(
-                x.Key,
-                x.Count(),
-                x.Max(row => row.Snapshot.ObservedAtUtc)))
-            .ToList();
+        var destinations = destinationSummaries;
         var latestObservedAtUtc = observations.Count == 0
             ? (DateTime?)null
             : observations.Max(x => x.Snapshot.ObservedAtUtc);
@@ -1424,6 +1780,7 @@ public sealed class ParserProductReadService : IParserProductReadService
         int page,
         int pageSize,
         bool descending,
+        ParserRunScope runScope,
         CancellationToken cancellationToken)
     {
         var totalCount = await rows.CountAsync(cancellationToken);
@@ -1431,7 +1788,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             return (0, []);
 
         var allRows = await rows.ToListAsync(cancellationToken);
-        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, cancellationToken);
+        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, runScope, cancellationToken);
         var ranks = latestRankRunId is null
             ? new Dictionary<Guid, ParserProductRankSummaryDto>()
             : await LoadRankSummariesAsync(allRows, latestRankRunId, cancellationToken);
@@ -1578,6 +1935,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             evidence.GetPosition(row.Id),
             evidence.GetLogisticsSummary(row.Id),
             evidence.GetLogisticsDetail(row.Id),
+            evidence.GetDeliveryProfile(row.Id),
             Description: details?.Description,
             Characteristics: details?.Characteristics?.RootElement.Clone(),
             GroupedOptions: details?.GroupedOptions?.RootElement.Clone(),
@@ -1599,19 +1957,82 @@ public sealed class ParserProductReadService : IParserProductReadService
             .ToList();
     }
 
+    private sealed record ParserRunScope(
+        bool IncludeTestRuns,
+        bool TestRunsOnly,
+        string? TestLabel)
+    {
+        public static ParserRunScope Production { get; } = new(false, false, null);
+
+        public static ParserRunScope From(bool includeTestRuns, bool testRunsOnly, string? testLabel)
+        {
+            return new ParserRunScope(
+                IncludeTestRuns: includeTestRuns || testRunsOnly,
+                TestRunsOnly: testRunsOnly,
+                TestLabel: string.IsNullOrWhiteSpace(testLabel) ? null : testLabel.Trim());
+        }
+
+        public bool Matches(ParserRun run)
+        {
+            var isTest = IsTestRun(run);
+            if (TestRunsOnly && !isTest)
+                return false;
+
+            if (!IncludeTestRuns && isTest)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(TestLabel)
+                && !string.Equals(TestLabelOf(run), TestLabel, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public static bool IsTestRun(ParserRun run)
+        {
+            var value = RequestedScopeValue(run, "is_test_run");
+            return value?.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.String => bool.TryParse(value.Value.GetString(), out var parsed) && parsed,
+                _ => false
+            };
+        }
+
+        public static string? TestLabelOf(ParserRun run)
+        {
+            var value = RequestedScopeValue(run, "test_label");
+            return value?.ValueKind == JsonValueKind.String ? value.Value.GetString() : null;
+        }
+
+        private static JsonElement? RequestedScopeValue(ParserRun run, string propertyName)
+        {
+            if (run.RequestedScope is null || run.RequestedScope.RootElement.ValueKind != JsonValueKind.Object)
+                return null;
+
+            return run.RequestedScope.RootElement.TryGetProperty(propertyName, out var value)
+                ? value
+                : null;
+        }
+    }
+
     private sealed record ProductEvidenceLookup(
         IReadOnlyDictionary<Guid, ParserProductRankSummaryDto> Ranks,
         IReadOnlyDictionary<Guid, ParserProductPositionDto> Positions,
         IReadOnlyDictionary<Guid, ParserProductReviewEvidenceDto> Reviews,
         IReadOnlyDictionary<Guid, ParserProductLogisticsSummaryDto> LogisticsSummaries,
-        IReadOnlyDictionary<Guid, ParserProductLogisticsDetailDto> LogisticsDetails)
+        IReadOnlyDictionary<Guid, ParserProductLogisticsDetailDto> LogisticsDetails,
+        IReadOnlyDictionary<Guid, ParserProductDeliveryProfileDto> DeliveryProfiles)
     {
         public static ProductEvidenceLookup Empty { get; } = new(
             new Dictionary<Guid, ParserProductRankSummaryDto>(),
             new Dictionary<Guid, ParserProductPositionDto>(),
             new Dictionary<Guid, ParserProductReviewEvidenceDto>(),
             new Dictionary<Guid, ParserProductLogisticsSummaryDto>(),
-            new Dictionary<Guid, ParserProductLogisticsDetailDto>());
+            new Dictionary<Guid, ParserProductLogisticsDetailDto>(),
+            new Dictionary<Guid, ParserProductDeliveryProfileDto>());
 
         public ParserProductRankSummaryDto? GetRank(Guid productId)
         {
@@ -1637,15 +2058,22 @@ public sealed class ParserProductReadService : IParserProductReadService
         {
             return LogisticsDetails.TryGetValue(productId, out var logistics) ? logistics : null;
         }
+
+        public ParserProductDeliveryProfileDto? GetDeliveryProfile(Guid productId)
+        {
+            return DeliveryProfiles.TryGetValue(productId, out var profile) ? profile : null;
+        }
     }
 
     private sealed record ProductLogisticsEvidence(
         IReadOnlyDictionary<Guid, ParserProductLogisticsSummaryDto> Summaries,
-        IReadOnlyDictionary<Guid, ParserProductLogisticsDetailDto> Details)
+        IReadOnlyDictionary<Guid, ParserProductLogisticsDetailDto> Details,
+        IReadOnlyDictionary<Guid, ParserProductDeliveryProfileDto> DeliveryProfiles)
     {
         public static ProductLogisticsEvidence Empty { get; } = new(
             new Dictionary<Guid, ParserProductLogisticsSummaryDto>(),
-            new Dictionary<Guid, ParserProductLogisticsDetailDto>());
+            new Dictionary<Guid, ParserProductLogisticsDetailDto>(),
+            new Dictionary<Guid, ParserProductDeliveryProfileDto>());
     }
 
     private sealed record SelectedLogisticsObservation(
@@ -1666,6 +2094,14 @@ public sealed class ParserProductReadService : IParserProductReadService
         string ParserRunId,
         DateTime ObservedAtUtc,
         string SourceRegionDest,
+        string? DeliveryProfileKey,
+        string? DeliveryDestinationName,
+        string? DeliveryProfileVersion,
+        string? DeliveryDestinationCity,
+        string? DeliveryDestinationLabel,
+        string? DeliveryDestinationAddress,
+        decimal? DeliveryDestinationLatitude,
+        decimal? DeliveryDestinationLongitude,
         string WbProductId,
         int? TotalQuantityObserved,
         bool? QuantityIsCapped,
@@ -1675,12 +2111,26 @@ public sealed class ParserProductReadService : IParserProductReadService
         int? ProductTime1Raw,
         int? ProductTime2Raw,
         long? ProductDtypeRaw,
-        int? ProductDistRaw);
+        int? ProductDistRaw,
+        string? VisibleDeliveryStatus,
+        string? VisibleDeliveryLabel,
+        DateTime? VisibleDeliveryDate,
+        string? VisibleDeliverySource,
+        DateTime? VisibleDeliveryObservedAtUtc,
+        JsonDocument? VisibleDeliveryRawPayload);
 
     private sealed record WarehouseAvailabilityCandidate(
         long SourceLineNumber,
         string ParserRunId,
         string SourceRegionDest,
+        string? DeliveryProfileKey,
+        string? DeliveryDestinationName,
+        string? DeliveryProfileVersion,
+        string? DeliveryDestinationCity,
+        string? DeliveryDestinationLabel,
+        string? DeliveryDestinationAddress,
+        decimal? DeliveryDestinationLatitude,
+        decimal? DeliveryDestinationLongitude,
         string WbProductId,
         string? WarehouseIdOnMp,
         string? OptionId,

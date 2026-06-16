@@ -1,0 +1,270 @@
+{
+  "generatedAtUtc": "2026-06-16T14:53:05.1798108Z",
+  "mode": "confirm",
+  "affectedBatchRuns": 218,
+  "affectedParserOwnedProducts": 19631,
+  "batchRunSamples": [
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0026",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0026_products",
+      "max_parsed_at_utc": "2026-06-15T20:13:45\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T20:13:45\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T20:13:46\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0108",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0108_products",
+      "max_parsed_at_utc": "2026-06-16T00:33:02\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T00:33:02\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T00:33:02\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0106",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0106_products",
+      "max_parsed_at_utc": "2026-06-16T00:27:14\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T00:27:14\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T00:27:14\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0100",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0100_products",
+      "max_parsed_at_utc": "2026-06-16T00:10:33\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T00:10:33\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T00:10:33\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0279",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0279_products",
+      "max_parsed_at_utc": "2026-06-16T08:24:53\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T08:24:53\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T08:24:53\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0177",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0177_products",
+      "max_parsed_at_utc": "2026-06-16T03:41:52\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T03:41:52\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T03:41:52\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0001",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0001_products",
+      "max_parsed_at_utc": "2026-06-15T18:38:51\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T18:38:51\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T18:38:51\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0101",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0101_products",
+      "max_parsed_at_utc": "2026-06-16T00:13:20\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T00:13:20\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T00:13:20\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0002",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0002_products",
+      "max_parsed_at_utc": "2026-06-15T18:42:10\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T18:42:10\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T18:42:10\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0003",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0003_products",
+      "max_parsed_at_utc": "2026-06-15T18:46:18\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T18:46:18\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T18:46:18\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0004",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0004_products",
+      "max_parsed_at_utc": "2026-06-15T18:49:43\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T18:49:43\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T18:49:43\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0005",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0005_products",
+      "max_parsed_at_utc": "2026-06-15T18:53:29\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T18:53:29\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T18:53:29\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0107",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0107_products",
+      "max_parsed_at_utc": "2026-06-16T00:30:09\u002B00:00",
+      "min_parsed_at_utc": "2026-06-16T00:30:09\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-16T00:30:09\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0006",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0006_products",
+      "max_parsed_at_utc": "2026-06-15T18:56:51\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T18:56:51\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T18:56:52\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0007",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0007_products",
+      "max_parsed_at_utc": "2026-06-15T19:00:24\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T19:00:24\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T19:00:24\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0009",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0009_products",
+      "max_parsed_at_utc": "2026-06-15T19:07:06\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T19:07:06\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T19:07:06\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0010",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0010_products",
+      "max_parsed_at_utc": "2026-06-15T19:11:32\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T19:11:15\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T19:11:32\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0011",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0011_products",
+      "max_parsed_at_utc": "2026-06-15T19:15:18\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T19:15:18\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T19:15:18\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0012",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0012_products",
+      "max_parsed_at_utc": "2026-06-15T19:19:30\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T19:19:30\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T19:19:30\u002B00:00"
+    },
+    {
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0013",
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0013_products",
+      "max_parsed_at_utc": "2026-06-15T19:23:46\u002B00:00",
+      "min_parsed_at_utc": "2026-06-15T19:23:46\u002B00:00",
+      "old_started_at_utc": "2026-06-15T18:34:02\u002B00:00",
+      "old_finished_at_utc": "2026-06-15T19:23:46\u002B00:00"
+    }
+  ],
+  "productSamples": [
+    {
+      "id_on_mp": "110669653",
+      "old_date_updated": "2026-06-16T13:26:56.685717\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1144080611",
+      "old_date_updated": "2026-06-16T13:26:56.692584\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1093222591",
+      "old_date_updated": "2026-06-16T13:26:56.687724\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1093299779",
+      "old_date_updated": "2026-06-16T13:26:56.703566\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1126535943",
+      "old_date_updated": "2026-06-16T13:26:56.687563\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1142540469",
+      "old_date_updated": "2026-06-16T13:26:56.703742\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1057483062",
+      "old_date_updated": "2026-06-16T13:26:56.688844\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1067000199",
+      "old_date_updated": "2026-06-16T13:26:56.697989\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1093250306",
+      "old_date_updated": "2026-06-16T13:26:56.695374\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1004468091",
+      "old_date_updated": "2026-06-16T13:26:56.694887\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1035641146",
+      "old_date_updated": "2026-06-16T13:26:56.687394\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1115811059",
+      "old_date_updated": "2026-06-16T13:26:56.703381\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1128361866",
+      "old_date_updated": "2026-06-16T13:26:56.692201\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1131226200",
+      "old_date_updated": "2026-06-16T13:26:56.695647\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1027521244",
+      "old_date_updated": "2026-06-16T13:26:56.689577\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1003841038",
+      "old_date_updated": "2026-06-16T13:26:56.699651\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1004628619",
+      "old_date_updated": "2026-06-16T13:26:56.691401\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1066699731",
+      "old_date_updated": "2026-06-16T13:26:56.692789\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1021593919",
+      "old_date_updated": "2026-06-16T13:26:56.701071\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    },
+    {
+      "id_on_mp": "1144297122",
+      "old_date_updated": "2026-06-16T13:26:56.697862\u002B00:00",
+      "latest_parsed_at_utc": "2026-06-16T13:23:53\u002B00:00"
+    }
+  ]
+}

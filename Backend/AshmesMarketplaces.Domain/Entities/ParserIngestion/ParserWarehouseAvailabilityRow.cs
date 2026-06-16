@@ -20,6 +20,14 @@ public sealed class ParserWarehouseAvailabilityRow : IDisposable
         string sourceEndpoint,
         string requestFingerprint,
         string sourceRegionDest,
+        string? deliveryProfileKey,
+        string? deliveryDestinationName,
+        string? deliveryProfileVersion,
+        string? deliveryDestinationCity,
+        string? deliveryDestinationLabel,
+        string? deliveryDestinationAddress,
+        decimal? deliveryDestinationLatitude,
+        decimal? deliveryDestinationLongitude,
         string? sourceCategory,
         string? sourceSubcategory,
         string? sourceQuery,
@@ -89,6 +97,14 @@ public sealed class ParserWarehouseAvailabilityRow : IDisposable
         SourceEndpoint = sourceEndpoint;
         RequestFingerprint = requestFingerprint;
         SourceRegionDest = sourceRegionDest;
+        DeliveryProfileKey = deliveryProfileKey;
+        DeliveryDestinationName = deliveryDestinationName;
+        DeliveryProfileVersion = deliveryProfileVersion;
+        DeliveryDestinationCity = deliveryDestinationCity;
+        DeliveryDestinationLabel = deliveryDestinationLabel;
+        DeliveryDestinationAddress = deliveryDestinationAddress;
+        DeliveryDestinationLatitude = deliveryDestinationLatitude;
+        DeliveryDestinationLongitude = deliveryDestinationLongitude;
         SourceCategory = sourceCategory;
         SourceSubcategory = sourceSubcategory;
         SourceQuery = sourceQuery;
@@ -131,6 +147,14 @@ public sealed class ParserWarehouseAvailabilityRow : IDisposable
     public string SourceEndpoint { get; private set; } = string.Empty;
     public string RequestFingerprint { get; private set; } = string.Empty;
     public string SourceRegionDest { get; private set; } = string.Empty;
+    public string? DeliveryProfileKey { get; private set; }
+    public string? DeliveryDestinationName { get; private set; }
+    public string? DeliveryProfileVersion { get; private set; }
+    public string? DeliveryDestinationCity { get; private set; }
+    public string? DeliveryDestinationLabel { get; private set; }
+    public string? DeliveryDestinationAddress { get; private set; }
+    public decimal? DeliveryDestinationLatitude { get; private set; }
+    public decimal? DeliveryDestinationLongitude { get; private set; }
     public string? SourceCategory { get; private set; }
     public string? SourceSubcategory { get; private set; }
     public string? SourceQuery { get; private set; }

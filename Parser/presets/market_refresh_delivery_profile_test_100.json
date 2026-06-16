@@ -1,0 +1,73 @@
+{
+  "pipeline_name": "delivery_profile_test_100",
+  "output_base_dir": "E:/AshmesMarketplaces/Parser/output",
+  "defaults": {
+    "fail_fast": false,
+    "ingestion": "disabled"
+  },
+  "modes": {
+    "test_delivery_profile": {
+      "product": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 1800,
+        "env": {
+          "PARSER_PARENT_CATEGORY": "\u0422\u043e\u0432\u0430\u0440\u044b \u0434\u043b\u044f \u0434\u043e\u043c\u0430",
+          "PARSER_SUBCATEGORY_ALLOWLIST": "\u041e\u0440\u0433\u0430\u043d\u0430\u0439\u0437\u0435\u0440\u044b \u0434\u043b\u044f \u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f \u0432\u0435\u0449\u0435\u0439,\u041a\u043e\u0432\u0440\u0438\u043a\u0438 \u0434\u043b\u044f \u0432\u0430\u043d\u043d\u043e\u0439,\u0421\u0432\u0435\u0442\u0438\u043b\u044c\u043d\u0438\u043a\u0438 \u0431\u0440\u0430",
+          "PARSER_PRODUCT_FETCH_MODE": "direct",
+          "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "2",
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "34",
+          "PARSER_INCLUDE_XLSX": "false",
+          "PARSER_MAX_CONCURRENT": "1",
+          "PARSER_BATCH_SIZE": "5",
+          "PARSER_REQUEST_DELAY_MIN_SECONDS": "0.4",
+          "PARSER_REQUEST_DELAY_MAX_SECONDS": "1.0",
+          "PARSER_BATCH_DELAY_MIN_SECONDS": "2",
+          "PARSER_BATCH_DELAY_MAX_SECONDS": "5"
+        }
+      },
+      "rank": {
+        "config": "Parser/presets/home_goods_search_rank_test_100.json",
+        "timeout_seconds": 600,
+        "top_n": 100,
+        "max_pages": 2
+      },
+      "reviews": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 1800,
+        "limit_products": 100,
+        "max_concurrent": 4,
+        "source_subcategories": [
+          "\u041e\u0440\u0433\u0430\u043d\u0430\u0439\u0437\u0435\u0440\u044b \u0434\u043b\u044f \u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f \u0432\u0435\u0449\u0435\u0439",
+          "\u041a\u043e\u0432\u0440\u0438\u043a\u0438 \u0434\u043b\u044f \u0432\u0430\u043d\u043d\u043e\u0439",
+          "\u0421\u0432\u0435\u0442\u0438\u043b\u044c\u043d\u0438\u043a\u0438 \u0431\u0440\u0430"
+        ]
+      },
+      "logistics": {
+        "enabled": true,
+        "limit_products": 100,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 4,
+        "checkpoint_interval": 25,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 1800,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "nationwide_v1"
+      },
+      "product_details": {
+        "enabled": true,
+        "limit_products": 100,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 4,
+        "checkpoint_interval": 25,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 1800
+      }
+    }
+  }
+}

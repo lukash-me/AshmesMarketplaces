@@ -11,6 +11,7 @@ public sealed class MarketRecommendationRun : IDisposable
 
     public MarketRecommendationRun(
         string kind,
+        Guid? idUser,
         string marketplace,
         string? sourceCategory,
         JsonDocument sourceSubcategories,
@@ -75,6 +76,7 @@ public sealed class MarketRecommendationRun : IDisposable
 
         Id = Guid.NewGuid();
         Kind = kind;
+        IdUser = idUser;
         Marketplace = marketplace;
         SourceCategory = sourceCategory;
         SourceSubcategories = sourceSubcategories ?? throw new ArgumentNullException(nameof(sourceSubcategories));
@@ -102,6 +104,7 @@ public sealed class MarketRecommendationRun : IDisposable
 
     public Guid Id { get; private set; }
     public string Kind { get; private set; } = string.Empty;
+    public Guid? IdUser { get; private set; }
     public string Marketplace { get; private set; } = string.Empty;
     public string? SourceCategory { get; private set; }
     public JsonDocument SourceSubcategories { get; private set; } = null!;

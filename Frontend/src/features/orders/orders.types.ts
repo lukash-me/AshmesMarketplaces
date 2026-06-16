@@ -112,7 +112,7 @@ export type ObservedMarketEventType =
   | 'new_product_observed'
   | 'product_missing_in_current';
 
-export type ObservedMarketEventTab = 'all' | 'assumed-orders' | 'new-products' | 'restocks';
+export type ObservedMarketEventTab = 'assumed-orders' | 'new-products' | 'restocks';
 
 export interface ObservedMarketEventItem {
   eventType: ObservedMarketEventType;

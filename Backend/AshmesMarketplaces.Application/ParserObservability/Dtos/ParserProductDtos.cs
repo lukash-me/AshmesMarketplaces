@@ -67,6 +67,7 @@ public sealed record ParserProductDetailDto(
     ParserProductPositionDto? Position,
     ParserProductLogisticsSummaryDto? Logistics,
     ParserProductLogisticsDetailDto? LogisticsDetail,
+    ParserProductDeliveryProfileDto? DeliveryProfile,
     string? Description,
     JsonElement? Characteristics,
     JsonElement? GroupedOptions,
@@ -118,6 +119,14 @@ public sealed record ParserProductLogisticsSummaryDto(
     string? QuantitySemantics,
     int WarehouseCount,
     string? Destination,
+    string? DeliveryProfileKey,
+    string? DeliveryDestinationName,
+    string? DeliveryProfileVersion,
+    string? DeliveryDestinationCity,
+    string? DeliveryDestinationLabel,
+    string? DeliveryDestinationAddress,
+    decimal? DeliveryDestinationLatitude,
+    decimal? DeliveryDestinationLongitude,
     string? LatestLogisticsRunId,
     DateTime? ObservedAtUtc,
     bool HasWarehouseRows);
@@ -125,14 +134,77 @@ public sealed record ParserProductLogisticsSummaryDto(
 public sealed record ParserProductLogisticsDetailDto(
     ParserProductLogisticsSummaryDto Summary,
     string? ProductWhRaw,
+    string? DeliveryProfileKey,
+    string? DeliveryDestinationName,
+    string? DeliveryProfileVersion,
+    string? DeliveryDestinationCity,
+    string? DeliveryDestinationLabel,
+    string? DeliveryDestinationAddress,
+    decimal? DeliveryDestinationLatitude,
+    decimal? DeliveryDestinationLongitude,
     int? ProductTime1Raw,
     int? ProductTime2Raw,
     long? ProductDtypeRaw,
     int? ProductDistRaw,
     IReadOnlyList<ParserWarehouseAvailabilityDto> WarehouseRows);
 
+public sealed record ParserProductDeliveryProfileDto(
+    string? LatestLogisticsRunId,
+    int DestinationCount,
+    int WarehouseSourceCount,
+    int? BestProductTime1Raw,
+    int? WorstProductTime1Raw,
+    int? ProductTime1SpreadRaw,
+    ParserProductDeliveryLocationEstimateDto? LocationEstimate,
+    IReadOnlyList<ParserProductDeliveryDestinationSignalDto> Destinations);
+
+public sealed record ParserProductDeliveryLocationEstimateDto(
+    string Status,
+    string? ZoneKey,
+    string? ZoneTitle,
+    string? Confidence,
+    string? NearestDestinationName,
+    string? NearestDeliveryLabel,
+    int? NearestDeliveryHours,
+    string? SecondDestinationName,
+    int? SecondDeliveryHours,
+    string? FarthestDestinationName,
+    int? DeliverySpreadHours,
+    IReadOnlyList<string> Evidence);
+
+public sealed record ParserProductDeliveryDestinationSignalDto(
+    string Destination,
+    string? DeliveryProfileKey,
+    string? DeliveryDestinationName,
+    string? DeliveryProfileVersion,
+    string? DeliveryDestinationCity,
+    string? DeliveryDestinationLabel,
+    string? DeliveryDestinationAddress,
+    decimal? DeliveryDestinationLatitude,
+    decimal? DeliveryDestinationLongitude,
+    int? TotalQuantityObserved,
+    int WarehouseCount,
+    int? ProductTime1Raw,
+    int? ProductTime2Raw,
+    int? ProductDistRaw,
+    string? VisibleDeliveryStatus,
+    string? VisibleDeliveryLabel,
+    DateTime? VisibleDeliveryDate,
+    string? VisibleDeliverySource,
+    DateTime? VisibleDeliveryObservedAtUtc,
+    JsonElement? VisibleDeliveryRawPayload,
+    DateTime? ObservedAtUtc);
+
 public sealed record ParserWarehouseAvailabilityDto(
     string? WarehouseIdOnMp,
+    string? DeliveryProfileKey,
+    string? DeliveryDestinationName,
+    string? DeliveryProfileVersion,
+    string? DeliveryDestinationCity,
+    string? DeliveryDestinationLabel,
+    string? DeliveryDestinationAddress,
+    decimal? DeliveryDestinationLatitude,
+    decimal? DeliveryDestinationLongitude,
     string? OptionId,
     string? SizeName,
     string? SizeOrigName,
@@ -183,6 +255,14 @@ public sealed record ParserProductQuantityBucketsDto(
 
 public sealed record ParserProductLogisticsDestinationSummaryDto(
     string Destination,
+    string? DeliveryProfileKey,
+    string? DeliveryDestinationName,
+    string? DeliveryProfileVersion,
+    string? DeliveryDestinationCity,
+    string? DeliveryDestinationLabel,
+    string? DeliveryDestinationAddress,
+    decimal? DeliveryDestinationLatitude,
+    decimal? DeliveryDestinationLongitude,
     int ProductsWithLogistics,
     DateTime? LatestObservedAtUtc);
 
@@ -195,6 +275,9 @@ public sealed record ParserProductFilterOptionsDto(
 public sealed class ParserProductFilterOptionsQuery
 {
     public string? ParserRunId { get; init; }
+    public bool IncludeTestRuns { get; init; }
+    public bool TestRunsOnly { get; init; }
+    public string? TestLabel { get; init; }
     public string? Search { get; init; }
     public string? SourceCategory { get; init; }
     public string? SourceSubcategory { get; init; }
@@ -205,6 +288,9 @@ public sealed class ParserProductFilterOptionsQuery
 public sealed class ParserProductLogisticsSummaryQuery
 {
     public string? ParserRunId { get; init; }
+    public bool IncludeTestRuns { get; init; }
+    public bool TestRunsOnly { get; init; }
+    public string? TestLabel { get; init; }
     public string? Search { get; init; }
     public string? SourceCategory { get; init; }
     public string? SourceSubcategory { get; init; }
@@ -220,6 +306,10 @@ public sealed class ParserProductListQuery
     public string? Sort { get; init; }
     public string? Search { get; init; }
     public string? ParserRunId { get; init; }
+    public bool IncludeTestRuns { get; init; }
+    public bool TestRunsOnly { get; init; }
+    public string? TestLabel { get; init; }
+    public bool RequireDeliveryProfile { get; init; }
     public string? SourceCategory { get; init; }
     public string? SourceSubcategory { get; init; }
     public string? BrandName { get; init; }

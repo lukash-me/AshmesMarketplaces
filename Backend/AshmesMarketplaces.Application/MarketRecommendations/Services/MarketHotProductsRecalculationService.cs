@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.Application.MarketRecommendations.Intelligence;
@@ -41,6 +42,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
     private readonly ApplicationDbContext _dbContext;
     private readonly IMarketHotProductsSnapshotBuilder _snapshotBuilder;
     private readonly IIntelligenceClient _intelligenceClient;
+    private readonly ICurrentUser _currentUser;
     private readonly IntelligenceOptions _options;
     private readonly ILogger<MarketHotProductsRecalculationService> _logger;
 
@@ -48,12 +50,14 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         ApplicationDbContext dbContext,
         IMarketHotProductsSnapshotBuilder snapshotBuilder,
         IIntelligenceClient intelligenceClient,
+        ICurrentUser currentUser,
         IOptions<IntelligenceOptions> options,
         ILogger<MarketHotProductsRecalculationService> logger)
     {
         _dbContext = dbContext;
         _snapshotBuilder = snapshotBuilder;
         _intelligenceClient = intelligenceClient;
+        _currentUser = currentUser;
         _options = options.Value;
         _logger = logger;
     }
@@ -62,6 +66,20 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         RecalculateHotProductsRequest request,
         CancellationToken cancellationToken)
     {
+        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
+            return ServiceResult<RecalculateHotProductsResponse>.Unauthorized("Authentication is required.");
+
+        return await RecalculateForUserAsync(_currentUser.UserId.Value, request, cancellationToken);
+    }
+
+    public async Task<ServiceResult<RecalculateHotProductsResponse>> RecalculateForUserAsync(
+        Guid userId,
+        RecalculateHotProductsRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (userId == Guid.Empty)
+            return ServiceResult<RecalculateHotProductsResponse>.BadRequest("User id is required.");
+
         if (!_options.Enabled)
             return ServiceResult<RecalculateHotProductsResponse>.Unavailable("Intelligence service integration is disabled.");
 
@@ -89,6 +107,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
                 .AsNoTracking()
                 .Where(x =>
                     x.Kind == MarketRecommendationRun.HotProductsKind
+                    && x.IdUser == userId
                     && x.Status == StatusCompleted
                     && x.Algorithm == _options.HotProductsAlgorithm
                     && x.AlgorithmVersion == AlgorithmVersion
@@ -104,6 +123,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
 
         var batchResult = await CalculateInBatchesAsync(
             request,
+            userId,
             snapshot,
             requestId,
             inputSnapshotHash,
@@ -118,6 +138,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         var validUntilUtc = recommendations.Count == 0 ? (DateTime?)null : recommendations.Max(x => x.ValidUntilUtc);
         var persistedRun = await PersistRunAsync(
             snapshot,
+            userId,
             intelligenceRequest,
             inputSnapshotHash,
             batchResponse.Status,
@@ -248,6 +269,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
 
     private async Task<MarketRecommendationRun> PersistRunAsync(
         MarketHotProductsSnapshot snapshot,
+        Guid idUser,
         HotProductsIntelligenceRequest request,
         string inputSnapshotHash,
         string status,
@@ -265,6 +287,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         var createdAtUtc = DateTime.UtcNow;
         var run = new MarketRecommendationRun(
             MarketRecommendationRun.HotProductsKind,
+            idUser,
             snapshot.Marketplace,
             snapshot.SourceCategory,
             ToJsonDocument(snapshot.SourceSubcategories),
@@ -365,6 +388,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
 
     private async Task<ServiceResult<HotProductsBatchResponse>> CalculateInBatchesAsync(
         RecalculateHotProductsRequest request,
+        Guid userId,
         MarketHotProductsSnapshot snapshot,
         string requestId,
         string inputSnapshotHash,
@@ -393,6 +417,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             {
                 await PersistRunAsync(
                     snapshot,
+                    userId,
                     chunkRequest,
                     inputSnapshotHash,
                     StatusFailed,
@@ -420,6 +445,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             {
                 await PersistRunAsync(
                     snapshot,
+                    userId,
                     chunkRequest,
                     inputSnapshotHash,
                     StatusFailed,

@@ -7,13 +7,13 @@ import {
   BookmarkCheck,
   ChevronUp,
   CreditCard,
+  FlaskConical,
   LayoutDashboard,
   Lightbulb,
   Moon,
   Radar,
   Settings,
   Sun,
-  Truck,
   X
 } from 'lucide-vue-next';
 
@@ -28,7 +28,7 @@ defineEmits<{
 }>();
 
 type MarketIntelligenceSection = 'events' | 'weaknesses' | 'prices' | 'stock' | 'repeats';
-type OrdersSection = 'all' | 'assumed-orders' | 'new-products' | 'restocks';
+type OrdersSection = 'assumed-orders' | 'new-products' | 'restocks' | 'availability';
 
 const route = useRoute();
 const theme = useThemeStore();
@@ -37,6 +37,7 @@ const workspaceMarketProductsPath = '/workspace/market-products';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
 const marketIntelligencePath = '/market/intelligence';
 const ordersPath = '/orders';
+const ordersAvailabilityPath = '/orders/availability';
 const marketIntelligenceSections: Array<{ key: MarketIntelligenceSection; label: string }> = [
   { key: 'events', label: 'События' },
   { key: 'weaknesses', label: 'Зоны для проверки' },
@@ -46,10 +47,10 @@ const marketIntelligenceSections: Array<{ key: MarketIntelligenceSection; label:
 ];
 const marketIntelligenceSectionKeys = marketIntelligenceSections.map((section) => section.key);
 const ordersSections: Array<{ key: OrdersSection; label: string }> = [
-  { key: 'all', label: 'Все события' },
-  { key: 'assumed-orders', label: 'Предполагаемые заказы' },
-  { key: 'new-products', label: 'Новые товары' },
-  { key: 'restocks', label: 'Пополнения товаров' }
+  { key: 'assumed-orders', label: 'Уменьшения остатков' },
+  { key: 'new-products', label: 'Новые карточки' },
+  { key: 'restocks', label: 'Пополнение остатков' },
+  { key: 'availability', label: 'Доступность товара' }
 ];
 const ordersSectionKeys = ordersSections.map((section) => section.key);
 
@@ -63,7 +64,7 @@ const marketNavItems = [
 ];
 
 const secondaryNavItems = [
-  { to: '/logistics', label: 'Логистика', icon: Truck },
+  { to: '/testing', label: 'Тестирование', icon: FlaskConical },
   { to: '/expenses', label: 'Расходы', icon: CreditCard },
   { to: '/settings/access', label: 'Доступы', icon: Settings }
 ];
@@ -71,12 +72,16 @@ const secondaryNavItems = [
 const isMarketIntelligenceRoute = computed(() => route.path === marketIntelligencePath);
 const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(workspaceMarketProductsPath));
 const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
-const isOrdersRoute = computed(() => route.path === ordersPath);
+const isOrdersRoute = computed(() => route.path === ordersPath || route.path === ordersAvailabilityPath);
 const activeMarketIntelligenceSection = computed(() =>
   isMarketIntelligenceRoute.value ? normalizeMarketIntelligenceSection(route.query.section) : null
 );
 const activeOrdersSection = computed(() =>
-  isOrdersRoute.value ? normalizeOrdersSection(route.query.tab) : null
+  route.path === ordersAvailabilityPath
+    ? 'availability'
+    : isOrdersRoute.value
+      ? normalizeOrdersSection(route.query.tab)
+      : null
 );
 
 function normalizeMarketIntelligenceSection(value: unknown): MarketIntelligenceSection {
@@ -97,21 +102,31 @@ function marketIntelligenceSectionTo(section: MarketIntelligenceSection) {
 
 function normalizeOrdersSection(value: unknown): OrdersSection {
   const rawValue = Array.isArray(value) ? value[0] : value;
-  const raw = typeof rawValue === 'string' ? rawValue : 'all';
+  const raw = typeof rawValue === 'string' ? rawValue : 'assumed-orders';
 
   if (raw === 'stock-changes') {
     return 'restocks';
   }
 
+  if (raw === 'all') {
+    return 'assumed-orders';
+  }
+
   return ordersSectionKeys.includes(raw as OrdersSection)
     ? raw as OrdersSection
-    : 'all';
+    : 'assumed-orders';
 }
 
 function ordersSectionTo(section: OrdersSection) {
+  if (section === 'availability') {
+    return {
+      path: ordersAvailabilityPath
+    };
+  }
+
   return {
     path: ordersPath,
-    query: section === 'all' ? {} : { tab: section }
+    query: section === 'assumed-orders' ? {} : { tab: section }
   };
 }
 
@@ -233,10 +248,10 @@ function selectTheme(value: 'obsidian' | 'ash') {
           @click="$emit('close')"
         >
           <Boxes :size="17" />
-          <span>Заказы</span>
+          <span>Логистика и спрос</span>
         </RouterLink>
 
-        <div class="sidebar__subnav" aria-label="Разделы заказов">
+        <div class="sidebar__subnav" aria-label="Разделы логистики и спроса">
           <RouterLink
             v-for="section in ordersSections"
             :key="section.key"

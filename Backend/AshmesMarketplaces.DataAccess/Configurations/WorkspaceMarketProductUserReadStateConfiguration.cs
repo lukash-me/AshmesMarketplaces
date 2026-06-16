@@ -22,6 +22,7 @@ public sealed class WorkspaceMarketProductUserReadStateConfiguration : IEntityTy
         builder.Property(x => x.BaselineStock).HasColumnName("baseline_stock");
         builder.Property(x => x.BaselineFeedbackCount).HasColumnName("baseline_feedback_count");
         builder.Property(x => x.BaselineReviewRating).HasPrecision(5, 2).HasColumnName("baseline_review_rating");
+        builder.Property(x => x.BaselineLogisticsFactors).HasColumnType("jsonb").HasColumnName("baseline_logistics_factors");
 
         builder.HasIndex(x => x.IdWorkspaceMarketProduct);
         builder.HasIndex(x => x.IdUser);

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
 import type { RouteLocationRaw } from 'vue-router';
-import { ArrowRight, BarChart3, Boxes, CreditCard, Radar, Truck } from 'lucide-vue-next';
+import { ArrowRight, BarChart3, Boxes, CreditCard, Radar } from 'lucide-vue-next';
 
 import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 
@@ -26,7 +26,6 @@ interface WorkspaceCard {
 
 const cards = computed<WorkspaceCard[]>(() => [
   buildObservedOrdersCard(),
-  buildLogisticsCard(),
   buildExpensesCard(),
   buildMarketProductsCard(),
   buildMarketIntelligenceCard()
@@ -36,45 +35,21 @@ function buildObservedOrdersCard(): WorkspaceCard {
   const resource = props.data?.observedStockDecreases;
 
   if (props.loading && !resource) {
-    return baseCard('orders', 'Предполагаемые заказы', Boxes, '/orders', 'Открыть раздел', 'loading');
+    return baseCard('orders', 'Логистика и спрос', Boxes, '/orders', 'Открыть раздел', 'loading');
   }
 
   if (!resource || resource.status === 'unavailable') {
-    return baseCard('orders', 'Предполагаемые заказы', Boxes, '/orders', 'Открыть раздел', 'unavailable');
+    return baseCard('orders', 'Логистика и спрос', Boxes, '/orders', 'Открыть раздел', 'unavailable');
   }
 
   const hasNotEnoughData = resource.data.warnings.some((warning) => warning.includes('not_enough'));
 
   return {
-    ...baseCard('orders', 'Предполагаемые заказы', Boxes, '/orders', 'Открыть раздел', hasNotEnoughData || resource.data.totalCount === 0 ? 'empty' : 'ready'),
-    description: 'Наблюдаемое снижение остатков WB для проверки событий рынка.',
+    ...baseCard('orders', 'Логистика и спрос', Boxes, '/orders', 'Открыть раздел', hasNotEnoughData || resource.data.totalCount === 0 ? 'empty' : 'ready'),
+    description: 'Уменьшения и пополнения остатков, новые карточки и операционные сигналы рынка.',
     metrics: [
-      { label: 'Изменений остатка', value: formatNumber(resource.data.totalCount) },
+      { label: 'Уменьшений остатков', value: formatNumber(resource.data.totalCount) },
       { label: 'Обновлено', value: formatDateTime(resource.data.currentObservedAtUtc) }
-    ]
-  };
-}
-
-function buildLogisticsCard(): WorkspaceCard {
-  const resource = props.data?.logisticsSummary;
-
-  if (props.loading && !resource) {
-    return baseCard('logistics', 'Логистика', Truck, '/logistics', 'Открыть раздел', 'loading');
-  }
-
-  if (!resource || resource.status === 'unavailable') {
-    return baseCard('logistics', 'Логистика', Truck, '/logistics', 'Открыть раздел', 'unavailable');
-  }
-
-  const summary = resource.data;
-
-  return {
-    ...baseCard('logistics', 'Логистика', Truck, '/logistics', 'Открыть раздел', summary.productsTotal > 0 ? 'ready' : 'empty'),
-    description: `Логистика найдена для ${formatNumber(summary.productsWithLogistics)} товаров из ${formatNumber(summary.productsTotal)} в текущей выборке.`,
-    metrics: [
-      { label: 'Товаров с логистикой', value: formatNumber(summary.productsWithLogistics) },
-      { label: 'Всего в выборке', value: formatNumber(summary.productsTotal) },
-      { label: 'Обновлено', value: formatDateTime(summary.latestObservedAtUtc) }
     ]
   };
 }

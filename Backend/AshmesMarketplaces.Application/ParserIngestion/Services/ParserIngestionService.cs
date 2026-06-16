@@ -436,6 +436,333 @@ public sealed class ParserIngestionService : IParserIngestionService
         return summary.ToResult();
     }
 
+    public async Task<ParserIngestionResult> StageCompleteBatchAsync(
+        string batchDirectory,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        var batch = LoadBatchManifest(batchDirectory);
+        var summary = new ImportSummary("stage-complete-batch", batch.BatchId, options.DryRun);
+        summary.Increment("batch_size", batch.Size);
+
+        if (options.DryRun)
+        {
+            summary.Absorb(await StageProductsAsync(batch.ProductRunDirectory, options, cancellationToken));
+            foreach (var runDirectory in batch.LogisticsRunDirectories)
+                summary.Absorb(await StageLogisticsAsync(runDirectory, options, cancellationToken));
+            foreach (var runDirectory in batch.ReviewRunDirectories)
+                summary.Absorb(await StageReviewsAsync(runDirectory, options, cancellationToken));
+            foreach (var runDirectory in batch.ProductDetailsRunDirectories)
+                summary.Absorb(await StageProductDetailsAsync(runDirectory, options, cancellationToken));
+            summary.Increment("promote-products_skipped_dry_run");
+            return summary.ToResult();
+        }
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        summary.Absorb(await StageProductsAsync(batch.ProductRunDirectory, options, cancellationToken));
+        foreach (var runDirectory in batch.LogisticsRunDirectories)
+            summary.Absorb(await StageLogisticsAsync(runDirectory, options, cancellationToken));
+        foreach (var runDirectory in batch.ReviewRunDirectories)
+            summary.Absorb(await StageReviewsAsync(runDirectory, options, cancellationToken));
+        foreach (var runDirectory in batch.ProductDetailsRunDirectories)
+            summary.Absorb(await StageProductDetailsAsync(runDirectory, options, cancellationToken));
+        await RejectDefectiveBatchCardsAsync(batch, summary, cancellationToken);
+        summary.Absorb(await PromoteProductsAsync(batch.ProductParserRunId, options, cancellationToken));
+        await transaction.CommitAsync(cancellationToken);
+        return summary.ToResult();
+    }
+
+    private async Task RejectDefectiveBatchCardsAsync(
+        BatchManifestInfo batch,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var productRun = await _dbContext.ParserRuns
+            .FirstOrDefaultAsync(x => x.ParserRunId == batch.ProductParserRunId && x.Kind == ProductsKind, cancellationToken);
+        if (productRun is null)
+            throw new InvalidOperationException($"Product parser run '{batch.ProductParserRunId}' is not staged.");
+
+        var productRows = await _dbContext.ParserProductRows
+            .Where(x => x.IdParserRun == productRun.Id)
+            .OrderBy(x => x.ParsedAtUtc)
+            .ThenBy(x => x.SourceLineNumber)
+            .ToListAsync(cancellationToken);
+        if (productRows.Count == 0)
+            return;
+
+        var productIds = productRows.Select(x => x.WbProductId).Distinct().ToList();
+        var rootIds = productRows
+            .Select(x => x.WbRootId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct()
+            .ToList();
+        var detailRunIds = await StagedRunIdsFromDirectoriesAsync(batch.ProductDetailsRunDirectories, ProductDetailsKind, cancellationToken);
+        var logisticsRunIds = await StagedRunIdsFromDirectoriesAsync(batch.LogisticsRunDirectories, LogisticsRunKind, cancellationToken);
+        var reviewRunIds = await StagedRunIdsFromDirectoriesAsync(batch.ReviewRunDirectories, ReviewsKind, cancellationToken);
+
+        var productsWithSuccessfulDetails = await _dbContext.ParserProductDetailRows
+            .AsNoTracking()
+            .Where(x => detailRunIds.Contains(x.IdParserRun)
+                        && productIds.Contains(x.WbProductId)
+                        && (x.Status.ToLower() == "success" || x.Status.ToLower() == "succeeded"))
+            .Select(x => x.WbProductId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var productsWithLogistics = await _dbContext.ParserLogisticsSnapshotRows
+            .AsNoTracking()
+            .Where(x => logisticsRunIds.Contains(x.IdParserRun) && productIds.Contains(x.WbProductId))
+            .Select(x => x.WbProductId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var rootsWithReviewFetch = await _dbContext.ParserReviewRootFetches
+            .AsNoTracking()
+            .Where(x => reviewRunIds.Contains(x.IdParserRun)
+                        && rootIds.Contains(x.SourceWbRootId)
+                        && (x.Status.ToLower() == "success"
+                            || x.Status.ToLower() == "succeeded"
+                            || x.Status.ToLower() == "empty"))
+            .Select(x => x.SourceWbRootId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var detailSet = productsWithSuccessfulDetails.ToHashSet(StringComparer.Ordinal);
+        var logisticsSet = productsWithLogistics.ToHashSet(StringComparer.Ordinal);
+        var reviewFetchSet = rootsWithReviewFetch.ToHashSet(StringComparer.Ordinal);
+        var rejected = new List<(ParserProductRow Row, ParserDefectiveCardAssessment Assessment)>();
+
+        foreach (var row in productRows)
+        {
+            var evidence = new ParserCardCompletenessEvidence(
+                HasSuccessfulProductDetails: detailSet.Contains(row.WbProductId),
+                HasLogisticsAttempt: logisticsSet.Contains(row.WbProductId),
+                HasReviewFetchAttempt: !string.IsNullOrWhiteSpace(row.WbRootId) && reviewFetchSet.Contains(row.WbRootId));
+            var assessment = ParserDefectiveCardDetector.Evaluate(row, evidence);
+            if (assessment.IsDefective)
+                rejected.Add((row, assessment));
+        }
+
+        if (rejected.Count == 0)
+            return;
+
+        var execution = await StartExecutionAsync(productRun.Id, "reject-defective-cards", cancellationToken);
+        var rejectionSummary = new ImportSummary("reject-defective-cards", batch.BatchId, isDryRun: false);
+        var rejectedProductIds = rejected.Select(x => x.Row.WbProductId).Distinct().ToList();
+        var rejectedRootIds = rejected
+            .Select(x => x.Row.WbRootId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct()
+            .ToList();
+        var rejectedProductRowIds = rejected.Select(x => x.Row.Id).ToHashSet();
+
+        foreach (var (row, assessment) in rejected)
+        {
+            summary.Increment("defective_cards_rejected");
+            summary.RowsSkipped++;
+            summary.Errors++;
+            rejectionSummary.Increment("defective_cards_rejected");
+            rejectionSummary.RowsSkipped++;
+            rejectionSummary.Errors++;
+            foreach (var reason in assessment.Reasons)
+            {
+                summary.Increment($"defective:{reason}");
+                rejectionSummary.Increment($"defective:{reason}");
+            }
+
+            _dbContext.ParserImportErrors.Add(CreateError(
+                execution.Id,
+                row.IdParserRun,
+                row.IdParserFile,
+                row.SourceLineNumber,
+                "defective-card",
+                $"Parser product '{row.WbProductId}' rejected as defective: {string.Join(", ", assessment.Reasons)}"));
+        }
+
+        await DeleteRejectedBatchRowsAsync(
+            rejectedProductIds,
+            rejectedRootIds,
+            rejectedProductRowIds,
+            productRun.Id,
+            detailRunIds,
+            logisticsRunIds,
+            reviewRunIds,
+            cancellationToken);
+        await FinishExecutionAsync(execution, rejectionSummary, "succeeded", cancellationToken);
+    }
+
+    private async Task<HashSet<Guid>> StagedRunIdsFromDirectoriesAsync(
+        IReadOnlyList<string> runDirectories,
+        string expectedKind,
+        CancellationToken cancellationToken)
+    {
+        if (runDirectories.Count == 0)
+            return [];
+
+        var parserRunIds = runDirectories
+            .Select(path => LoadManifest(path, expectedKind).ParserRunId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var ids = await _dbContext.ParserRuns
+            .AsNoTracking()
+            .Where(x => parserRunIds.Contains(x.ParserRunId))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        return ids.ToHashSet();
+    }
+
+    private async Task DeleteRejectedBatchRowsAsync(
+        IReadOnlyList<string> rejectedProductIds,
+        IReadOnlyList<string> rejectedRootIds,
+        IReadOnlySet<Guid> rejectedProductRowIds,
+        Guid productRunId,
+        IReadOnlySet<Guid> detailRunIds,
+        IReadOnlySet<Guid> logisticsRunIds,
+        IReadOnlySet<Guid> reviewRunIds,
+        CancellationToken cancellationToken)
+    {
+        if (rejectedProductIds.Count == 0)
+            return;
+
+        var rootFetchIds = rejectedRootIds.Count == 0 || reviewRunIds.Count == 0
+            ? []
+            : await _dbContext.ParserReviewRootFetches
+                .Where(x => reviewRunIds.Contains(x.IdParserRun) && rejectedRootIds.Contains(x.SourceWbRootId))
+                .Select(x => x.Id)
+                .ToListAsync(cancellationToken);
+
+        if (rejectedProductRowIds.Count > 0)
+        {
+            await _dbContext.MarketHotProductRecommendations
+                .Where(x => x.IdParserProductRow.HasValue && rejectedProductRowIds.Contains(x.IdParserProductRow.Value))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        if (reviewRunIds.Count > 0)
+        {
+            await _dbContext.ParserReviewReplyRows
+                .Where(x => reviewRunIds.Contains(x.IdParserRun)
+                            && (rejectedProductIds.Contains(x.WbProductId)
+                                || (x.IdReviewRootFetch.HasValue && rootFetchIds.Contains(x.IdReviewRootFetch.Value))))
+                .ExecuteDeleteAsync(cancellationToken);
+            await _dbContext.ParserReviewRows
+                .Where(x => reviewRunIds.Contains(x.IdParserRun)
+                            && (rejectedProductIds.Contains(x.WbProductId)
+                                || (x.IdReviewRootFetch.HasValue && rootFetchIds.Contains(x.IdReviewRootFetch.Value))))
+                .ExecuteDeleteAsync(cancellationToken);
+            if (rootFetchIds.Count > 0)
+            {
+                await _dbContext.ParserReviewRootFetches
+                    .Where(x => rootFetchIds.Contains(x.Id))
+                    .ExecuteDeleteAsync(cancellationToken);
+            }
+        }
+
+        if (detailRunIds.Count > 0)
+        {
+            await _dbContext.ParserProductDetailRows
+                .Where(x => detailRunIds.Contains(x.IdParserRun) && rejectedProductIds.Contains(x.WbProductId))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        if (logisticsRunIds.Count > 0)
+        {
+            await _dbContext.ParserWarehouseAvailabilityRows
+                .Where(x => logisticsRunIds.Contains(x.IdParserRun) && rejectedProductIds.Contains(x.WbProductId))
+                .ExecuteDeleteAsync(cancellationToken);
+            await _dbContext.ParserLogisticsSnapshotRows
+                .Where(x => logisticsRunIds.Contains(x.IdParserRun) && rejectedProductIds.Contains(x.WbProductId))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+
+        await _dbContext.ParserProductRows
+            .Where(x => x.IdParserRun == productRunId && rejectedProductIds.Contains(x.WbProductId))
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
+    public async Task<ParserIngestionResult> CompleteParserPipelineAsync(
+        string pipelineRunId,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(pipelineRunId))
+            throw new ArgumentException("Pipeline run id is required.", nameof(pipelineRunId));
+
+        var summary = new ImportSummary("complete-parser-pipeline", pipelineRunId, options.DryRun);
+        var runs = await _dbContext.ParserRuns
+            .AsNoTracking()
+            .Where(x => x.RequestedScope != null)
+            .ToListAsync(cancellationToken);
+        var pipelineRuns = runs
+            .Where(x => ScopeString(x.RequestedScope, "pipeline_run_id") == pipelineRunId)
+            .ToList();
+        var shardKey = pipelineRuns
+            .Select(x => ScopeString(x.RequestedScope, "shard_key"))
+            .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
+        var productRunIds = pipelineRuns
+            .Where(x => x.Kind == ProductsKind)
+            .Select(x => x.Id)
+            .ToList();
+        var discoveredProductIds = await _dbContext.ParserProductRows
+            .AsNoTracking()
+            .Where(x => productRunIds.Contains(x.IdParserRun))
+            .Select(x => x.WbProductId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var currentProductIds = discoveredProductIds.ToHashSet(StringComparer.Ordinal);
+
+        var previousPipelineId = runs
+            .Where(x => x.Kind == ProductsKind && !ScopeBool(x.RequestedScope, "is_test_run"))
+            .Select(x => new
+            {
+                Run = x,
+                PipelineRunId = ScopeString(x.RequestedScope, "pipeline_run_id"),
+                ShardKey = ScopeString(x.RequestedScope, "shard_key")
+            })
+            .Where(x => !string.IsNullOrWhiteSpace(x.PipelineRunId)
+                        && x.PipelineRunId != pipelineRunId
+                        && (string.IsNullOrWhiteSpace(shardKey) || x.ShardKey == shardKey))
+            .OrderByDescending(x => x.Run.FinishedAtUtc ?? x.Run.StartedAtUtc)
+            .Select(x => x.PipelineRunId)
+            .FirstOrDefault();
+
+        if (!string.IsNullOrWhiteSpace(previousPipelineId))
+        {
+            var previousProductRunIds = runs
+                .Where(x => x.Kind == ProductsKind
+                            && ScopeString(x.RequestedScope, "pipeline_run_id") == previousPipelineId)
+                .Select(x => x.Id)
+                .ToList();
+            var previousProductIds = await _dbContext.ParserProductRows
+                .AsNoTracking()
+                .Where(x => previousProductRunIds.Contains(x.IdParserRun))
+                .Select(x => x.WbProductId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            var previousSet = previousProductIds.ToHashSet(StringComparer.Ordinal);
+            summary.Increment("previous_discovered_products", previousSet.Count);
+            summary.Increment("new_products", currentProductIds.Count(x => !previousSet.Contains(x)));
+            summary.Increment("disappeared_products", previousSet.Count(x => !currentProductIds.Contains(x)));
+        }
+        else
+        {
+            summary.Increment("previous_discovered_products", 0);
+            summary.Increment("new_products", currentProductIds.Count);
+            summary.Increment("disappeared_products", 0);
+        }
+
+        summary.RowsRead = discoveredProductIds.Count;
+        summary.Increment("parser_runs", pipelineRuns.Count);
+        summary.Increment("product_runs", productRunIds.Count);
+        summary.Increment("discovered_products", discoveredProductIds.Count);
+        summary.Increment("complete_card_batches", pipelineRuns.Count(x => ScopeBool(x.RequestedScope, "is_complete_card_batch")));
+        if (!string.IsNullOrWhiteSpace(shardKey))
+            summary.Increment($"shard:{shardKey}", 1);
+        return summary.ToResult();
+    }
+
     public async Task<ParserIngestionResult> PromoteProductsAsync(
         string parserRunId,
         ParserIngestionOptions options,
@@ -472,9 +799,11 @@ public sealed class ParserIngestionService : IParserIngestionService
 
             foreach (var marketplaceRows in selectedRows.GroupBy(x => x.Marketplace))
             {
-                var marketplace = await _dbContext.Marketplaces
+                var marketplaces = await _dbContext.Marketplaces
                     .AsNoTracking()
-                    .FirstOrDefaultAsync(x => x.Name.ToLower() == marketplaceRows.Key.ToLower(), cancellationToken);
+                    .ToListAsync(cancellationToken);
+                var marketplace = marketplaces
+                    .FirstOrDefault(x => ParserMarketplaceResolver.IsMatch(x, marketplaceRows.Key));
                 if (marketplace is null)
                 {
                     summary.RowsSkipped += marketplaceRows.Count();
@@ -509,8 +838,14 @@ public sealed class ParserIngestionService : IParserIngestionService
                     {
                         if (!productsByExternalId.TryGetValue(row.WbProductId, out var matches) || matches.Count == 0)
                         {
-                            summary.RowsSkipped++;
-                            summary.Increment("domain_products_missing");
+                            if (!options.DryRun)
+                            {
+                                var product = ParserProductPromotionMapper.CreateDomainProduct(row, marketplace.Id);
+                                _dbContext.Products.Add(product);
+                            }
+
+                            summary.RowsWritten++;
+                            summary.Increment("domain_products_created");
                             continue;
                         }
 
@@ -535,6 +870,7 @@ public sealed class ParserIngestionService : IParserIngestionService
 
                         PromoteExistingProduct(matches[0], row);
                         summary.RowsWritten++;
+                        summary.Increment("domain_products_updated");
                     }
 
                     if (!options.DryRun)
@@ -1555,6 +1891,75 @@ public sealed class ParserIngestionService : IParserIngestionService
         return new RegisteredRun(run, files);
     }
 
+    private BatchManifestInfo LoadBatchManifest(string batchDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(batchDirectory))
+            throw new ArgumentException("Batch directory is required.", nameof(batchDirectory));
+
+        var manifestPath = Path.Combine(batchDirectory, "batch_manifest.json");
+        if (!File.Exists(manifestPath))
+            throw new FileNotFoundException("Required parser batch artifact 'batch_manifest.json' was not found.", manifestPath);
+
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+        var productRunDirectory = ResolveArtifactPath(
+            batchDirectory,
+            RequiredString(root, "product_run_dir"));
+        var productParserRunId = LoadManifest(productRunDirectory, ProductsKind).ParserRunId;
+
+        var logistics = StepOutputRunDirectories(root, batchDirectory, "logistics");
+        var reviews = StepOutputRunDirectories(root, batchDirectory, "reviews");
+        var productDetails = StepOutputRunDirectories(root, batchDirectory, "product_details");
+        if (logistics.Count == 0)
+            throw new InvalidDataException("Complete batch manifest does not contain logistics output run directories.");
+        if (reviews.Count == 0)
+            throw new InvalidDataException("Complete batch manifest does not contain reviews output run directories.");
+        if (productDetails.Count == 0)
+            throw new InvalidDataException("Complete batch manifest does not contain product details output run directories.");
+
+        return new BatchManifestInfo(
+            RequiredString(root, "batch_id"),
+            ReadInt(root, "size") ?? 0,
+            productRunDirectory,
+            productParserRunId,
+            logistics,
+            reviews,
+            productDetails);
+    }
+
+    private static List<string> StepOutputRunDirectories(JsonElement root, string batchDirectory, string stepName)
+    {
+        if (!root.TryGetProperty("steps", out var steps) || steps.ValueKind != JsonValueKind.Array)
+            return [];
+
+        var directories = new List<string>();
+        foreach (var step in steps.EnumerateArray())
+        {
+            if (!string.Equals(ReadString(step, "step"), stepName, StringComparison.Ordinal))
+                continue;
+            if (!step.TryGetProperty("output_run_dirs", out var outputRunDirs) || outputRunDirs.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var item in outputRunDirs.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                    continue;
+                var value = item.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                    directories.Add(ResolveArtifactPath(batchDirectory, value));
+            }
+        }
+
+        return directories;
+    }
+
+    private static string ResolveArtifactPath(string baseDirectory, string path)
+    {
+        return Path.IsPathFullyQualified(path)
+            ? Path.GetFullPath(path)
+            : Path.GetFullPath(Path.Combine(baseDirectory, path));
+    }
+
     private async Task<ParserImportExecution> StartExecutionAsync(
         Guid runId,
         string mode,
@@ -1624,15 +2029,7 @@ public sealed class ParserIngestionService : IParserIngestionService
 
     private void PromoteExistingProduct(Product product, ParserProductRow row)
     {
-        var entry = _dbContext.Entry(product);
-        if (!string.IsNullOrWhiteSpace(row.Name))
-            entry.Property(x => x.Name).CurrentValue = row.Name;
-
-        if (!string.IsNullOrWhiteSpace(row.SkuProduct))
-            entry.Property(x => x.SkuProduct).CurrentValue = row.SkuProduct;
-
-        foreach (var imageUrl in ImageUrls(row.ImageUrls))
-            product.AddImage(imageUrl);
+        ParserProductPromotionMapper.ApplyParserOwnedUpdates(product, row);
     }
 
     private static IEnumerable<string> ImageUrls(JsonDocument? imageUrls)
@@ -1992,6 +2389,14 @@ public sealed class ParserIngestionService : IParserIngestionService
             RequiredString(row, "source_endpoint"),
             RequiredString(row, "request_fingerprint"),
             RequiredString(row, "source_region_dest"),
+            ReadString(row, "delivery_profile_key"),
+            ReadString(row, "delivery_destination_name"),
+            ReadString(row, "delivery_profile_version"),
+            ReadString(row, "delivery_destination_city"),
+            ReadString(row, "delivery_destination_label"),
+            ReadString(row, "delivery_destination_address"),
+            ReadDecimal(row, "delivery_destination_latitude"),
+            ReadDecimal(row, "delivery_destination_longitude"),
             ReadString(row, "source_category"),
             ReadString(row, "source_subcategory"),
             ReadString(row, "source_query"),
@@ -2008,6 +2413,12 @@ public sealed class ParserIngestionService : IParserIngestionService
             ReadInt(row, "product_time2_raw"),
             ReadLong(row, "product_dtype_raw"),
             ReadInt(row, "product_dist_raw"),
+            ReadString(row, "visible_delivery_status"),
+            ReadString(row, "visible_delivery_label"),
+            OptionalUtcDate(row, "visible_delivery_date"),
+            ReadString(row, "visible_delivery_source"),
+            OptionalUtcDate(row, "visible_delivery_observed_at_utc"),
+            CloneDocument(CloneElement(row, "visible_delivery_raw_payload")),
             CloneDocument(CloneElement(row, "raw_observed_fields")));
     }
 
@@ -2032,6 +2443,14 @@ public sealed class ParserIngestionService : IParserIngestionService
             RequiredString(row, "source_endpoint"),
             RequiredString(row, "request_fingerprint"),
             RequiredString(row, "source_region_dest"),
+            ReadString(row, "delivery_profile_key"),
+            ReadString(row, "delivery_destination_name"),
+            ReadString(row, "delivery_profile_version"),
+            ReadString(row, "delivery_destination_city"),
+            ReadString(row, "delivery_destination_label"),
+            ReadString(row, "delivery_destination_address"),
+            ReadDecimal(row, "delivery_destination_latitude"),
+            ReadDecimal(row, "delivery_destination_longitude"),
             ReadString(row, "source_category"),
             ReadString(row, "source_subcategory"),
             ReadString(row, "source_query"),
@@ -2238,6 +2657,29 @@ public sealed class ParserIngestionService : IParserIngestionService
             : value.ToString();
     }
 
+    private static string? ScopeString(JsonDocument? document, string name)
+    {
+        if (document?.RootElement.ValueKind != JsonValueKind.Object)
+            return null;
+
+        return ReadString(document.RootElement, name);
+    }
+
+    private static bool ScopeBool(JsonDocument? document, string name)
+    {
+        if (document?.RootElement.ValueKind != JsonValueKind.Object
+            || !document.RootElement.TryGetProperty(name, out var value))
+            return false;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String => bool.TryParse(value.GetString(), out var parsed) && parsed,
+            _ => false
+        };
+    }
+
     private static int? ReadInt(JsonElement row, string name)
     {
         if (!row.TryGetProperty(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
@@ -2364,6 +2806,15 @@ public sealed class ParserIngestionService : IParserIngestionService
         public bool IsPartialSnapshot => !string.Equals(Status, "succeeded", StringComparison.OrdinalIgnoreCase);
     }
 
+    private sealed record BatchManifestInfo(
+        string BatchId,
+        int Size,
+        string ProductRunDirectory,
+        string ProductParserRunId,
+        IReadOnlyList<string> LogisticsRunDirectories,
+        IReadOnlyList<string> ReviewRunDirectories,
+        IReadOnlyList<string> ProductDetailsRunDirectories);
+
     private sealed record RegisteredRun(ParserRun Run, IReadOnlyDictionary<string, ParserFile> Files);
 
     private sealed record RootFetchRow(
@@ -2428,6 +2879,18 @@ public sealed class ParserIngestionService : IParserIngestionService
         public void Increment(string name, long count = 1)
         {
             _details[name] = _details.GetValueOrDefault(name) + count;
+        }
+
+        public void Absorb(ParserIngestionResult result)
+        {
+            RowsRead += result.RowsRead;
+            RowsWritten += result.RowsWritten;
+            RowsSkipped += result.RowsSkipped;
+            Errors += result.ErrorCount;
+            Increment($"{result.Mode}_runs");
+
+            foreach (var (name, count) in result.Details)
+                Increment($"{result.Mode}_{name}", count);
         }
 
         public ParserIngestionResult ToResult()

@@ -9,6 +9,11 @@ public interface IWorkspaceOverviewService
 
     Task<ServiceResult<WorkspaceOverviewRecalculateResponse>> RecalculateAsync(Guid workspaceId, CancellationToken cancellationToken);
 
+    Task<ServiceResult<WorkspaceOverviewRecalculateResponse>> RecalculateForUserAsync(
+        Guid workspaceId,
+        Guid userId,
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<WorkspaceOverviewMarkViewedResponse>> MarkViewedAsync(
         Guid workspaceId,
         WorkspaceOverviewMarkViewedRequest request,

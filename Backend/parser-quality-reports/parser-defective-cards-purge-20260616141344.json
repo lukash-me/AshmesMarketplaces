@@ -1,0 +1,23 @@
+{
+  "generatedAtUtc": "2026-06-16T14:13:58.3156979Z",
+  "auditReportPath": "Backend\\parser-quality-reports\\parser-defective-cards-pre-purge-20260616141344.json",
+  "badProductRows": 1923,
+  "deleteScopes": 1923,
+  "deletedRows": 33308,
+  "backupTables": [
+    "ParserQualityBackups.WorkspaceMarketProductUserReadStates_20260616141344",
+    "ParserQualityBackups.WorkspaceMarketProductAnalyses_20260616141344",
+    "ParserQualityBackups.WorkspaceMarketProducts_20260616141344",
+    "ParserQualityBackups.MarketHotProductRecommendations_20260616141344",
+    "ParserQualityBackups.ParserProductRows_20260616141344",
+    "ParserQualityBackups.ParserProductDetailRows_20260616141344",
+    "ParserQualityBackups.ParserLogisticsSnapshotRows_20260616141344",
+    "ParserQualityBackups.ParserWarehouseAvailabilityRows_20260616141344",
+    "ParserQualityBackups.ParserReviewRootFetches_20260616141344",
+    "ParserQualityBackups.ParserReviewRows_20260616141344",
+    "ParserQualityBackups.ParserReviewReplyRows_20260616141344",
+    "ParserQualityBackups.Products_20260616141344",
+    "ParserQualityBackups.ProductImages_20260616141344",
+    "ParserQualityBackups.ProductVideos_20260616141344"
+  ]
+}

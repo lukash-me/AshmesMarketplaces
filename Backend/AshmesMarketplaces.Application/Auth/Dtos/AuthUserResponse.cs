@@ -7,5 +7,6 @@ public sealed record AuthUserResponse(
     string? Email,
     string Phone,
     int Status,
+    AuthAnalysisScheduleResponse AnalysisSchedule,
     IReadOnlyCollection<AuthUserWorkspaceResponse> Workspaces,
     IReadOnlyCollection<AuthPermissionResponse> Permissions);

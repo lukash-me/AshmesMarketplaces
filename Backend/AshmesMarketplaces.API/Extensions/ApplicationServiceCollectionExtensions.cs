@@ -1,4 +1,5 @@
 using AshmesMarketplaces.API.Filters;
+using AshmesMarketplaces.API.Background;
 using AshmesMarketplaces.API.DevelopmentSeed;
 using AshmesMarketplaces.API.Security;
 using AshmesMarketplaces.Application.Auth.Security;
@@ -80,11 +81,13 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IRecommendationProductService, RecommendationProductService>();
         services.AddScoped<IRecommendationCategoryService, RecommendationCategoryService>();
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IUserAnalysisScheduleService, UserAnalysisScheduleService>();
         services.AddScoped<IPasswordHashService, PasswordHashService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();
         services.AddScoped<IAccessTokenService, AccessTokenService>();
         services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddScoped<DevelopmentSeeder>();
+        services.AddHostedService<AnalysisRefreshHostedService>();
         services.AddValidatorsFromAssemblyContaining<CreateMarketplaceRequestValidator>();
         services.AddScoped<FluentValidationActionFilter>();
 

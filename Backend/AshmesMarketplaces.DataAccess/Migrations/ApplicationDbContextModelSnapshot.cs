@@ -883,6 +883,45 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("DeliveryDestinationAddress")
+                        .HasColumnType("text")
+                        .HasColumnName("delivery_destination_address");
+
+                    b.Property<string>("DeliveryDestinationCity")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("delivery_destination_city");
+
+                    b.Property<string>("DeliveryDestinationLabel")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("delivery_destination_label");
+
+                    b.Property<decimal?>("DeliveryDestinationLatitude")
+                        .HasPrecision(10, 7)
+                        .HasColumnType("numeric(10,7)")
+                        .HasColumnName("delivery_destination_latitude");
+
+                    b.Property<decimal?>("DeliveryDestinationLongitude")
+                        .HasPrecision(10, 7)
+                        .HasColumnType("numeric(10,7)")
+                        .HasColumnName("delivery_destination_longitude");
+
+                    b.Property<string>("DeliveryDestinationName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("delivery_destination_name");
+
+                    b.Property<string>("DeliveryProfileKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("delivery_profile_key");
+
+                    b.Property<string>("DeliveryProfileVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("delivery_profile_version");
+
                     b.Property<Guid>("IdParserFile")
                         .HasColumnType("uuid")
                         .HasColumnName("id_parser_file");
@@ -927,6 +966,33 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)")
                         .HasColumnName("product_wh_raw");
+
+                    b.Property<DateTime?>("VisibleDeliveryDate")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("visible_delivery_date");
+
+                    b.Property<string>("VisibleDeliveryLabel")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("visible_delivery_label");
+
+                    b.Property<DateTime?>("VisibleDeliveryObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("visible_delivery_observed_at_utc");
+
+                    b.Property<JsonDocument>("VisibleDeliveryRawPayload")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("visible_delivery_raw_payload");
+
+                    b.Property<string>("VisibleDeliverySource")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("visible_delivery_source");
+
+                    b.Property<string>("VisibleDeliveryStatus")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("visible_delivery_status");
 
                     b.Property<int?>("QuantityCapObserved")
                         .HasColumnType("integer")
@@ -1041,6 +1107,8 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("WbProductId", "ObservedAtUtc");
 
                     b.HasIndex("WbRootId", "ObservedAtUtc");
+
+                    b.HasIndex("DeliveryProfileKey", "SourceRegionDest", "ObservedAtUtc");
 
                     b.ToTable("ParserLogisticsSnapshotRows", (string)null);
                 });
@@ -2235,6 +2303,45 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("DeliveryDestinationAddress")
+                        .HasColumnType("text")
+                        .HasColumnName("delivery_destination_address");
+
+                    b.Property<string>("DeliveryDestinationCity")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("delivery_destination_city");
+
+                    b.Property<string>("DeliveryDestinationLabel")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("delivery_destination_label");
+
+                    b.Property<decimal?>("DeliveryDestinationLatitude")
+                        .HasPrecision(10, 7)
+                        .HasColumnType("numeric(10,7)")
+                        .HasColumnName("delivery_destination_latitude");
+
+                    b.Property<decimal?>("DeliveryDestinationLongitude")
+                        .HasPrecision(10, 7)
+                        .HasColumnType("numeric(10,7)")
+                        .HasColumnName("delivery_destination_longitude");
+
+                    b.Property<string>("DeliveryDestinationName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("delivery_destination_name");
+
+                    b.Property<string>("DeliveryProfileKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("delivery_profile_key");
+
+                    b.Property<string>("DeliveryProfileVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("delivery_profile_version");
+
                     b.Property<Guid>("IdParserFile")
                         .HasColumnType("uuid")
                         .HasColumnName("id_parser_file");
@@ -2445,6 +2552,8 @@ namespace AshmesMarketplaces.DataAccess.Migrations
 
                     b.HasIndex("WbRootId", "ObservedAtUtc");
 
+                    b.HasIndex("DeliveryProfileKey", "SourceRegionDest", "ObservedAtUtc");
+
                     b.ToTable("ParserWarehouseAvailabilityRows", (string)null);
                 });
 
@@ -2648,6 +2757,14 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.ToTable("ProductVideos", (string)null);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Recommendations.MarketRecommendationRun", b =>
+                {
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("IdUser")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Recommendations.MarketHotProductRecommendation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2828,6 +2945,10 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<Guid?>("IdUser")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_user");
+
                     b.Property<string>("Algorithm")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -2956,6 +3077,9 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("Algorithm", "AlgorithmVersion", "ModelVersion", "InputSnapshotHash");
 
                     b.HasIndex("Kind", "Status", "ValidUntilUtc", "CompletedAtUtc");
+
+                    b.HasIndex("IdUser", "Kind", "Status", "ValidUntilUtc", "CompletedAtUtc")
+                        .HasDatabaseName("IX_MarketRecommendationRuns_user_latest");
 
                     b.ToTable("MarketRecommendationRuns", (string)null);
                 });
@@ -3208,6 +3332,105 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("IdRule");
 
                     b.ToTable("Sets_Rules", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Users.UserAnalysisSchedule", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<TimeOnly>("HotProductsLocalTime")
+                        .HasColumnType("time without time zone")
+                        .HasColumnName("hot_products_local_time");
+
+                    b.Property<Guid>("IdUser")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_user");
+
+                    b.Property<string>("LastHotProductsError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_hot_products_error");
+
+                    b.Property<string>("LastHotProductsStatus")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("last_hot_products_status");
+
+                    b.Property<DateTime?>("LastHotProductsStartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_hot_products_started_at_utc");
+
+                    b.Property<DateTime?>("LastHotProductsCompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_hot_products_completed_at_utc");
+
+                    b.Property<string>("LastOverviewError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_overview_error");
+
+                    b.Property<string>("LastOverviewStatus")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("last_overview_status");
+
+                    b.Property<DateTime?>("LastOverviewStartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_overview_started_at_utc");
+
+                    b.Property<DateTime?>("LastOverviewCompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_overview_completed_at_utc");
+
+                    b.Property<string>("LockedBy")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("locked_by");
+
+                    b.Property<DateTime?>("LockedUntilUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until_utc");
+
+                    b.Property<DateTime>("NextHotProductsRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_hot_products_run_at_utc");
+
+                    b.Property<DateTime>("NextOverviewRunAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_overview_run_at_utc");
+
+                    b.Property<TimeOnly>("OverviewLocalTime")
+                        .HasColumnType("time without time zone")
+                        .HasColumnName("overview_local_time");
+
+                    b.Property<string>("TimezoneId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("timezone_id");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdUser")
+                        .IsUnique();
+
+                    b.HasIndex("LockedUntilUtc");
+
+                    b.HasIndex("NextHotProductsRunAtUtc");
+
+                    b.HasIndex("NextOverviewRunAtUtc");
+
+                    b.ToTable("UserAnalysisSchedules", (string)null);
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Users.Session", b =>
@@ -3751,6 +3974,10 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("numeric(5,2)")
                         .HasColumnName("baseline_review_rating");
 
+                    b.Property<System.Text.Json.JsonDocument>("BaselineLogisticsFactors")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("baseline_logistics_factors");
+
                     b.Property<int?>("BaselineStock")
                         .HasColumnType("integer")
                         .HasColumnName("baseline_stock");
@@ -4242,6 +4469,15 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Users.Session", b =>
+                {
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("IdUser")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Users.UserAnalysisSchedule", b =>
                 {
                     b.HasOne("AshmesMarketplaces.Domain.Entities.Users.User", null)
                         .WithMany()

@@ -21,6 +21,22 @@ export interface AuthPermission {
   domain: number;
 }
 
+export interface AuthAnalysisSchedule {
+  timezoneId: string;
+  hotProductsLocalTime: string;
+  overviewLocalTime: string;
+  nextHotProductsRunAtUtc: string;
+  nextOverviewRunAtUtc: string;
+  lastHotProductsStartedAtUtc: string | null;
+  lastHotProductsCompletedAtUtc: string | null;
+  lastHotProductsStatus: string;
+  lastHotProductsError: string | null;
+  lastOverviewStartedAtUtc: string | null;
+  lastOverviewCompletedAtUtc: string | null;
+  lastOverviewStatus: string;
+  lastOverviewError: string | null;
+}
+
 export interface AuthUser {
   id: string;
   idRole: string;
@@ -28,6 +44,7 @@ export interface AuthUser {
   email: string | null;
   phone: string;
   status: number;
+  analysisSchedule: AuthAnalysisSchedule;
   workspaces: AuthUserWorkspace[];
   permissions: AuthPermission[];
 }

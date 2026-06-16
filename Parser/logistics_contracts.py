@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-LOGISTICS_SCHEMA_VERSION = 1
+LOGISTICS_SCHEMA_VERSION = 3
 SOURCE_REQUEST_FAMILY = "card_detail_v4"
 WB_CARD_DETAIL_ENDPOINT = "https://card.wb.ru/cards/v4/detail"
 QUANTITY_SEMANTICS = "unknown_or_capped"
@@ -65,6 +65,20 @@ def map_card_detail_payload(
     source_endpoint: str,
     request_fingerprint_value: str,
     source_region_dest: str,
+    delivery_profile_key: str | None = None,
+    delivery_destination_name: str | None = None,
+    delivery_profile_version: str | None = None,
+    delivery_destination_city: str | None = None,
+    delivery_destination_label: str | None = None,
+    delivery_destination_address: str | None = None,
+    delivery_destination_latitude: float | None = None,
+    delivery_destination_longitude: float | None = None,
+    visible_delivery_status: str | None = None,
+    visible_delivery_label: str | None = None,
+    visible_delivery_date: str | None = None,
+    visible_delivery_source: str | None = None,
+    visible_delivery_observed_at_utc: str | None = None,
+    visible_delivery_raw_payload: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     snapshots: list[dict[str, Any]] = []
     warehouse_rows: list[dict[str, Any]] = []
@@ -83,6 +97,14 @@ def map_card_detail_payload(
             "source_endpoint": source_endpoint,
             "request_fingerprint": request_fingerprint_value,
             "source_region_dest": source_region_dest,
+            "delivery_profile_key": delivery_profile_key,
+            "delivery_destination_name": delivery_destination_name,
+            "delivery_profile_version": delivery_profile_version,
+            "delivery_destination_city": delivery_destination_city,
+            "delivery_destination_label": delivery_destination_label,
+            "delivery_destination_address": delivery_destination_address,
+            "delivery_destination_latitude": delivery_destination_latitude,
+            "delivery_destination_longitude": delivery_destination_longitude,
             "source_category": product_input.source_category,
             "source_subcategory": product_input.source_subcategory,
             "source_query": product_input.source_query,
@@ -103,6 +125,12 @@ def map_card_detail_payload(
             "product_time2_raw": _int_or_none(product.get("time2")),
             "product_dtype_raw": _int_or_none(product.get("dtype")),
             "product_dist_raw": _int_or_none(product.get("dist")),
+            "visible_delivery_status": visible_delivery_status,
+            "visible_delivery_label": visible_delivery_label,
+            "visible_delivery_date": visible_delivery_date,
+            "visible_delivery_source": visible_delivery_source,
+            "visible_delivery_observed_at_utc": visible_delivery_observed_at_utc,
+            "visible_delivery_raw_payload": visible_delivery_raw_payload,
             "raw_observed_fields": _observed_fields(product),
         })
 

@@ -243,7 +243,44 @@ class WbCatalogFetcher:
         logger.error(f"failed {self._task_label(task)}")
         return None
 
+    async def iter_result_batches(self):
+        tasks = self._build_tasks()
+        total_results = 0
+
+        async with httpx.AsyncClient() as client:
+            for i in range(0, len(tasks), self.batch_size):
+                if self.stop_requested:
+                    logger.warning("Catalog fetching stopped after repeated WB limit signals")
+                    break
+
+                batch = tasks[i: i + self.batch_size]
+
+                logger.info(f"Catalog request batch {i // self.batch_size + 1} ({len(batch)}) requests")
+
+                coroutines = [
+                    self._fetch_one(client, task) for task in batch
+                ]
+
+                batch_results = await asyncio.gather(*coroutines)
+                batch_results = [r for r in batch_results if r]
+                total_results += len(batch_results)
+
+                logger.success(f"Catalog request batch completed, total responses: {total_results}")
+                if batch_results:
+                    yield batch_results
+
+                delay_min, delay_max = self.batch_delay_bounds
+                if delay_max > 0:
+                    await asyncio.sleep(random.uniform(delay_min, delay_max))
+
+        logger.info(f"Catalog fetching completed. Total responses: {total_results}")
+
     async def fetch_all(self) -> list[dict]:
+        streamed_results: list[dict] = []
+        async for batch_results in self.iter_result_batches():
+            streamed_results.extend(batch_results)
+        return streamed_results
+
         tasks = self._build_tasks()
         results: list[dict] = []
 

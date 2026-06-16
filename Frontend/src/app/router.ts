@@ -6,6 +6,7 @@ import { useAuthStore } from '@/features/auth/auth.store';
 import LoginPage from '@/features/auth/LoginPage.vue';
 import MarketIntelligencePage from '@/features/market-intelligence/MarketIntelligencePage.vue';
 import MarketOpportunitiesPage from '@/features/market-opportunities/MarketOpportunitiesPage.vue';
+import ParserTestingPage from '@/features/parser-testing/ParserTestingPage.vue';
 import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vue';
 import ParserReviewsPage from '@/features/parser-reviews/ParserReviewsPage.vue';
 import ProductsPage from '@/features/products/ProductsPage.vue';
@@ -13,7 +14,7 @@ import WorkspaceMarketProductClustersPage from '@/features/workspace-market-prod
 import WorkspaceMarketProductsPage from '@/features/workspace-market-products/WorkspaceMarketProductsPage.vue';
 import AccessSettingsPage from '@/pages/AccessSettingsPage.vue';
 import ExpensesPage from '@/pages/ExpensesPage.vue';
-import LogisticsPage from '@/pages/LogisticsPage.vue';
+import OrdersAvailabilityPage from '@/pages/OrdersAvailabilityPage.vue';
 import OrdersPage from '@/pages/OrdersPage.vue';
 import OverviewPage from '@/pages/OverviewPage.vue';
 
@@ -44,11 +45,12 @@ export const router = createRouter({
         { path: 'market/products', name: 'market-products', component: ParserProductsPage },
         { path: 'market/opportunities', name: 'market-opportunities', component: MarketOpportunitiesPage },
         { path: 'market/intelligence', name: 'market-intelligence', component: MarketIntelligencePage },
+        { path: 'testing', name: 'parser-testing', component: ParserTestingPage },
         { path: 'products', name: 'products', component: ProductsPage },
         { path: 'parser/products', redirect: { name: 'market-products' } },
         { path: 'orders', name: 'orders', component: OrdersPage },
+        { path: 'orders/availability', name: 'orders-availability', component: OrdersAvailabilityPage },
         { path: 'parser/reviews', name: 'parser-reviews', component: ParserReviewsPage },
-        { path: 'logistics', name: 'logistics', component: LogisticsPage },
         { path: 'expenses', name: 'expenses', component: ExpensesPage },
         { path: 'settings/access', name: 'settings-access', component: AccessSettingsPage }
       ]

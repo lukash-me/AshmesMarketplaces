@@ -24,6 +24,14 @@ public sealed class ParserLogisticsSnapshotRowConfiguration : IEntityTypeConfigu
         builder.Property(x => x.SourceEndpoint).IsRequired().HasColumnType("text").HasColumnName("source_endpoint");
         builder.Property(x => x.RequestFingerprint).IsRequired().HasMaxLength(64).HasColumnName("request_fingerprint");
         builder.Property(x => x.SourceRegionDest).IsRequired().HasMaxLength(128).HasColumnName("source_region_dest");
+        builder.Property(x => x.DeliveryProfileKey).HasMaxLength(128).HasColumnName("delivery_profile_key");
+        builder.Property(x => x.DeliveryDestinationName).HasMaxLength(255).HasColumnName("delivery_destination_name");
+        builder.Property(x => x.DeliveryProfileVersion).HasMaxLength(64).HasColumnName("delivery_profile_version");
+        builder.Property(x => x.DeliveryDestinationCity).HasMaxLength(255).HasColumnName("delivery_destination_city");
+        builder.Property(x => x.DeliveryDestinationLabel).HasMaxLength(512).HasColumnName("delivery_destination_label");
+        builder.Property(x => x.DeliveryDestinationAddress).HasColumnType("text").HasColumnName("delivery_destination_address");
+        builder.Property(x => x.DeliveryDestinationLatitude).HasPrecision(10, 7).HasColumnName("delivery_destination_latitude");
+        builder.Property(x => x.DeliveryDestinationLongitude).HasPrecision(10, 7).HasColumnName("delivery_destination_longitude");
         builder.Property(x => x.SourceCategory).HasMaxLength(255).HasColumnName("source_category");
         builder.Property(x => x.SourceSubcategory).HasMaxLength(255).HasColumnName("source_subcategory");
         builder.Property(x => x.SourceQuery).HasMaxLength(512).HasColumnName("source_query");
@@ -40,6 +48,12 @@ public sealed class ParserLogisticsSnapshotRowConfiguration : IEntityTypeConfigu
         builder.Property(x => x.ProductTime2Raw).HasColumnName("product_time2_raw");
         builder.Property(x => x.ProductDtypeRaw).HasColumnName("product_dtype_raw");
         builder.Property(x => x.ProductDistRaw).HasColumnName("product_dist_raw");
+        builder.Property(x => x.VisibleDeliveryStatus).HasMaxLength(64).HasColumnName("visible_delivery_status");
+        builder.Property(x => x.VisibleDeliveryLabel).HasMaxLength(255).HasColumnName("visible_delivery_label");
+        builder.Property(x => x.VisibleDeliveryDate).HasColumnName("visible_delivery_date");
+        builder.Property(x => x.VisibleDeliverySource).HasMaxLength(255).HasColumnName("visible_delivery_source");
+        builder.Property(x => x.VisibleDeliveryObservedAtUtc).HasColumnName("visible_delivery_observed_at_utc");
+        builder.Property(x => x.VisibleDeliveryRawPayload).HasColumnType("jsonb").HasColumnName("visible_delivery_raw_payload");
         builder.Property(x => x.RawObservedFields).HasColumnType("jsonb").HasColumnName("raw_observed_fields");
 
         builder.HasIndex(x => new { x.IdParserFile, x.SourceLineNumber }).IsUnique();
@@ -47,6 +61,7 @@ public sealed class ParserLogisticsSnapshotRowConfiguration : IEntityTypeConfigu
         builder.HasIndex(x => new { x.WbProductId, x.ObservedAtUtc });
         builder.HasIndex(x => new { x.WbRootId, x.ObservedAtUtc });
         builder.HasIndex(x => new { x.SourceRegionDest, x.ObservedAtUtc });
+        builder.HasIndex(x => new { x.DeliveryProfileKey, x.SourceRegionDest, x.ObservedAtUtc });
         builder.HasIndex(x => new { x.SourceCategory, x.SourceSubcategory });
         builder.HasIndex(x => x.RequestFingerprint);
 

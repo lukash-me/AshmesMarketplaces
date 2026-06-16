@@ -45,10 +45,9 @@ const error = ref('');
 const selectedProduct = ref<ParserProductListItem | null>(null);
 
 const tabs: Array<{ key: ObservedMarketEventTab; label: string }> = [
-  { key: 'all', label: 'Все события' },
-  { key: 'assumed-orders', label: 'Предполагаемые заказы' },
-  { key: 'new-products', label: 'Новые товары' },
-  { key: 'restocks', label: 'Пополнения товаров' }
+  { key: 'assumed-orders', label: 'Уменьшения остатков' },
+  { key: 'new-products', label: 'Новые карточки' },
+  { key: 'restocks', label: 'Пополнение остатков' }
 ];
 
 const hasNotEnoughRunsWarning = computed(() =>
@@ -141,7 +140,7 @@ function selectTab(tab: ObservedMarketEventTab) {
 }
 
 function selectTabValue(tab: string) {
-  if (tab === 'all' || tab === 'assumed-orders' || tab === 'new-products' || tab === 'restocks') {
+  if (tab === 'assumed-orders' || tab === 'new-products' || tab === 'restocks') {
     selectTab(tab);
   }
 }
@@ -204,14 +203,14 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
 
   if (tab === 'new-products') {
     return {
-      title: 'Новые товары не найдены',
-      description: 'В текущем наблюдении нет товаров, которых не было в предыдущем.'
+      title: 'Новые карточки не найдены',
+      description: 'В текущем наблюдении нет карточек, которых не было в предыдущем.'
     };
   }
 
   if (tab === 'restocks') {
     return {
-      title: 'Пополнения товаров не найдены',
+      title: 'Пополнение остатков не найдено',
       description: 'В пересекающихся товарах не найдено положительных изменений наблюдаемого остатка WB.'
     };
   }
@@ -226,8 +225,8 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
 <template>
   <div class="orders-page">
     <PageHeader
-      title="События рынка"
-      description="Отслеживаем изменения по товарам между последними наблюдениями: новые карточки, изменения остатков и возможные заказы."
+      title="Логистика и спрос"
+      description="Отслеживаем изменения остатков, новые карточки и операционные сигналы рынка между последними наблюдениями."
     />
 
     <ObservedMarketEventFilters
@@ -241,7 +240,7 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
       class="orders-tabs app-operator-panel"
       :items="tabs"
       :model-value="queryState.tab"
-      aria-label="Разделы событий рынка"
+      aria-label="Разделы логистики и спроса"
       @update:model-value="selectTabValue"
     />
 
@@ -262,7 +261,7 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
       >
         <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.newProductObservedCount) }}</strong>
-          Новые товары
+          Новые карточки
         </span>
         <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.stockDecreasedCount) }}</strong>
@@ -270,7 +269,7 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
         </span>
         <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.stockIncreasedCount) }}</strong>
-          Пополнения товаров
+          Пополнение остатков
         </span>
         <span class="app-operator-metric">
           <strong>{{ formatObservedNumber(summary.comparedPairsCount) }}</strong>

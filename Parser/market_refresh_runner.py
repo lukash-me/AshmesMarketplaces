@@ -9,9 +9,10 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from config import BASE_DIR
@@ -70,6 +71,27 @@ def _sanitize_command(command: list[str], secrets: list[str] | tuple[str, ...]) 
         if part == "--connection-string":
             skip_next_connection_value = True
     return sanitized
+
+
+def _test_scope_env(*, pipeline_run_id: str, test_run: bool, test_label: str | None) -> dict[str, str]:
+    if not test_run:
+        return {}
+
+    env = {
+        "PARSER_IS_TEST_RUN": "true",
+        "PARSER_PIPELINE_RUN_ID": pipeline_run_id,
+        "PARSER_RUN_PURPOSE": "parser_testing",
+    }
+    if test_label and test_label.strip():
+        env["PARSER_TEST_LABEL"] = test_label.strip()
+    return env
+
+
+def _with_env_overrides(plan: PipelineStepPlan, extra_env: dict[str, str]) -> PipelineStepPlan:
+    if not extra_env:
+        return plan
+
+    return replace(plan, env_overrides={**plan.env_overrides, **extra_env})
 
 
 def _command_display(command: list[str], secrets: list[str] | tuple[str, ...] = ()) -> str:
@@ -167,6 +189,15 @@ class StagingPreflight:
     requested: bool
     connection_string: str | None
     connection_string_source: str
+
+
+@dataclass(frozen=True)
+class ProductBatchRun:
+    batch_id: str
+    batch_index: int
+    size: int
+    batch_dir: Path
+    product_run_dir: Path
 
 
 def _console(message: str) -> None:
@@ -402,6 +433,22 @@ def _build_logistics_plan(
     ]
     if logistics.get("dest") is not None:
         command.extend(["--dest", str(logistics["dest"])])
+    if logistics.get("delivery_profile") is not None:
+        command.extend(["--delivery-profile", str(logistics["delivery_profile"])])
+    if logistics.get("delivery_profile_config") is not None:
+        command.extend([
+            "--delivery-profile-config",
+            str(_to_abs(logistics["delivery_profile_config"], base_dir=repo_root)),
+        ])
+    for destination in logistics.get("delivery_destinations") or []:
+        if isinstance(destination, dict):
+            key = str(destination.get("key") or destination.get("dest") or "").strip()
+            name = str(destination.get("name") or key).strip()
+            dest = str(destination.get("dest") or "").strip()
+            if key and name and dest:
+                command.extend(["--delivery-destination", f"{key}|{name}|{dest}"])
+        else:
+            command.extend(["--delivery-destination", str(destination)])
     if logistics.get("limit_products") is not None:
         command.extend(["--limit", str(logistics["limit_products"])])
     if logistics.get("delay_ms") is not None:
@@ -676,6 +723,416 @@ def _suggested_ingestion_commands(manifest: dict[str, Any]) -> list[list[str]]:
                     "<connection-string>",
                 ])
     return commands
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        raise FileNotFoundError(f"JSONL file was not found: {path}")
+
+    with path.open(encoding="utf-8") as file:
+        for line in file:
+            if not line.strip():
+                continue
+            rows.append(json.loads(line))
+    return rows
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False, default=str) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _chunks(rows: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]]:
+    if size < 1:
+        raise ValueError("Batch size must be positive.")
+    return [rows[index : index + size] for index in range(0, len(rows), size)]
+
+
+def _batch_requested_scope(
+    parent_scope: dict[str, Any],
+    *,
+    pipeline_run_id: str,
+    batch_id: str,
+    batch_index: int,
+    worker_id: str,
+    shard_key: str,
+    source_niche: str | None,
+) -> dict[str, Any]:
+    scope = dict(parent_scope)
+    scope.update(
+        {
+            "pipeline_run_id": pipeline_run_id,
+            "batch_id": batch_id,
+            "batch_index": batch_index,
+            "worker_id": worker_id,
+            "shard_key": shard_key,
+            "is_complete_card_batch": True,
+        }
+    )
+    if source_niche:
+        scope["source_niche"] = source_niche
+    return scope
+
+
+def _create_product_batch_run_dirs(
+    *,
+    product_run_dir: Path,
+    batches_dir: Path,
+    pipeline_run_id: str,
+    batch_size: int,
+    worker_id: str,
+    shard_key: str,
+) -> list[ProductBatchRun]:
+    manifest_path = product_run_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Product manifest was not found: {manifest_path}")
+
+    parent_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = _read_jsonl(product_run_dir / "products.jsonl")
+    batches: list[ProductBatchRun] = []
+    batches_dir.mkdir(parents=True, exist_ok=True)
+
+    for batch_index, batch_rows in enumerate(_chunks(rows, batch_size), start=1):
+        batches.append(
+            _create_product_batch_run_dir_from_rows(
+                parent_manifest=parent_manifest,
+                batch_rows=batch_rows,
+                source_product_run_dir=product_run_dir,
+                batches_dir=batches_dir,
+                pipeline_run_id=pipeline_run_id,
+                batch_index=batch_index,
+                worker_id=worker_id,
+                shard_key=shard_key,
+            )
+        )
+
+    return batches
+
+
+def _create_product_batch_run_dir_from_rows(
+    *,
+    parent_manifest: dict[str, Any],
+    batch_rows: list[dict[str, Any]],
+    source_product_run_dir: Path,
+    batches_dir: Path,
+    pipeline_run_id: str,
+    batch_index: int,
+    worker_id: str,
+    shard_key: str,
+) -> ProductBatchRun:
+    parent_scope = dict(parent_manifest.get("requested_scope") or {})
+    marketplace = str(parent_manifest.get("marketplace") or "wildberries")
+    source_region_dest = str(parent_manifest.get("source_region_dest") or "")
+    parser_version = str(parent_manifest.get("parser_version") or get_git_commit(_repo_root()))
+    config_snapshot = parent_manifest.get("config_snapshot") or {}
+
+    batch_id = f"{pipeline_run_id}:batch:{batch_index:04d}"
+    product_parser_run_id = f"{pipeline_run_id}_batch_{batch_index:04d}_products"
+    batch_dir = batches_dir / f"batch_{batch_index:04d}"
+    product_batch_dir = batch_dir / "products"
+    product_batch_dir.mkdir(parents=True, exist_ok=True)
+    batch_created_at_utc = utc_now_iso()
+
+    source_niches = sorted(
+        {
+            str(row.get("source_subcategory") or "").strip()
+            for row in batch_rows
+            if str(row.get("source_subcategory") or "").strip()
+        }
+    )
+    source_niche = source_niches[0] if len(source_niches) == 1 else None
+    rewritten_rows: list[dict[str, Any]] = []
+    for row in batch_rows:
+        rewritten = dict(row)
+        rewritten["parser_run_id"] = product_parser_run_id
+        rewritten["parsed_at_utc"] = batch_created_at_utc
+        rewritten_rows.append(rewritten)
+
+    _write_jsonl(product_batch_dir / "products.jsonl", rewritten_rows)
+    (product_batch_dir / "errors.jsonl").touch()
+    (product_batch_dir / "runner.log").write_text(
+        f"Batch product artifact generated from {source_product_run_dir}\n",
+        encoding="utf-8",
+    )
+
+    batch_manifest = {
+        "schema_version": int(parent_manifest.get("schema_version") or 1),
+        "parser_run_id": product_parser_run_id,
+        "started_at_utc": batch_created_at_utc,
+        "finished_at_utc": batch_created_at_utc,
+        "status": "succeeded",
+        "marketplace": marketplace,
+        "requested_scope": _batch_requested_scope(
+            parent_scope,
+            pipeline_run_id=pipeline_run_id,
+            batch_id=batch_id,
+            batch_index=batch_index,
+            worker_id=worker_id,
+            shard_key=shard_key,
+            source_niche=source_niche,
+        ),
+        "source_region_dest": source_region_dest,
+        "output_files": {
+            "manifest": str(product_batch_dir / "manifest.json"),
+            "products_jsonl": str(product_batch_dir / "products.jsonl"),
+            "errors_jsonl": str(product_batch_dir / "errors.jsonl"),
+            "runner_log": str(product_batch_dir / "runner.log"),
+        },
+        "row_counts": {
+            "total_rows": len(batch_rows),
+            "unique_rows": len(batch_rows),
+            "duplicate_rows": 0,
+        },
+        "category_results": [],
+        "error_counts": {},
+        "warning_counts": {},
+        "wb_error_codes_observed": {},
+        "retry_summary": {"attempts": 0, "retries": 0},
+        "backoff_summary": {"count": 0, "seconds_total": 0.0},
+        "token_acquisition_status": {"status": "not_attempted"},
+        "network_check_result": {"status": "inherited_from_parent_run"},
+        "parser_version": parser_version,
+        "config_snapshot": config_snapshot,
+    }
+    (product_batch_dir / "manifest.json").write_text(
+        json.dumps(batch_manifest, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return ProductBatchRun(
+        batch_id=batch_id,
+        batch_index=batch_index,
+        size=len(batch_rows),
+        batch_dir=batch_dir,
+        product_run_dir=product_batch_dir,
+    )
+
+
+def _complete_batch_staging_command(*, batch_dir: Path, connection_string: str) -> list[str]:
+    return [
+        "dotnet",
+        "run",
+        "--project",
+        str(INGESTION_CLI_PROJECT),
+        "--",
+        "stage-complete-batch",
+        str(batch_dir),
+        "--connection-string",
+        connection_string,
+    ]
+
+
+def _complete_pipeline_command(*, pipeline_run_id: str, connection_string: str) -> list[str]:
+    return [
+        "dotnet",
+        "run",
+        "--project",
+        str(INGESTION_CLI_PROJECT),
+        "--",
+        "complete-parser-pipeline",
+        pipeline_run_id,
+        "--connection-string",
+        connection_string,
+    ]
+
+
+def _batch_scope_env(
+    *,
+    pipeline_run_id: str,
+    batch: ProductBatchRun,
+    worker_id: str,
+    shard_key: str,
+    source_niche: str | None = None,
+) -> dict[str, str]:
+    env = {
+        "PARSER_PIPELINE_RUN_ID": pipeline_run_id,
+        "PARSER_BATCH_ID": batch.batch_id,
+        "PARSER_BATCH_INDEX": str(batch.batch_index),
+        "PARSER_WORKER_ID": worker_id,
+        "PARSER_SHARD_KEY": shard_key,
+        "PARSER_IS_COMPLETE_CARD_BATCH": "true",
+    }
+    if source_niche:
+        env["PARSER_SOURCE_NICHE"] = source_niche
+    return env
+
+
+def _is_batched_full_enrichment(mode: str, mode_config: dict[str, Any]) -> bool:
+    return mode == "batched_full_enrichment" or bool(mode_config.get("batching"))
+
+
+def _write_batch_manifest(batch: ProductBatchRun, payload: dict[str, Any]) -> None:
+    (batch.batch_dir / "batch_manifest.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
+
+def _product_run_source_subcategories(product_run_dir: Path) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for row in _read_jsonl(product_run_dir / "products.jsonl"):
+        value = str(row.get("source_subcategory") or "").strip()
+        if value and value not in seen:
+            values.append(value)
+            seen.add(value)
+    return values
+
+
+def _product_ids_from_run(product_run_dir: Path) -> set[str]:
+    return {
+        str(row.get("wb_product_id"))
+        for row in _read_jsonl(product_run_dir / "products.jsonl")
+        if row.get("wb_product_id") is not None
+    }
+
+
+def _root_ids_from_run(product_run_dir: Path) -> set[str]:
+    return {
+        str(row.get("wb_root_id"))
+        for row in _read_jsonl(product_run_dir / "products.jsonl")
+        if row.get("wb_root_id") is not None
+    }
+
+
+def _step_output_dirs(batch_manifest: dict[str, Any], step_name: str) -> list[Path]:
+    record = _record_for(batch_manifest, step_name)
+    return [Path(value) for value in (record.get("output_run_dirs") or [])]
+
+
+def _status_is_failed(status: Any) -> bool:
+    normalized = str(status or "").strip().lower()
+    return normalized.startswith("failed") or "transient" in normalized
+
+
+def _validate_complete_card_batch(
+    *,
+    batch: ProductBatchRun,
+    batch_manifest: dict[str, Any],
+    require_logistics: bool,
+    require_reviews: bool,
+    require_product_details: bool,
+) -> tuple[bool, str | None]:
+    product_ids = _product_ids_from_run(batch.product_run_dir)
+    root_ids = _root_ids_from_run(batch.product_run_dir)
+    if not product_ids:
+        return False, "products rows count is zero"
+
+    if require_logistics:
+        attempted_products: set[str] = set()
+        failed_products: set[str] = set()
+        for run_dir in _step_output_dirs(batch_manifest, "logistics"):
+            for row in _read_jsonl(run_dir / "logistics_snapshots.jsonl"):
+                product_id = row.get("wb_product_id")
+                if product_id is None:
+                    continue
+                product_id_text = str(product_id)
+                attempted_products.add(product_id_text)
+                if _status_is_failed(row.get("status")):
+                    failed_products.add(product_id_text)
+        missing = sorted(product_ids - attempted_products)
+        if missing:
+            return False, f"logistics attempt missing for {len(missing)} product(s)"
+        if failed_products:
+            return False, f"logistics failed for {len(failed_products)} product(s)"
+
+    if require_product_details:
+        attempted_products = set()
+        failed_products = set()
+        for run_dir in _step_output_dirs(batch_manifest, "product_details"):
+            for row in _read_jsonl(run_dir / "product_detail_fetch_results.jsonl"):
+                product_id = row.get("wb_product_id")
+                if product_id is None:
+                    continue
+                product_id_text = str(product_id)
+                attempted_products.add(product_id_text)
+                if _status_is_failed(row.get("status")):
+                    failed_products.add(product_id_text)
+        missing = sorted(product_ids - attempted_products)
+        if missing:
+            return False, f"product details attempt missing for {len(missing)} product(s)"
+        if failed_products:
+            return False, f"product details failed for {len(failed_products)} product(s)"
+
+    if require_reviews and root_ids:
+        attempted_roots: set[str] = set()
+        failed_roots: set[str] = set()
+        for run_dir in _step_output_dirs(batch_manifest, "reviews"):
+            for row in _read_jsonl(run_dir / "review_fetch_results.jsonl"):
+                root_id = row.get("source_wb_root_id")
+                if root_id is None:
+                    continue
+                root_id_text = str(root_id)
+                attempted_roots.add(root_id_text)
+                if _status_is_failed(row.get("status")):
+                    failed_roots.add(root_id_text)
+        missing = sorted(root_ids - attempted_roots)
+        if missing:
+            return False, f"reviews/replies attempt missing for {len(missing)} root(s)"
+        if failed_roots:
+            return False, f"reviews/replies failed for {len(failed_roots)} root(s)"
+
+    return True, None
+
+
+def _resume_seen_product_ids_from_batches(manifest: dict[str, Any]) -> set[str]:
+    seen: set[str] = set()
+    for batch in (manifest.get("batching") or {}).get("batches") or []:
+        if batch.get("status") not in {"staged", "quarantined"}:
+            continue
+        product_run_dir = batch.get("product_run_dir")
+        if not product_run_dir:
+            continue
+        try:
+            seen.update(_product_ids_from_run(Path(product_run_dir)))
+        except Exception:
+            continue
+    return seen
+
+
+def _run_single_staging_command(
+    *,
+    command: list[str],
+    kind: str,
+    run_dir: str,
+    repo_root: Path,
+    connection_string: str | None,
+    executor: Callable[..., CommandResult],
+) -> dict[str, Any]:
+    secrets = [connection_string] if connection_string else []
+    started = utc_now_iso()
+    try:
+        result = executor(
+            command=command,
+            cwd=repo_root,
+            env=os.environ.copy(),
+            timeout_seconds=None,
+            output_callback=None,
+        )
+    except Exception as exception:
+        result = CommandResult(exit_code=1, stderr=_redact_text(str(exception), secrets))
+
+    stdout = _redact_text(result.stdout, secrets)
+    stderr = _redact_text(result.stderr, secrets)
+    parsed_json = _parse_cli_json(stdout)
+    return {
+        "kind": kind,
+        "run_dir": run_dir,
+        "command": _sanitize_command(command, secrets),
+        "started_at_utc": started,
+        "finished_at_utc": utc_now_iso(),
+        "exit_code": result.exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "parsed_json": parsed_json,
+        "rows_read": _json_value(parsed_json, "RowsRead", "rowsRead"),
+        "rows_written": _json_value(parsed_json, "RowsWritten", "rowsWritten"),
+        "rows_skipped": _json_value(parsed_json, "RowsSkipped", "rowsSkipped"),
+        "error_count": _json_value(parsed_json, "ErrorCount", "errorCount"),
+        "details": _json_value(parsed_json, "Details", "details"),
+    }
 
 
 def _final_status(manifest: dict[str, Any], interrupted: bool = False) -> str:
@@ -1199,6 +1656,8 @@ def _build_manifest(
     mode: str,
     staging_requested: bool,
     connection_string_source: str,
+    test_run: bool = False,
+    test_label: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -1209,6 +1668,8 @@ def _build_manifest(
         "finished_at_utc": None,
         "status": "running",
         "dry_run": False,
+        "is_test_run": bool(test_run),
+        "test_label": test_label.strip() if test_label else None,
         "git_commit": get_git_commit(_repo_root()),
         "config_path": str(config.path),
         "config_snapshot": config.safe_snapshot(),
@@ -1230,6 +1691,706 @@ def _build_manifest(
     }
 
 
+def _run_batched_pipeline(
+    *,
+    config: PipelineConfig,
+    mode: str,
+    mode_config: dict[str, Any],
+    manifest: dict[str, Any],
+    pipeline_run_id: str,
+    pipeline_run_dir: Path,
+    output_base_dir: Path,
+    repo_root: Path,
+    python_executable: str,
+    test_env: dict[str, str],
+    skip_rank: bool,
+    skip_products: bool,
+    skip_logistics: bool,
+    skip_reviews: bool,
+    skip_product_details: bool,
+    dry_run: bool,
+    stage_to_db: bool,
+    connection_string: str | None,
+    connection_string_source: str,
+    executor: Callable[..., CommandResult],
+    staging_executor: Callable[..., CommandResult],
+    streaming_product_runner: Callable[..., Path] | None = None,
+) -> None:
+    batching_config = dict(mode_config.get("batching") or {})
+    batch_size = int(batching_config.get("batch_size") or 100)
+    worker_id = str(batching_config.get("worker_id") or os.environ.get("PARSER_WORKER_ID") or "local-worker")
+    shard_key = str(batching_config.get("shard_key") or os.environ.get("PARSER_SHARD_KEY") or "default")
+    existing_batching = manifest.get("batching") or {}
+    manifest["batching"] = {
+        "enabled": True,
+        "batch_size": batch_size,
+        "worker_id": worker_id,
+        "shard_key": shard_key,
+        "total_batches": int(existing_batching.get("total_batches") or 0),
+        "staged_batches": int(existing_batching.get("staged_batches") or 0),
+        "quarantined_batches": int(existing_batching.get("quarantined_batches") or 0),
+        "staged_products": int(existing_batching.get("staged_products") or 0),
+        "quarantined_products": int(existing_batching.get("quarantined_products") or 0),
+        "batches": list(existing_batching.get("batches") or []),
+        "quarantine": list(existing_batching.get("quarantine") or []),
+        "complete_pipeline": existing_batching.get("complete_pipeline"),
+    }
+    _write_manifest(pipeline_run_dir, manifest)
+
+    rank_plan = _with_env_overrides(
+        _build_rank_plan(mode_config, repo_root=repo_root, python_executable=python_executable),
+        test_env,
+    )
+    products_plan = _with_env_overrides(
+        _build_products_plan(mode_config, repo_root=repo_root, python_executable=python_executable),
+        test_env,
+    )
+
+    if skip_rank:
+        _record_for(manifest, "rank")["status"] = "skipped"
+        _record_for(manifest, "rank")["error_summary"] = "Skipped by CLI flag."
+    else:
+        _run_step(
+            manifest=manifest,
+            pipeline_run_dir=pipeline_run_dir,
+            plan=rank_plan,
+            output_base_dir=output_base_dir,
+            repo_root=repo_root,
+            dry_run=dry_run,
+            executor=executor,
+        )
+    _write_manifest(pipeline_run_dir, manifest)
+
+    rank_staging_command: dict[str, Any] | None = None
+    rank_record = _record_for(manifest, "rank")
+    if stage_to_db and not dry_run and _step_is_stageable(rank_record) and rank_record.get("output_run_dirs"):
+        rank_dir = str(rank_record["output_run_dirs"][-1])
+        command = [
+            "dotnet",
+            "run",
+            "--project",
+            str(INGESTION_CLI_PROJECT),
+            "--",
+            "stage-ranks",
+            rank_dir,
+            "--connection-string",
+            connection_string or "",
+        ]
+        _emit_pipeline(pipeline_run_dir, f"BATCHED STAGING rank: {_command_display(command, [connection_string] if connection_string else [])}")
+        rank_staging_command = _run_single_staging_command(
+            command=command,
+            kind="ranks",
+            run_dir=rank_dir,
+            repo_root=repo_root,
+            connection_string=connection_string,
+            executor=staging_executor,
+        )
+
+    streaming_batch_index_offset = max(
+        [int(batch.get("batch_index") or 0) for batch in (manifest.get("batching") or {}).get("batches") or []] or [0]
+    )
+
+    if skip_products:
+        products_record = _record_for(manifest, "products")
+        products_record["status"] = "skipped"
+        products_record["error_summary"] = "Skipped by CLI flag."
+        for step_name in ("logistics", "reviews", "product_details"):
+            _record_for(manifest, step_name)["status"] = "skipped"
+            _record_for(manifest, step_name)["error_summary"] = "Skipped because products were skipped."
+        return
+
+    if not dry_run:
+        for step_name in ("logistics", "reviews", "product_details"):
+            record = _record_for(manifest, step_name)
+            record["status"] = "skipped"
+            record["error_summary"] = "Handled per streaming complete-card batch."
+
+        if rank_staging_command is not None:
+            manifest["staging"]["commands"].append(rank_staging_command)
+            if rank_staging_command["exit_code"] != 0:
+                manifest["staging"]["status"] = "failed"
+                manifest["staging"]["skip_reason"] = "rank staging failed"
+                _write_manifest(pipeline_run_dir, manifest)
+                return
+
+        parent_product_run_dir: Path | None = None
+
+        def handle_streaming_batch(discovery_batch: Any) -> SimpleNamespace:
+            nonlocal parent_product_run_dir
+            parent_product_run_dir = Path(discovery_batch.parent_run_dir)
+            parent_manifest_path = parent_product_run_dir / "manifest.json"
+            parent_manifest = (
+                json.loads(parent_manifest_path.read_text(encoding="utf-8"))
+                if parent_manifest_path.exists()
+                else {
+                    "schema_version": 1,
+                    "parser_run_id": getattr(discovery_batch, "parent_parser_run_id", "streaming_products"),
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "",
+                    "parser_version": get_git_commit(_repo_root()),
+                    "config_snapshot": {},
+                }
+            )
+            batch = _create_product_batch_run_dir_from_rows(
+                parent_manifest=parent_manifest,
+                batch_rows=list(discovery_batch.rows),
+                source_product_run_dir=parent_product_run_dir,
+                batches_dir=pipeline_run_dir / "batches",
+                pipeline_run_id=pipeline_run_id,
+                batch_index=streaming_batch_index_offset + int(discovery_batch.batch_index),
+                worker_id=worker_id,
+                shard_key=shard_key,
+            )
+            manifest["batching"]["total_batches"] = max(
+                int(manifest["batching"].get("total_batches") or 0),
+                batch.batch_index,
+            )
+            batch_record: dict[str, Any] = {
+                "batch_id": batch.batch_id,
+                "batch_index": batch.batch_index,
+                "size": batch.size,
+                "batch_dir": str(batch.batch_dir),
+                "product_run_dir": str(batch.product_run_dir),
+                "status": "running",
+                "steps": [],
+                "staging": None,
+                "started_at_utc": utc_now_iso(),
+                "finished_at_utc": None,
+            }
+            manifest["batching"]["batches"].append(batch_record)
+            product_manifest_path = batch.product_run_dir / "manifest.json"
+            product_manifest = (
+                json.loads(product_manifest_path.read_text(encoding="utf-8"))
+                if product_manifest_path.exists()
+                else {}
+            )
+            batch_created_at_utc = str(product_manifest.get("started_at_utc") or batch_record["started_at_utc"])
+            _emit_pipeline(
+                pipeline_run_dir,
+                (
+                    f"STREAM BATCH {batch.batch_index} START: {batch.batch_id} "
+                    f"size={batch.size} batch_created_at_utc={batch_created_at_utc}"
+                ),
+            )
+
+            batch_manifest = {
+                "batch_id": batch.batch_id,
+                "pipeline_run_id": pipeline_run_id,
+                "batch_index": batch.batch_index,
+                "size": batch.size,
+                "product_run_dir": str(batch.product_run_dir),
+                "steps": [
+                    {
+                        **asdict(PipelineStepRecord(step_name=name)),
+                        "step": name,
+                    }
+                    for name in ("logistics", "reviews", "product_details")
+                ],
+            }
+            batch_env = {
+                **test_env,
+                **_batch_scope_env(
+                    pipeline_run_id=pipeline_run_id,
+                    batch=batch,
+                    worker_id=worker_id,
+                    shard_key=shard_key,
+                    source_niche=", ".join(_product_run_source_subcategories(batch.product_run_dir)),
+                ),
+            }
+
+            batch_steps_failed = False
+            for step_name in ("logistics", "reviews", "product_details"):
+                if step_name == "logistics" and skip_logistics:
+                    continue
+                if step_name == "reviews" and skip_reviews:
+                    continue
+                if step_name == "product_details" and skip_product_details:
+                    continue
+
+                if step_name == "logistics":
+                    plan = _build_logistics_plan(
+                        mode_config,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                        product_run_dir=batch.product_run_dir,
+                        output_base_dir=batch.batch_dir,
+                    )
+                elif step_name == "reviews":
+                    review_mode_config = mode_config
+                    batch_subcategories = _product_run_source_subcategories(batch.product_run_dir)
+                    if batch_subcategories:
+                        review_mode_config = dict(mode_config)
+                        reviews_config = dict(review_mode_config.get("reviews") or {})
+                        reviews_config["source_subcategories"] = batch_subcategories
+                        review_mode_config["reviews"] = reviews_config
+                    plan = _build_reviews_plan(
+                        review_mode_config,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                        product_run_dir=batch.product_run_dir,
+                    )
+                else:
+                    plan = _build_product_details_plan(
+                        mode_config,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                        product_run_dir=batch.product_run_dir,
+                        output_base_dir=batch.batch_dir,
+                    )
+
+                plan = _with_env_overrides(plan, batch_env)
+                _run_step(
+                    manifest=batch_manifest,
+                    pipeline_run_dir=pipeline_run_dir,
+                    plan=plan,
+                    output_base_dir=batch.batch_dir,
+                    repo_root=repo_root,
+                    dry_run=False,
+                    executor=executor,
+                )
+                step_record = _record_for(batch_manifest, step_name)
+                step_record["step"] = step_name
+                batch_record["steps"].append(step_record)
+                if step_record.get("status") not in {"succeeded", "partial", "skipped"}:
+                    batch_steps_failed = True
+                    break
+
+            _write_batch_manifest(batch, batch_manifest)
+            validation_ok = False
+            validation_reason = None
+            if not batch_steps_failed:
+                try:
+                    validation_ok, validation_reason = _validate_complete_card_batch(
+                        batch=batch,
+                        batch_manifest=batch_manifest,
+                        require_logistics=not skip_logistics,
+                        require_reviews=not skip_reviews,
+                        require_product_details=not skip_product_details,
+                    )
+                except Exception as exception:
+                    validation_reason = str(exception)
+
+            if batch_steps_failed or not validation_ok:
+                reason = "mandatory enrichment step failed" if batch_steps_failed else validation_reason or "batch completeness validation failed"
+                batch_record["status"] = "quarantined"
+                batch_record["quarantine_reason"] = reason
+                manifest["batching"]["quarantine"].append({"batch_id": batch.batch_id, "reason": reason})
+                manifest["batching"]["quarantined_batches"] = int(manifest["batching"].get("quarantined_batches") or 0) + 1
+                manifest["batching"]["quarantined_products"] = int(manifest["batching"].get("quarantined_products") or 0) + batch.size
+                batch_record["finished_at_utc"] = utc_now_iso()
+                _write_manifest(pipeline_run_dir, manifest)
+                return SimpleNamespace(status="quarantined", reason=reason)
+
+            if stage_to_db:
+                command = _complete_batch_staging_command(
+                    batch_dir=batch.batch_dir,
+                    connection_string=connection_string or "",
+                )
+                _emit_pipeline(
+                    pipeline_run_dir,
+                    f"STREAM BATCH {batch.batch_index} STAGING: {_command_display(command, [connection_string] if connection_string else [])}",
+                )
+                staging_result = _run_single_staging_command(
+                    command=command,
+                    kind="complete_batch",
+                    run_dir=str(batch.batch_dir),
+                    repo_root=repo_root,
+                    connection_string=connection_string,
+                    executor=staging_executor,
+                )
+                batch_record["staging"] = staging_result
+                manifest["staging"]["commands"].append(staging_result)
+                if staging_result["exit_code"] != 0:
+                    batch_record["status"] = "failed"
+                    manifest["staging"]["status"] = "failed"
+                    manifest["staging"]["skip_reason"] = "complete batch staging failed"
+                    batch_record["finished_at_utc"] = utc_now_iso()
+                    _write_manifest(pipeline_run_dir, manifest)
+                    return SimpleNamespace(status="failed", reason="complete batch staging failed")
+                batch_record["status"] = "staged"
+                manifest["batching"]["staged_batches"] = int(manifest["batching"].get("staged_batches") or 0) + 1
+                manifest["batching"]["staged_products"] = int(manifest["batching"].get("staged_products") or 0) + batch.size
+                _emit_pipeline(
+                    pipeline_run_dir,
+                    f"STREAM BATCH {batch.batch_index} STAGED: {batch.batch_id} staged_at_utc={utc_now_iso()}",
+                )
+            else:
+                batch_record["status"] = "ready"
+
+            batch_record["finished_at_utc"] = utc_now_iso()
+            _write_manifest(pipeline_run_dir, manifest)
+            return SimpleNamespace(status=batch_record["status"], reason=None)
+
+        def default_streaming_product_runner(**kwargs: Any) -> Path:
+            from config import ParserConfig
+            from runner import run_parser_streaming
+
+            product_config = dict(mode_config.get("product") or {})
+            config_path = _to_abs(product_config["config"], base_dir=repo_root)
+            env_overrides = dict(products_plan.env_overrides)
+            original_env = {key: os.environ.get(key) for key in env_overrides}
+            try:
+                for key, value in env_overrides.items():
+                    os.environ[key] = value
+                parser_config = ParserConfig.load(config_path)
+                return run_parser_streaming(
+                    parser_config,
+                    streaming_batch_size=kwargs["streaming_batch_size"],
+                    batch_handler=kwargs["batch_handler"],
+                    smoke_only=bool(product_config.get("smoke_only")),
+                    resume_seen_product_ids=kwargs.get("resume_seen_product_ids"),
+                )
+            finally:
+                for key, value in original_env.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        runner_fn = streaming_product_runner or default_streaming_product_runner
+        resume_seen_product_ids = _resume_seen_product_ids_from_batches(manifest)
+        parent_product_run_dir = runner_fn(
+            config=mode_config,
+            streaming_batch_size=batch_size,
+            batch_handler=handle_streaming_batch,
+            smoke_only=False,
+            resume_seen_product_ids=resume_seen_product_ids,
+        )
+        products_record = _record_for(manifest, "products")
+        products_record["status"] = "succeeded"
+        products_record["output_run_dirs"] = [str(parent_product_run_dir)]
+        products_record["error_summary"] = None
+
+        if stage_to_db and manifest["staging"].get("status") != "failed":
+            command = _complete_pipeline_command(
+                pipeline_run_id=pipeline_run_id,
+                connection_string=connection_string or "",
+            )
+            _emit_pipeline(
+                pipeline_run_dir,
+                f"BATCHED COMPLETE PIPELINE: {_command_display(command, [connection_string] if connection_string else [])}",
+            )
+            completion = _run_single_staging_command(
+                command=command,
+                kind="complete_pipeline",
+                run_dir=pipeline_run_id,
+                repo_root=repo_root,
+                connection_string=connection_string,
+                executor=staging_executor,
+            )
+            manifest["batching"]["complete_pipeline"] = completion
+            manifest["staging"]["commands"].append(completion)
+            manifest["staging"]["status"] = "succeeded" if completion["exit_code"] == 0 else "failed"
+        elif not stage_to_db:
+            manifest["staging"]["status"] = "not_requested"
+
+        manifest["staging"]["requested"] = bool(stage_to_db)
+        manifest["staging"]["enabled"] = bool(stage_to_db)
+        manifest["staging"]["connection_string_source"] = connection_string_source if stage_to_db else "missing"
+        _write_manifest(pipeline_run_dir, manifest)
+        return
+
+    _run_step(
+        manifest=manifest,
+        pipeline_run_dir=pipeline_run_dir,
+        plan=products_plan,
+        output_base_dir=output_base_dir,
+        repo_root=repo_root,
+        dry_run=dry_run,
+        executor=executor,
+    )
+    _write_manifest(pipeline_run_dir, manifest)
+
+    products_record = _record_for(manifest, "products")
+    if dry_run:
+        placeholder_batch = ProductBatchRun(
+            batch_id=f"{pipeline_run_id}:dry-run:batch_0001",
+            batch_index=1,
+            size=batch_size,
+            batch_dir=pipeline_run_dir / "batches" / "batch_0001",
+            product_run_dir=pipeline_run_dir / "dry_run_batch_products",
+        )
+        batch_record: dict[str, Any] = {
+            "batch_id": placeholder_batch.batch_id,
+            "batch_index": placeholder_batch.batch_index,
+            "size": placeholder_batch.size,
+            "batch_dir": str(placeholder_batch.batch_dir),
+            "product_run_dir": str(placeholder_batch.product_run_dir),
+            "status": "planned",
+            "steps": [],
+            "staging": None,
+            "started_at_utc": None,
+            "finished_at_utc": None,
+        }
+        batch_manifest = {
+            "batch_id": placeholder_batch.batch_id,
+            "pipeline_run_id": pipeline_run_id,
+            "batch_index": placeholder_batch.batch_index,
+            "size": placeholder_batch.size,
+            "product_run_dir": str(placeholder_batch.product_run_dir),
+            "steps": [asdict(PipelineStepRecord(step_name=name)) for name in ("logistics", "reviews", "product_details")],
+        }
+        for plan in (
+            _build_logistics_plan(
+                mode_config,
+                repo_root=repo_root,
+                python_executable=python_executable,
+                product_run_dir=placeholder_batch.product_run_dir,
+                output_base_dir=placeholder_batch.batch_dir,
+            ),
+            _build_reviews_plan(
+                mode_config,
+                repo_root=repo_root,
+                python_executable=python_executable,
+                product_run_dir=placeholder_batch.product_run_dir,
+            ),
+            _build_product_details_plan(
+                mode_config,
+                repo_root=repo_root,
+                python_executable=python_executable,
+                product_run_dir=placeholder_batch.product_run_dir,
+                output_base_dir=placeholder_batch.batch_dir,
+            ),
+        ):
+            _run_step(
+                manifest=batch_manifest,
+                pipeline_run_dir=pipeline_run_dir,
+                plan=plan,
+                output_base_dir=placeholder_batch.batch_dir,
+                repo_root=repo_root,
+                dry_run=True,
+                executor=executor,
+            )
+            batch_record["steps"].append(_record_for(batch_manifest, plan.step_name))
+
+        if stage_to_db:
+            batch_record["staging"] = {
+                "kind": "complete_batch",
+                "run_dir": str(placeholder_batch.batch_dir),
+                "command": _sanitize_command(
+                    _complete_batch_staging_command(
+                        batch_dir=placeholder_batch.batch_dir,
+                        connection_string=connection_string or "",
+                    ),
+                    [connection_string] if connection_string else [],
+                ),
+                "status": "planned",
+            }
+            manifest["batching"]["complete_pipeline"] = {
+                "kind": "complete_pipeline",
+                "run_dir": pipeline_run_id,
+                "command": _sanitize_command(
+                    _complete_pipeline_command(
+                        pipeline_run_id=pipeline_run_id,
+                        connection_string=connection_string or "",
+                    ),
+                    [connection_string] if connection_string else [],
+                ),
+                "status": "planned",
+            }
+        manifest["batching"]["total_batches"] = 1
+        manifest["batching"]["batches"].append(batch_record)
+        for step_name in ("logistics", "reviews", "product_details"):
+            _record_for(manifest, step_name)["status"] = "skipped"
+            _record_for(manifest, step_name)["error_summary"] = "Batched dry-run: handled per complete-card batch."
+        return
+
+    if not _step_is_stageable(products_record) or not products_record.get("output_run_dirs"):
+        for step_name in ("logistics", "reviews", "product_details"):
+            _record_for(manifest, step_name)["status"] = "skipped"
+            _record_for(manifest, step_name)["error_summary"] = "Products step did not produce usable artifacts."
+        return
+
+    product_run_dir = Path(products_record["output_run_dirs"][-1])
+    batches = _create_product_batch_run_dirs(
+        product_run_dir=product_run_dir,
+        batches_dir=pipeline_run_dir / "batches",
+        pipeline_run_id=pipeline_run_id,
+        batch_size=batch_size,
+        worker_id=worker_id,
+        shard_key=shard_key,
+    )
+    manifest["batching"]["total_batches"] = len(batches)
+
+    for step_name in ("logistics", "reviews", "product_details"):
+        record = _record_for(manifest, step_name)
+        record["status"] = "skipped"
+        record["error_summary"] = "Handled per complete-card batch."
+
+    if rank_staging_command is not None:
+        manifest["staging"]["commands"].append(rank_staging_command)
+        if rank_staging_command["exit_code"] != 0:
+            manifest["staging"]["status"] = "failed"
+            manifest["staging"]["skip_reason"] = "rank staging failed"
+            _write_manifest(pipeline_run_dir, manifest)
+            return
+
+    for batch in batches:
+        batch_record: dict[str, Any] = {
+            "batch_id": batch.batch_id,
+            "batch_index": batch.batch_index,
+            "size": batch.size,
+            "batch_dir": str(batch.batch_dir),
+            "product_run_dir": str(batch.product_run_dir),
+            "status": "running",
+            "steps": [],
+            "staging": None,
+            "started_at_utc": utc_now_iso(),
+            "finished_at_utc": None,
+        }
+        manifest["batching"]["batches"].append(batch_record)
+        _emit_pipeline(pipeline_run_dir, f"BATCH {batch.batch_index}/{len(batches)} START: {batch.batch_id} size={batch.size}")
+
+        batch_manifest = {
+            "batch_id": batch.batch_id,
+            "pipeline_run_id": pipeline_run_id,
+            "batch_index": batch.batch_index,
+            "size": batch.size,
+            "product_run_dir": str(batch.product_run_dir),
+            "steps": [asdict(PipelineStepRecord(step_name=name)) for name in ("logistics", "reviews", "product_details")],
+        }
+        batch_env = {
+            **test_env,
+            **_batch_scope_env(
+                pipeline_run_id=pipeline_run_id,
+                batch=batch,
+                worker_id=worker_id,
+                shard_key=shard_key,
+                source_niche=", ".join(_product_run_source_subcategories(batch.product_run_dir)),
+            ),
+        }
+
+        batch_steps_failed = False
+        for step_name in ("logistics", "reviews", "product_details"):
+            if step_name == "logistics" and skip_logistics:
+                continue
+            if step_name == "reviews" and skip_reviews:
+                continue
+            if step_name == "product_details" and skip_product_details:
+                continue
+
+            if step_name == "logistics":
+                plan = _build_logistics_plan(
+                    mode_config,
+                    repo_root=repo_root,
+                    python_executable=python_executable,
+                    product_run_dir=batch.product_run_dir,
+                    output_base_dir=batch.batch_dir,
+                )
+            elif step_name == "reviews":
+                review_mode_config = mode_config
+                batch_subcategories = _product_run_source_subcategories(batch.product_run_dir)
+                if batch_subcategories:
+                    review_mode_config = dict(mode_config)
+                    reviews_config = dict(review_mode_config.get("reviews") or {})
+                    reviews_config["source_subcategories"] = batch_subcategories
+                    review_mode_config["reviews"] = reviews_config
+                plan = _build_reviews_plan(
+                    review_mode_config,
+                    repo_root=repo_root,
+                    python_executable=python_executable,
+                    product_run_dir=batch.product_run_dir,
+                )
+            else:
+                plan = _build_product_details_plan(
+                    mode_config,
+                    repo_root=repo_root,
+                    python_executable=python_executable,
+                    product_run_dir=batch.product_run_dir,
+                    output_base_dir=batch.batch_dir,
+                )
+
+            plan = _with_env_overrides(plan, batch_env)
+            _run_step(
+                manifest=batch_manifest,
+                pipeline_run_dir=pipeline_run_dir,
+                plan=plan,
+                output_base_dir=batch.batch_dir,
+                repo_root=repo_root,
+                dry_run=False,
+                executor=executor,
+            )
+            step_record = _record_for(batch_manifest, step_name)
+            batch_record["steps"].append(step_record)
+            if step_record.get("status") not in {"succeeded", "partial", "skipped"}:
+                batch_steps_failed = True
+                break
+
+        _write_batch_manifest(batch, batch_manifest)
+        if batch_steps_failed:
+            batch_record["status"] = "quarantined"
+            manifest["batching"]["quarantine"].append(
+                {
+                    "batch_id": batch.batch_id,
+                    "reason": "mandatory enrichment step failed",
+                }
+            )
+            batch_record["finished_at_utc"] = utc_now_iso()
+            _write_manifest(pipeline_run_dir, manifest)
+            continue
+
+        if stage_to_db:
+            command = _complete_batch_staging_command(
+                batch_dir=batch.batch_dir,
+                connection_string=connection_string or "",
+            )
+            _emit_pipeline(
+                pipeline_run_dir,
+                f"BATCH {batch.batch_index}/{len(batches)} STAGING: {_command_display(command, [connection_string] if connection_string else [])}",
+            )
+            staging_result = _run_single_staging_command(
+                command=command,
+                kind="complete_batch",
+                run_dir=str(batch.batch_dir),
+                repo_root=repo_root,
+                connection_string=connection_string,
+                executor=staging_executor,
+            )
+            batch_record["staging"] = staging_result
+            manifest["staging"]["commands"].append(staging_result)
+            if staging_result["exit_code"] != 0:
+                batch_record["status"] = "failed"
+                manifest["staging"]["status"] = "failed"
+                manifest["staging"]["skip_reason"] = "complete batch staging failed"
+                batch_record["finished_at_utc"] = utc_now_iso()
+                _write_manifest(pipeline_run_dir, manifest)
+                continue
+            batch_record["status"] = "staged"
+        else:
+            batch_record["status"] = "ready"
+
+        batch_record["finished_at_utc"] = utc_now_iso()
+        _write_manifest(pipeline_run_dir, manifest)
+
+    if stage_to_db and manifest["staging"].get("status") != "failed":
+        command = _complete_pipeline_command(
+            pipeline_run_id=pipeline_run_id,
+            connection_string=connection_string or "",
+        )
+        _emit_pipeline(
+            pipeline_run_dir,
+            f"BATCHED COMPLETE PIPELINE: {_command_display(command, [connection_string] if connection_string else [])}",
+        )
+        completion = _run_single_staging_command(
+            command=command,
+            kind="complete_pipeline",
+            run_dir=pipeline_run_id,
+            repo_root=repo_root,
+            connection_string=connection_string,
+            executor=staging_executor,
+        )
+        manifest["batching"]["complete_pipeline"] = completion
+        manifest["staging"]["commands"].append(completion)
+        manifest["staging"]["status"] = "succeeded" if completion["exit_code"] == 0 else "failed"
+    elif not stage_to_db:
+        manifest["staging"]["status"] = "not_requested"
+
+    manifest["staging"]["requested"] = bool(stage_to_db)
+    manifest["staging"]["enabled"] = bool(stage_to_db)
+    manifest["staging"]["connection_string_source"] = connection_string_source if stage_to_db else "missing"
+
+
 def run_pipeline(
     *,
     config: PipelineConfig,
@@ -1246,8 +2407,11 @@ def run_pipeline(
     stage_to_db: bool = False,
     connection_string: str | None = None,
     connection_string_source: str = "missing",
+    test_run: bool = False,
+    test_label: str | None = None,
     executor: Callable[..., CommandResult] = _execute_subprocess,
     staging_executor: Callable[..., CommandResult] = _execute_subprocess_capture,
+    streaming_product_runner: Callable[..., Path] | None = None,
 ) -> Path:
     if stage_to_db and not connection_string:
         raise ValueError(
@@ -1277,12 +2441,16 @@ def run_pipeline(
             mode=mode,
             staging_requested=stage_to_db,
             connection_string_source=connection_string_source,
+            test_run=test_run,
+            test_label=test_label,
         )
     manifest["staging"] = _initial_staging_manifest(
         requested=stage_to_db,
         connection_string_source=connection_string_source,
     )
     manifest["dry_run"] = bool(dry_run)
+    manifest["is_test_run"] = bool(test_run)
+    manifest["test_label"] = test_label.strip() if test_label else None
     _emit_pipeline(
         pipeline_run_dir,
         f"PIPELINE {pipeline_run_id}: mode={mode} dry_run={bool(dry_run)} stage_to_db={bool(stage_to_db)}",
@@ -1290,17 +2458,75 @@ def run_pipeline(
 
     effective_fail_fast = bool(fail_fast or config.defaults.get("fail_fast"))
     python_executable = _python_executable()
+    test_env = _test_scope_env(pipeline_run_id=pipeline_run_id, test_run=test_run, test_label=test_label)
     interrupted = False
     product_run_dir: Path | None = None
     blocked_steps: set[str] = set()
+
+    if _is_batched_full_enrichment(mode, mode_config):
+        try:
+            _run_batched_pipeline(
+                config=config,
+                mode=mode,
+                mode_config=mode_config,
+                manifest=manifest,
+                pipeline_run_id=pipeline_run_id,
+                pipeline_run_dir=pipeline_run_dir,
+                output_base_dir=output_base_dir,
+                repo_root=repo_root,
+                python_executable=python_executable,
+                test_env=test_env,
+                skip_rank=skip_rank,
+                skip_products=skip_products,
+                skip_logistics=skip_logistics,
+                skip_reviews=skip_reviews,
+                skip_product_details=skip_product_details,
+                dry_run=dry_run,
+                stage_to_db=stage_to_db,
+                connection_string=connection_string,
+                connection_string_source=connection_string_source,
+                executor=executor,
+                staging_executor=staging_executor,
+                streaming_product_runner=streaming_product_runner,
+            )
+        except KeyboardInterrupt:
+            interrupted = True
+            _emit_pipeline(pipeline_run_dir, "INTERRUPTED by user")
+        finally:
+            batching = manifest.get("batching") or {}
+            has_quarantine = bool(batching.get("quarantine"))
+            if dry_run and stage_to_db:
+                manifest["staging"]["status"] = "skipped"
+                manifest["staging"]["enabled"] = False
+                manifest["staging"]["skip_reason"] = "dry_run"
+            status = _final_status(manifest, interrupted=interrupted)
+            if has_quarantine and status == "succeeded":
+                status = "partial"
+            manifest["status"] = status
+            manifest["finished_at_utc"] = utc_now_iso()
+            manifest["suggested_ingestion_commands"] = []
+            _write_manifest(pipeline_run_dir, manifest)
+            _emit_pipeline(
+                pipeline_run_dir,
+                "PIPELINE FINISHED: "
+                f"status={manifest['status']} staging_status={(manifest.get('staging') or {}).get('status')} "
+                f"batches={(manifest.get('batching') or {}).get('total_batches')}",
+            )
+        return pipeline_run_dir
 
     product_record = _record_for(manifest, "products")
     if product_record.get("status") == "succeeded" and product_record.get("output_run_dirs"):
         product_run_dir = Path(product_record["output_run_dirs"][-1])
 
     try:
-        rank_plan = _build_rank_plan(mode_config, repo_root=repo_root, python_executable=python_executable)
-        products_plan = _build_products_plan(mode_config, repo_root=repo_root, python_executable=python_executable)
+        rank_plan = _with_env_overrides(
+            _build_rank_plan(mode_config, repo_root=repo_root, python_executable=python_executable),
+            test_env,
+        )
+        products_plan = _with_env_overrides(
+            _build_products_plan(mode_config, repo_root=repo_root, python_executable=python_executable),
+            test_env,
+        )
 
         for step_name in STEP_ORDER:
             if step_name == "rank":
@@ -1313,35 +2539,44 @@ def run_pipeline(
                 plan_product_run_dir = product_run_dir
                 if dry_run and plan_product_run_dir is None and products_plan.enabled:
                     plan_product_run_dir = Path("<products-run-dir>")
-                plan = _build_logistics_plan(
-                    mode_config,
-                    repo_root=repo_root,
-                    python_executable=python_executable,
-                    product_run_dir=plan_product_run_dir,
-                    output_base_dir=output_base_dir,
+                plan = _with_env_overrides(
+                    _build_logistics_plan(
+                        mode_config,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                        product_run_dir=plan_product_run_dir,
+                        output_base_dir=output_base_dir,
+                    ),
+                    test_env,
                 )
                 skip_requested = skip_logistics
             elif step_name == "reviews":
                 plan_product_run_dir = product_run_dir
                 if dry_run and plan_product_run_dir is None and products_plan.enabled:
                     plan_product_run_dir = Path("<products-run-dir>")
-                plan = _build_reviews_plan(
-                    mode_config,
-                    repo_root=repo_root,
-                    python_executable=python_executable,
-                    product_run_dir=plan_product_run_dir,
+                plan = _with_env_overrides(
+                    _build_reviews_plan(
+                        mode_config,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                        product_run_dir=plan_product_run_dir,
+                    ),
+                    test_env,
                 )
                 skip_requested = skip_reviews
             else:
                 plan_product_run_dir = product_run_dir
                 if dry_run and plan_product_run_dir is None and products_plan.enabled:
                     plan_product_run_dir = Path("<products-run-dir>")
-                plan = _build_product_details_plan(
-                    mode_config,
-                    repo_root=repo_root,
-                    python_executable=python_executable,
-                    product_run_dir=plan_product_run_dir,
-                    output_base_dir=output_base_dir,
+                plan = _with_env_overrides(
+                    _build_product_details_plan(
+                        mode_config,
+                        repo_root=repo_root,
+                        python_executable=python_executable,
+                        product_run_dir=plan_product_run_dir,
+                        output_base_dir=output_base_dir,
+                    ),
+                    test_env,
                 )
                 skip_requested = skip_product_details
 
@@ -1444,11 +2679,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-reviews", action="store_true")
     parser.add_argument("--skip-product-details", action="store_true")
     parser.add_argument("--resume-run-dir", type=Path)
+    parser.add_argument("--resume-pipeline-dir", type=Path, help="Alias for --resume-run-dir in streaming batched mode.")
     parser.add_argument("--force-step", choices=STEP_ORDER)
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--stage-to-db", action="store_true", help="After successful parser run, stage artifacts through the .NET ingestion CLI.")
     parser.add_argument("--connection-string", help="PostgreSQL connection string for opt-in staging.")
+    parser.add_argument("--test-run", action="store_true", help="Mark all child parser runs as isolated test runs.")
+    parser.add_argument("--test-label", help="Human-readable test run label stored in child run requested_scope.")
     parser.add_argument("--no-ingestion", action="store_true", default=True)
     return parser.parse_args()
 
@@ -1473,13 +2711,15 @@ def main() -> None:
         skip_logistics=args.skip_logistics,
         skip_reviews=args.skip_reviews,
         skip_product_details=args.skip_product_details,
-        resume_run_dir=args.resume_run_dir,
+        resume_run_dir=args.resume_pipeline_dir or args.resume_run_dir,
         force_step=args.force_step,
         fail_fast=args.fail_fast,
         dry_run=args.dry_run,
         stage_to_db=staging.requested,
         connection_string=staging.connection_string,
         connection_string_source=staging.connection_string_source,
+        test_run=args.test_run,
+        test_label=args.test_label,
     )
     print(f"Pipeline run directory: {run_dir}")
     manifest = _load_manifest(run_dir)
