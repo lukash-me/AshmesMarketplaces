@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { LogOut, Menu, Search } from 'lucide-vue-next';
 import { computed } from 'vue';
-import { useRouter } from 'vue-router';
 
+import { useAuthPromptStore } from '@/features/auth/authPrompt.store';
 import { useAuthStore } from '@/features/auth/auth.store';
 
 defineEmits<{
@@ -10,13 +10,13 @@ defineEmits<{
 }>();
 
 const auth = useAuthStore();
-const router = useRouter();
+const authPrompt = useAuthPromptStore();
 
-const userLabel = computed(() => auth.user?.login ?? 'Signed in');
+const isSignedIn = computed(() => auth.isAuthenticated && Boolean(auth.user));
+const userLabel = computed(() => auth.user?.login ?? '');
 
 async function signOut() {
   await auth.logout();
-  await router.push({ name: 'login' });
 }
 </script>
 
@@ -29,12 +29,16 @@ async function signOut() {
       <Search :size="16" />
       <span>Search workspace</span>
     </div>
-    <div class="topbar__user">
+    <div v-if="isSignedIn" class="topbar__user">
       <span class="topbar__status">Workspace</span>
       <span>{{ userLabel }}</span>
       <button class="app-icon-button" type="button" title="Sign out" @click="signOut">
         <LogOut :size="17" />
       </button>
+    </div>
+    <div v-else class="topbar__guest">
+      <button class="topbar__guest-link" type="button" @click="authPrompt.showLogin()">Войти</button>
+      <button class="topbar__guest-button" type="button" @click="authPrompt.showAccess()">Получить доступ</button>
     </div>
   </header>
 </template>
@@ -76,6 +80,34 @@ async function signOut() {
   color: var(--color-text-muted);
   font-size: 0.8125rem;
   font-weight: 650;
+}
+
+.topbar__guest {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.topbar__guest-link,
+.topbar__guest-button {
+  min-height: 2rem;
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 720;
+}
+
+.topbar__guest-link {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--accent-ember-text-strong);
+}
+
+.topbar__guest-button {
+  border: 1px solid var(--accent-primary-border);
+  background: var(--button-primary-bg);
+  color: var(--text-on-fire);
 }
 
 .topbar__status {

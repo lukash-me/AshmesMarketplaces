@@ -24,6 +24,7 @@ public sealed class MarketRecommendationsController : ControllerBase
     }
 
     [HttpGet("hot-products")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(HotProductsListResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<HotProductsListResponse>> GetHotProducts(
@@ -43,7 +44,7 @@ public sealed class MarketRecommendationsController : ControllerBase
         [FromBody] RecalculateHotProductsRequest request,
         CancellationToken cancellationToken)
     {
-        var result = await _recalculationService.RecalculateAsync(request, cancellationToken);
+        var result = await _recalculationService.RecalculatePublicAsync(request, cancellationToken);
         return ToActionResult(result);
     }
 

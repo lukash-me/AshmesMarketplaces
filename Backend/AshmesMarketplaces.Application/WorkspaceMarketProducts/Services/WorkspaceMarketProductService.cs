@@ -9,6 +9,7 @@ using AshmesMarketplaces.Domain.Entities.ParserIngestion;
 using AshmesMarketplaces.Domain.Entities.Workspaces;
 using AshmesMarketplaces.Domain.Shared;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace AshmesMarketplaces.Application.WorkspaceMarketProducts.Services;
 
@@ -16,11 +17,19 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly ICurrentUser _currentUser;
+    private readonly IWorkspaceMarketProductMediaStorage _mediaStorage;
+    private readonly ILogger<WorkspaceMarketProductService> _logger;
 
-    public WorkspaceMarketProductService(ApplicationDbContext dbContext, ICurrentUser currentUser)
+    public WorkspaceMarketProductService(
+        ApplicationDbContext dbContext,
+        ICurrentUser currentUser,
+        IWorkspaceMarketProductMediaStorage mediaStorage,
+        ILogger<WorkspaceMarketProductService> logger)
     {
         _dbContext = dbContext;
         _currentUser = currentUser;
+        _mediaStorage = mediaStorage;
+        _logger = logger;
     }
 
     public async Task<ServiceResult<PagedResponse<WorkspaceMarketProductListItemResponse>>> GetListAsync(
@@ -47,7 +56,8 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             .Take(pageSize)
             .ToListAsync(cancellationToken);
         var latestObserved = await LoadLatestObservedMapAsync(pageRows, cancellationToken);
-        var items = pageRows.Select(row => MapToListItem(row, latestObserved.GetValueOrDefault(row.Id))).ToList();
+        var media = await LoadMediaMapAsync(pageRows.Select(x => x.Id).ToArray(), cancellationToken);
+        var items = pageRows.Select(row => MapToListItem(row, latestObserved.GetValueOrDefault(row.Id), media.GetValueOrDefault(row.Id) ?? [])).ToList();
 
         return ServiceResult<PagedResponse<WorkspaceMarketProductListItemResponse>>.Success(
             new PagedResponse<WorkspaceMarketProductListItemResponse>(items, page, pageSize, totalCount));
@@ -67,7 +77,8 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             return ServiceResult<WorkspaceMarketProductResponse>.NotFound("Workspace market product was not found.");
 
         var latestObserved = await LoadLatestObservedAtAsync(row, cancellationToken);
-        return ServiceResult<WorkspaceMarketProductResponse>.Success(MapToResponse(row, latestObserved));
+        var media = await LoadMediaAsync(row.Id, cancellationToken);
+        return ServiceResult<WorkspaceMarketProductResponse>.Success(MapToResponse(row, latestObserved, media));
     }
 
     public async Task<ServiceResult<WorkspaceMarketProductResponse>> AddAsync(
@@ -122,8 +133,9 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
                 now);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
+            var media = await LoadMediaAsync(existing.Id, cancellationToken);
             return ServiceResult<WorkspaceMarketProductResponse>.Success(
-                MapToResponse(existing, await LoadLatestObservedAtAsync(existing, cancellationToken)));
+                MapToResponse(existing, await LoadLatestObservedAtAsync(existing, cancellationToken), media));
         }
 
         try
@@ -138,6 +150,7 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
                 productRow.SourceSubcategory,
                 productRow.SourceRegionDest,
                 productRow.SourceQuery,
+                WorkspaceMarketProduct.ParserSourceType,
                 request.TagKey,
                 request.Note,
                 productRow.Name,
@@ -151,6 +164,12 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
                 productRow.FeedbackCount,
                 snapshot.PositionAbsolute,
                 snapshot.TotalQuantity,
+                costPrice: null,
+                description: null,
+                characteristicsJson: null,
+                supplierName: null,
+                supplierUrl: null,
+                demoPayloadJson: null,
                 now,
                 now);
 
@@ -158,7 +177,7 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             return ServiceResult<WorkspaceMarketProductResponse>.Success(
-                MapToResponse(row, await LoadLatestObservedAtAsync(row, cancellationToken)));
+                MapToResponse(row, await LoadLatestObservedAtAsync(row, cancellationToken), []));
         }
         catch (ArgumentException exception)
         {
@@ -167,6 +186,128 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
         catch (DbUpdateException)
         {
             return ServiceResult<WorkspaceMarketProductResponse>.Conflict("Market product cannot be added because it conflicts with existing workspace data.");
+        }
+    }
+
+    public async Task<ServiceResult<WorkspaceMarketProductResponse>> AddDemoAsync(
+        Guid workspaceId,
+        CreateDemoWorkspaceMarketProductRequest request,
+        IReadOnlyList<WorkspaceMarketProductUpload> media,
+        CancellationToken cancellationToken)
+    {
+        var access = await EnsureWorkspaceAccessAsync(workspaceId, cancellationToken);
+        if (!access.IsSuccess)
+            return PropagateError<WorkspaceMarketProductResponse>(access.Error!);
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("Name is required.");
+
+        if (string.IsNullOrWhiteSpace(request.SourceCategory))
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("Category is required.");
+
+        if (string.IsNullOrWhiteSpace(request.SourceSubcategory))
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("Subcategory is required.");
+
+        if (request.Price <= 0)
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("Price must be positive.");
+
+        if (request.CostPrice.HasValue && request.CostPrice.Value < 0)
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("Cost price cannot be negative.");
+
+        if (media.Count > 10)
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("At most 10 media files can be uploaded.");
+
+        var tagKey = WorkspaceMarketProduct.CreatedTag;
+        var tagCheck = ValidateRequiredTag(tagKey);
+        if (tagCheck is not null)
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest(tagCheck);
+
+        if (!IsJsonOrEmpty(request.CharacteristicsJson))
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest("Characteristics must be valid JSON.");
+
+        var now = DateTime.UtcNow;
+        var row = new WorkspaceMarketProduct(
+            workspaceId,
+            _currentUser.UserId!.Value,
+            parserProductRowId: null,
+            wbProductId: null,
+            wbRootId: null,
+            request.SourceCategory,
+            request.SourceSubcategory,
+            sourceRegionDest: null,
+            sourceQuery: null,
+            WorkspaceMarketProduct.DemoSourceType,
+            tagKey,
+            request.Note,
+            request.Name,
+            brandName: null,
+            sellerName: request.SupplierName,
+            thumbnailUrl: null,
+            priceRegular: request.Price,
+            priceDiscounted: request.Price,
+            priceWbWallet: request.Price,
+            reviewRating: null,
+            feedbackCount: null,
+            positionAbsolute: null,
+            totalQuantity: null,
+            request.CostPrice,
+            request.Description,
+            NormalizeJson(request.CharacteristicsJson),
+            request.SupplierName,
+            request.SupplierUrl,
+            demoPayloadJson: null,
+            now,
+            now);
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            _dbContext.WorkspaceMarketProducts.Add(row);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            var savedMedia = new List<WorkspaceMarketProductMedia>();
+            var sortOrder = 1;
+            foreach (var upload in media)
+            {
+                var stored = await _mediaStorage.SaveAsync(workspaceId, row.Id, upload, sortOrder, cancellationToken);
+                savedMedia.Add(new WorkspaceMarketProductMedia(
+                    row.Id,
+                    stored.Url,
+                    stored.StorageKey,
+                    stored.FileName,
+                    stored.ContentType,
+                    sortOrder,
+                    WorkspaceMarketProductMedia.ImageKind,
+                    DateTime.UtcNow));
+                sortOrder++;
+            }
+
+            if (savedMedia.Count > 0)
+            {
+                _dbContext.WorkspaceMarketProductMedia.AddRange(savedMedia);
+                row.SetThumbnail(savedMedia.OrderBy(x => x.SortOrder).First().Url, DateTime.UtcNow);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+
+            return ServiceResult<WorkspaceMarketProductResponse>.Success(
+                MapToResponse(row, row.DateUpdate, savedMedia.Select(MapMedia).ToList()));
+        }
+        catch (InvalidOperationException exception)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest(exception.Message);
+        }
+        catch (ArgumentException exception)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return ServiceResult<WorkspaceMarketProductResponse>.BadRequest(exception.Message);
+        }
+        catch (DbUpdateException)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return ServiceResult<WorkspaceMarketProductResponse>.Conflict("Demo market product cannot be created because it conflicts with existing workspace data.");
         }
     }
 
@@ -191,8 +332,9 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
         row.UpdateTracking(request.TagKey, request.Note, DateTime.UtcNow);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        var media = await LoadMediaAsync(row.Id, cancellationToken);
         return ServiceResult<WorkspaceMarketProductResponse>.Success(
-            MapToResponse(row, await LoadLatestObservedAtAsync(row, cancellationToken)));
+            MapToResponse(row, await LoadLatestObservedAtAsync(row, cancellationToken), media));
     }
 
     public async Task<ServiceResult> DeleteAsync(
@@ -208,8 +350,37 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
         if (row is null)
             return ServiceResult.NotFound("Workspace market product was not found.");
 
-        _dbContext.WorkspaceMarketProducts.Remove(row);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await _dbContext.WorkspaceMarketProductUserReadStates
+                .Where(x => x.IdWorkspaceMarketProduct == row.Id)
+                .ExecuteDeleteAsync(cancellationToken);
+            await _dbContext.WorkspaceMarketProductAnalyses
+                .Where(x => x.IdWorkspaceMarketProduct == row.Id)
+                .ExecuteDeleteAsync(cancellationToken);
+            await _dbContext.WorkspaceMarketProductMedia
+                .Where(x => x.IdWorkspaceMarketProduct == row.Id)
+                .ExecuteDeleteAsync(cancellationToken);
+
+            _dbContext.WorkspaceMarketProducts.Remove(row);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogError(
+                exception,
+                "Failed to delete workspace market product {WorkspaceMarketProductId} from workspace {WorkspaceId}. SourceType={SourceType}, WbProductId={WbProductId}, ParserProductRowId={ParserProductRowId}.",
+                row.Id,
+                workspaceId,
+                row.SourceType,
+                row.WbProductId,
+                row.ParserProductRowId);
+            return ServiceResult.Conflict("Не удалось удалить карточку из наблюдаемых.");
+        }
+
         return ServiceResult.Success();
     }
 
@@ -225,6 +396,21 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
         var row = rowResult.Value;
         if (row is null)
             return ServiceResult<WorkspaceMarketProductHistoryResponse>.NotFound("Workspace market product was not found.");
+
+        if (row.SourceType == WorkspaceMarketProduct.DemoSourceType)
+        {
+            var demoGroups = new List<WorkspaceMarketProductHistoryGroupResponse>
+            {
+                BuildDemoHistoryGroup(row, "price", "Цена", row.PriceWbWallet ?? row.PriceDiscounted ?? row.PriceRegular, "₽"),
+                BuildDemoHistoryGroup(row, "rating", "Рейтинг", row.ReviewRating, null),
+                BuildDemoHistoryGroup(row, "feedbacks", "Отзывы", row.FeedbackCount, null),
+                BuildDemoHistoryGroup(row, "position", "Позиция", row.PositionAbsolute, null),
+                BuildDemoHistoryGroup(row, "stock", "Остатки", row.TotalQuantity, null)
+            };
+
+            return ServiceResult<WorkspaceMarketProductHistoryResponse>.Success(
+                new WorkspaceMarketProductHistoryResponse(row.Id, row.WbProductId, demoGroups));
+        }
 
         var groups = new List<WorkspaceMarketProductHistoryGroupResponse>
         {
@@ -304,7 +490,7 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             var search = query.Search.Trim();
             rows = rows.Where(x =>
                 EF.Functions.ILike(x.Name, $"%{search}%")
-                || EF.Functions.ILike(x.WbProductId, $"%{search}%")
+                || (x.WbProductId != null && EF.Functions.ILike(x.WbProductId, $"%{search}%"))
                 || (x.BrandName != null && EF.Functions.ILike(x.BrandName, $"%{search}%"))
                 || (x.SellerName != null && EF.Functions.ILike(x.SellerName, $"%{search}%"))
                 || (x.Note != null && EF.Functions.ILike(x.Note, $"%{search}%")));
@@ -370,6 +556,9 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
 
     private async Task<DateTime?> LoadLatestObservedAtAsync(WorkspaceMarketProduct row, CancellationToken cancellationToken)
     {
+        if (row.SourceType == WorkspaceMarketProduct.DemoSourceType || string.IsNullOrWhiteSpace(row.WbProductId))
+            return row.DateUpdate;
+
         var productDate = await _dbContext.ParserProductRows
             .AsNoTracking()
             .Where(x =>
@@ -469,13 +658,66 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
         return new WorkspaceMarketProductHistoryGroupResponse("stock", "Остатки", points);
     }
 
-    private static WorkspaceMarketProductListItemResponse MapToListItem(WorkspaceMarketProduct row, DateTime? latestObservedAtUtc) =>
+    private async Task<IReadOnlyDictionary<Guid, IReadOnlyList<WorkspaceMarketProductMediaResponse>>> LoadMediaMapAsync(
+        IReadOnlyCollection<Guid> productIds,
+        CancellationToken cancellationToken)
+    {
+        if (productIds.Count == 0)
+            return new Dictionary<Guid, IReadOnlyList<WorkspaceMarketProductMediaResponse>>();
+
+        var rows = await _dbContext.WorkspaceMarketProductMedia
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.IdWorkspaceMarketProduct))
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.IdWorkspaceMarketProduct)
+            .ToDictionary(
+                x => x.Key,
+                x => (IReadOnlyList<WorkspaceMarketProductMediaResponse>)x.Select(MapMedia).ToList());
+    }
+
+    private async Task<IReadOnlyList<WorkspaceMarketProductMediaResponse>> LoadMediaAsync(
+        Guid productId,
+        CancellationToken cancellationToken)
+    {
+        var media = await LoadMediaMapAsync([productId], cancellationToken);
+        return media.GetValueOrDefault(productId) ?? [];
+    }
+
+    private static WorkspaceMarketProductHistoryGroupResponse BuildDemoHistoryGroup(
+        WorkspaceMarketProduct row,
+        string key,
+        string label,
+        decimal? value,
+        string? suffix)
+    {
+        var items = value.HasValue
+            ? new List<WorkspaceMarketProductHistoryPointResponse>
+            {
+                new(row.DateUpdate, value, FormatValue(value, suffix), row.SourceSubcategory)
+            }
+            : [];
+
+        return new WorkspaceMarketProductHistoryGroupResponse(key, label, items);
+    }
+
+    private static WorkspaceMarketProductMediaResponse MapMedia(WorkspaceMarketProductMedia row) =>
+        new(row.Id, row.Url, row.FileName, row.ContentType, row.SortOrder, row.Kind, row.UploadedAtUtc);
+
+    private static WorkspaceMarketProductListItemResponse MapToListItem(
+        WorkspaceMarketProduct row,
+        DateTime? latestObservedAtUtc,
+        IReadOnlyList<WorkspaceMarketProductMediaResponse> media) =>
         new(
             row.Id,
             row.IdWorkspace,
             row.ParserProductRowId,
             row.WbProductId,
             row.WbRootId,
+            row.SourceType,
+            row.SourceType == WorkspaceMarketProduct.DemoSourceType,
             row.SourceCategory,
             row.SourceSubcategory,
             row.SourceRegionDest,
@@ -493,11 +735,20 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             row.FeedbackCount,
             row.PositionAbsolute,
             row.TotalQuantity,
+            row.CostPrice,
+            row.Description,
+            row.CharacteristicsJson,
+            row.SupplierName,
+            row.SupplierUrl,
+            media,
             row.DateCreate,
             row.DateUpdate,
             latestObservedAtUtc);
 
-    private static WorkspaceMarketProductResponse MapToResponse(WorkspaceMarketProduct row, DateTime? latestObservedAtUtc) =>
+    private static WorkspaceMarketProductResponse MapToResponse(
+        WorkspaceMarketProduct row,
+        DateTime? latestObservedAtUtc,
+        IReadOnlyList<WorkspaceMarketProductMediaResponse> media) =>
         new(
             row.Id,
             row.IdWorkspace,
@@ -505,6 +756,8 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             row.ParserProductRowId,
             row.WbProductId,
             row.WbRootId,
+            row.SourceType,
+            row.SourceType == WorkspaceMarketProduct.DemoSourceType,
             row.SourceCategory,
             row.SourceSubcategory,
             row.SourceRegionDest,
@@ -522,6 +775,12 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
             row.FeedbackCount,
             row.PositionAbsolute,
             row.TotalQuantity,
+            row.CostPrice,
+            row.Description,
+            row.CharacteristicsJson,
+            row.SupplierName,
+            row.SupplierUrl,
+            media,
             row.DateCreate,
             row.DateUpdate,
             latestObservedAtUtc);
@@ -533,7 +792,7 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
 
         return WorkspaceMarketProduct.IsValidTag(tagKey.Trim())
             ? null
-            : "Tag key must be one of: competitor, idea.";
+            : "Tag key must be one of: competitor, idea, created.";
     }
 
     private static string? ValidateOptionalTag(string? tagKey)
@@ -543,7 +802,32 @@ public sealed class WorkspaceMarketProductService : IWorkspaceMarketProductServi
 
         return WorkspaceMarketProduct.IsValidTag(tagKey.Trim())
             ? null
-            : "Tag key must be one of: competitor, idea.";
+            : "Tag key must be one of: competitor, idea, created.";
+    }
+
+    private static bool IsJsonOrEmpty(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        try
+        {
+            using var _ = JsonDocument.Parse(value);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string? NormalizeJson(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        using var document = JsonDocument.Parse(value);
+        return JsonSerializer.Serialize(document.RootElement);
     }
 
     private static string BuildContextKey(string? value) =>

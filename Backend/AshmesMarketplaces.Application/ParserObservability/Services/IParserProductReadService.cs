@@ -14,6 +14,14 @@ public interface IParserProductReadService
         ParserProductFilterOptionsQuery query,
         CancellationToken cancellationToken);
 
+    Task<ServiceResult<ParserDemoCardOptionsDto>> GetDemoCardOptionsAsync(
+        bool includeCharacteristics,
+        CancellationToken cancellationToken);
+
+    Task<ServiceResult<ParserDemoCardCharacteristicsDto>> GetDemoCardCharacteristicsAsync(
+        string subcategory,
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<ParserProductLogisticsSummaryAggregateDto>> GetLogisticsSummaryAsync(
         ParserProductLogisticsSummaryQuery query,
         CancellationToken cancellationToken);

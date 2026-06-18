@@ -4,11 +4,19 @@ namespace AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 
 public sealed record HotProductsListResponse(
     HotProductsRunSummaryDto? Run,
+    PublicHotProductsScheduleDto? Schedule,
     int Page,
     int PageSize,
     int TotalCount,
     IReadOnlyList<HotProductRecommendationListItemDto> Items,
     IReadOnlyList<HotProductsGroupDto> Groups);
+
+public sealed record PublicHotProductsScheduleDto(
+    string LocalTime,
+    string TimezoneId,
+    DateTime NextRunAtUtc,
+    DateTime? LastCompletedAtUtc,
+    string? LastStatus);
 
 public sealed record HotProductsGroupDto(
     string Key,
@@ -31,7 +39,10 @@ public sealed record HotProductsRunSummaryDto(
     string Algorithm,
     string AlgorithmVersion,
     int ItemsTotal,
-    int WarningCount);
+    int WarningCount,
+    int ProductsSent,
+    int FactorCodeCount,
+    IReadOnlyList<string> Warnings);
 
 public sealed record HotProductRecommendationListItemDto(
     Guid Id,

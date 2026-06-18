@@ -1,11 +1,13 @@
-export type WorkspaceMarketProductTagKey = 'competitor' | 'idea';
+export type WorkspaceMarketProductTagKey = 'competitor' | 'idea' | 'created';
 
 export interface WorkspaceMarketProductListItem {
   id: string;
   idWorkspace: string;
-  parserProductRowId: string;
-  wbProductId: string;
+  parserProductRowId: string | null;
+  wbProductId: string | null;
   wbRootId: string | null;
+  sourceType: 'parser' | 'demo' | string;
+  isDemo: boolean;
   sourceCategory: string | null;
   sourceSubcategory: string | null;
   sourceRegionDest: string | null;
@@ -23,6 +25,12 @@ export interface WorkspaceMarketProductListItem {
   feedbackCount: number | null;
   positionAbsolute: number | null;
   totalQuantity: number | null;
+  costPrice: number | null;
+  description: string | null;
+  characteristicsJson: string | null;
+  supplierName: string | null;
+  supplierUrl: string | null;
+  media: WorkspaceMarketProductMedia[];
   dateCreate: string;
   dateUpdate: string;
   latestObservedAtUtc: string | null;
@@ -50,6 +58,30 @@ export interface CreateWorkspaceMarketProductRequest extends SaveWorkspaceMarket
   parserProductRowId: string;
 }
 
+export interface WorkspaceMarketProductMedia {
+  id: string;
+  url: string;
+  fileName: string;
+  contentType: string;
+  sortOrder: number;
+  kind: string;
+  uploadedAtUtc: string;
+}
+
+export interface CreateDemoWorkspaceMarketProductRequest {
+  name: string;
+  sourceCategory: string;
+  sourceSubcategory: string;
+  price: number;
+  costPrice: number | null;
+  description: string | null;
+  characteristicsJson: string | null;
+  supplierName: string | null;
+  supplierUrl: string | null;
+  note: string | null;
+  media: File[];
+}
+
 export interface WorkspaceMarketProductHistoryPoint {
   observedAtUtc: string;
   value: number | null;
@@ -65,6 +97,6 @@ export interface WorkspaceMarketProductHistoryGroup {
 
 export interface WorkspaceMarketProductHistory {
   id: string;
-  wbProductId: string;
+  wbProductId: string | null;
   groups: WorkspaceMarketProductHistoryGroup[];
 }

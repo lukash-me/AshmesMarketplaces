@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.hot_products import ACTIVE_OPPORTUNITY_FACTOR_CODES
 
 
 def now_iso() -> str:
@@ -104,6 +105,11 @@ class RecommendationContractTests(unittest.TestCase):
             json=hot_products_payload(products, options),
         )
 
+    def test_active_hot_products_catalog_excludes_dead_factor_codes(self) -> None:
+        self.assertNotIn("fast_position_growth", ACTIVE_OPPORTUNITY_FACTOR_CODES)
+        self.assertNotIn("repeated_review_complaint", ACTIVE_OPPORTUNITY_FACTOR_CODES)
+        self.assertNotIn("weak_visible_description", ACTIVE_OPPORTUNITY_FACTOR_CODES)
+
     def test_hot_products_empty_snapshot_returns_not_enough_data(self) -> None:
         response = self.post_hot_products([])
 
@@ -161,6 +167,115 @@ class RecommendationContractTests(unittest.TestCase):
             self.assertLessEqual(item["confidence"], 1)
             self.assertGreaterEqual(item["score"], 60)
             self.assertGreaterEqual(item["confidence"], 0.45)
+
+    def test_hot_products_allows_large_public_recommendation_limit(self) -> None:
+        products = fixture_products(24)
+
+        response = self.post_hot_products(products, {"maxRecommendations": 1000})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "completed")
+
+    def test_hot_products_balances_recommendations_across_factor_codes(self) -> None:
+        products: list[dict] = []
+        for index in range(300):
+            item = product_payload(
+                index,
+                price=500,
+                walletPrice=500,
+                priceWithoutDiscount=900,
+                rating=4.2,
+                feedbackCount=100,
+                parsedReviewCount=50,
+                positionState="beyondObservedRange",
+                position=None,
+                observedRangeLimit=1000,
+                totalQuantity=30,
+                description="Полное описание товара с назначением, материалом, размером и сценариями использования.",
+                characteristics={"Материал": "пластик", "Размер": "40х60", "Цвет": "белый", "Комплектация": "1 шт"},
+                imageCount=5,
+            )
+            item["reviewSignals"] = {
+                "parsedReviewCount": 10,
+                "parsedReplyCount": 0,
+                "ratedReviewCount": 10,
+                "averageRating": 3.8,
+                "lowRatingReviewCount": 3,
+                "negativeTextReviewCount": 0,
+                "badReviewCount": 3,
+                "reviewWindowSize": 10,
+                "recentTwoWeeksCount": 10,
+                "latestReviewRunId": "wb_reviews_test",
+                "sentimentVersion": 2,
+                "reviewScope": "product",
+                "negativeReviewEvidence": [
+                    {
+                        "reviewIdOnMp": f"bad-{index}",
+                        "sourceWbProductId": str(item["wbProductId"]),
+                        "rating": 2,
+                        "createdAtOnMp": "2026-06-12T10:00:00Z",
+                        "snippet": "",
+                        "reasonCodes": ["low_rating"],
+                        "score": 0.85,
+                    }
+                ],
+            }
+            products.append(item)
+
+        for index in range(300, 360):
+            products.append(product_payload(
+                index,
+                name=f"Дорогой товар {index}",
+                price=1600,
+                walletPrice=1600,
+                priceWithoutDiscount=2200,
+                rating=4.2,
+                feedbackCount=5,
+                parsedReviewCount=5,
+                positionState="beyondObservedRange",
+                position=None,
+                observedRangeLimit=1000,
+                totalQuantity=30,
+                description="Полное описание товара с назначением, материалом, размером и сценариями использования.",
+                characteristics={"Материал": "пластик", "Размер": "40х60", "Цвет": "белый", "Комплектация": "1 шт"},
+                imageCount=5,
+            ))
+
+        for index in range(360, 420):
+            products.append(product_payload(
+                index,
+                price=520,
+                walletPrice=520,
+                priceWithoutDiscount=900,
+                rating=4.8,
+                feedbackCount=200,
+                parsedReviewCount=120,
+                positionState="beyondObservedRange",
+                position=None,
+                observedRangeLimit=1000,
+                totalQuantity=3,
+                description="Полное описание товара с назначением, материалом, размером и сценариями использования.",
+                characteristics={"Материал": "пластик", "Размер": "40х60", "Цвет": "белый", "Комплектация": "1 шт"},
+                imageCount=5,
+            ))
+
+        response = self.post_hot_products(products, {"maxRecommendations": 200})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        recommendations = payload["recommendations"]
+        selected_counts: dict[str, int] = {}
+        for recommendation in recommendations:
+            for factor in recommendation["factors"]:
+                selected_counts[factor["code"]] = selected_counts.get(factor["code"], 0) + 1
+
+        self.assertGreaterEqual(selected_counts.get("bad_recent_reviews", 0), 25)
+        self.assertGreaterEqual(selected_counts.get("expensive_without_advantage", 0), 25)
+        self.assertGreaterEqual(selected_counts.get("good_reviews_low_stock", 0), 25)
+        self.assertLess(selected_counts.get("bad_recent_reviews", 0), len(recommendations))
+        self.assertIn("diagnostics", payload)
+        self.assertGreaterEqual(payload["diagnostics"]["allFactorDistribution"]["bad_recent_reviews"], 300)
+        self.assertGreaterEqual(payload["diagnostics"]["allFactorDistribution"]["expensive_without_advantage"], 50)
 
     def test_unknown_algorithm_returns_unsupported(self) -> None:
         response = self.post_hot_products(
@@ -941,6 +1056,93 @@ class RecommendationContractTests(unittest.TestCase):
         self.assertGreaterEqual(factor["value"]["peerSampleSize"], 5)
         self.assertIn("против", factor["value"]["label"])
 
+    def test_expensive_without_advantage_uses_broader_subcategory_context(self) -> None:
+        products = []
+        for index in range(40):
+            price = 500 if index < 30 else 1600
+            products.append(product_payload(
+                index,
+                name=f"Сопоставимый товар {index}",
+                price=price,
+                walletPrice=price,
+                priceWithoutDiscount=price + 300,
+                rating=4.1,
+                feedbackCount=5,
+                parsedReviewCount=5,
+                positionState="beyondObservedRange",
+                position=None,
+                observedRangeLimit=1000,
+                totalQuantity=20,
+                description="Полное описание товара с материалом, размером и назначением.",
+                characteristics={"Материал": "пластик", "Размер": "40х60", "Цвет": "белый", "Комплектация": "1 шт"},
+                imageCount=5,
+            ))
+
+        response = self.post_hot_products(products, {"maxRecommendations": 40})
+
+        self.assertEqual(response.status_code, 200)
+        target = next(
+            item for item in response.json()["recommendations"]
+            if item["wbProductId"] == str(products[35]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertIn("expensive_without_advantage", codes)
+
+    def test_duplicate_cards_uses_global_duplicate_index_across_split_clusters(self) -> None:
+        products = [
+            product_payload(
+                index,
+                wbRootId=777777,
+                name="Одинаковый товар Мечта 40х60 бежевый",
+                price=500 + index * 10,
+                walletPrice=500 + index * 10,
+                priceWithoutDiscount=900 + index * 10,
+                positionState="beyondObservedRange",
+                position=None,
+                observedRangeLimit=1000,
+                totalQuantity=20,
+                description="Полное описание товара с материалом, размером и назначением.",
+                characteristics={"Материал": "пластик", "Размер": "40х60", "Цвет": "бежевый", "Комплектация": "1 шт"},
+                imageCount=5,
+            )
+            for index in range(35)
+        ]
+
+        response = self.post_hot_products(products, {"maxRecommendations": 35, "includeDebug": True})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertGreater(payload["diagnostics"]["clusterCount"], 1)
+        for recommendation in payload["recommendations"]:
+            codes = {factor["code"] for factor in recommendation["factors"]}
+            self.assertIn("duplicate_cards", codes)
+
+    def test_good_reviews_weak_visibility_uses_beyond_observed_range(self) -> None:
+        products = fixture_products(24)
+        products[0].update({
+            "position": None,
+            "positionState": "beyondObservedRange",
+            "observedRangeLimit": 1000,
+            "rating": 4.9,
+            "feedbackCount": 250,
+            "parsedReviewCount": 120,
+            "description": "Полное описание товара с материалом, размером и назначением.",
+            "characteristics": {"Материал": "пластик", "Размер": "40х60", "Цвет": "белый", "Комплектация": "1 шт"},
+            "imageCount": 5,
+        })
+
+        response = self.post_hot_products(products, {"maxRecommendations": 24})
+
+        self.assertEqual(response.status_code, 200)
+        target = next(
+            item for item in response.json()["recommendations"]
+            if item["wbProductId"] == str(products[0]["wbProductId"])
+        )
+        codes = {factor["code"] for factor in target["factors"]}
+
+        self.assertIn("good_reviews_weak_visibility", codes)
+
     def test_low_review_count_top_position_requires_enough_peers(self) -> None:
         products = fixture_products(6)
         products[0].update({
@@ -1101,6 +1303,44 @@ class RecommendationContractTests(unittest.TestCase):
         for word in ("demand", "profit", "sales", "forecast", "risk"):
             self.assertNotIn(word, text)
 
+    def test_workspace_product_analysis_accepts_review_quality_fields(self) -> None:
+        product = product_payload(
+            0,
+            positiveReviewCount=24,
+            reviewSampleSize=30,
+        )
+        candidates = [
+            product_payload(
+                index,
+                positiveReviewCount=40 + index,
+                reviewSampleSize=50 + index,
+            )
+            for index in range(1, 8)
+        ]
+
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-review-quality-fields",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [],
+                    "positionObservations": [],
+                    "stockObservations": [],
+                    "feedbackObservations": [],
+                },
+                "candidates": candidates,
+                "options": {"maxSimilarProducts": 3},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertGreater(len(payload["similarProducts"]), 0)
+
     def test_workspace_product_analysis_returns_delivery_comparison_groups(self) -> None:
         product = product_payload(
             0,
@@ -1225,6 +1465,166 @@ class RecommendationContractTests(unittest.TestCase):
         duplicate_keys = {item["productKey"] for item in group["items"]}
         self.assertEqual(duplicate_keys, {"parser:903892357", "parser:1003841038"})
         self.assertTrue(all("Одинаковая карточка" in item["tags"] for item in group["items"]))
+
+    def test_workspace_product_analysis_adds_demo_price_and_description_signals(self) -> None:
+        product = product_payload(
+            0,
+            productKey="demo:storage-box",
+            wbProductId=None,
+            wbRootId=None,
+            name="Demo storage box 30x40",
+            sourceType="demo",
+            sourceSubcategory="Storage boxes",
+            price=990,
+            walletPrice=990,
+            costPrice=900,
+            description="Storage box for shelves and wardrobe organization with a clear size and material description.",
+            characteristics={"size": "30x40", "material": "plastic"},
+            imageCount=2,
+        )
+        candidates = [
+            product_payload(i, sourceSubcategory="Storage boxes", price=price, walletPrice=price)
+            for i, price in enumerate([900, 980, 1100, 1300, 1500], start=1)
+        ]
+
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-demo-1",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [],
+                    "positionObservations": [],
+                    "stockObservations": [],
+                    "feedbackObservations": [],
+                },
+                "candidates": candidates,
+                "options": {"maxSimilarProducts": 10},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        signals = {signal["code"]: signal for signal in payload["signals"]}
+        self.assertIn("demo_price_corridor", signals)
+        self.assertIn("demo_description_recommendation", signals)
+        self.assertEqual(signals["demo_price_corridor"]["value"]["targetPrice"], 1100)
+        self.assertEqual(signals["demo_price_corridor"]["value"]["sampleSize"], 5)
+        self.assertTrue(
+            any("Demo storage box" in fact for fact in signals["demo_description_recommendation"]["metricFacts"])
+        )
+
+    def test_workspace_product_analysis_demo_description_does_not_invent_text_without_inputs(self) -> None:
+        product = product_payload(
+            0,
+            productKey="demo:bath-mat",
+            wbProductId=None,
+            wbRootId=None,
+            name="Коврик 40 см",
+            sourceType="demo",
+            sourceSubcategory="Коврики для ванной",
+            price=555,
+            walletPrice=555,
+            costPrice=400,
+            description="коврик как коврик",
+            characteristics={},
+            imageCount=1,
+        )
+
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-demo-description-1",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [],
+                    "positionObservations": [],
+                    "stockObservations": [],
+                    "feedbackObservations": [],
+                },
+                "candidates": [
+                    product_payload(i, sourceSubcategory="Коврики для ванной", price=500 + i, walletPrice=500 + i)
+                    for i in range(1, 8)
+                ],
+                "options": {"maxSimilarProducts": 10},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        signal = next(signal for signal in response.json()["signals"] if signal["code"] == "demo_description_recommendation")
+        text = " ".join(signal["metricFacts"]).lower()
+        self.assertIn("недостаточно", signal["description"].lower())
+        self.assertNotIn("подходит для ниши", text)
+        self.assertNotIn("вариант описания", text)
+
+    def test_workspace_product_analysis_demo_uses_peer_positive_reviews_and_strong_similar_cards(self) -> None:
+        product = product_payload(
+            0,
+            productKey="demo:bath-mat",
+            wbProductId=None,
+            wbRootId=None,
+            name="Коврик 40 см",
+            sourceType="demo",
+            sourceSubcategory="Коврики для ванной",
+            price=555,
+            walletPrice=555,
+            costPrice=400,
+            description="Коврик для ванной 40 см.",
+            characteristics={"Размер": "40 см", "Материал": "микрофибра"},
+            imageCount=1,
+            rating=None,
+            feedbackCount=None,
+            position=None,
+        )
+        candidates = [
+            product_payload(
+                i,
+                sourceSubcategory="Коврики для ванной",
+                price=500 + i,
+                walletPrice=500 + i,
+                rating=4.8,
+                feedbackCount=120 + i,
+                parsedReviewCount=60 + i,
+                positiveReviewCount=50 + i,
+                reviewSampleSize=60 + i,
+                description="Подробное описание коврика для ванной с материалом, размером и назначением.",
+                characteristics={"Размер": "40x60", "Материал": "микрофибра", "Цвет": "серый"},
+                imageCount=5,
+            )
+            for i in range(1, 8)
+        ]
+
+        response = self.client.post(
+            "/api/v1/recommendations/workspace-product-analysis",
+            json={
+                "requestId": "req-workspace-analysis-demo-positive-reviews-1",
+                "generatedAtUtc": now_iso(),
+                "marketplace": "wildberries",
+                "product": product,
+                "history": {
+                    "priceObservations": [],
+                    "positionObservations": [],
+                    "stockObservations": [],
+                    "feedbackObservations": [],
+                },
+                "candidates": candidates,
+                "options": {"maxSimilarProducts": 10},
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        signals = {signal["code"]: signal for signal in payload["signals"]}
+        self.assertIn("demo_peer_positive_reviews", signals)
+        self.assertEqual(signals["demo_peer_positive_reviews"]["value"]["peerSampleSize"], 7)
+        self.assertNotIn("rating_disadvantage", [group["key"] for group in payload["similarProductGroups"]])
+        group = next(group for group in payload["similarProductGroups"] if group["key"] == "strong_similar_cards")
+        self.assertGreaterEqual(len(group["items"]), 5)
+        self.assertTrue(any("положительных отзывов" in tag for item in group["items"] for tag in item["tags"]))
 
     def test_product_advice_job_generates_job_id_and_request_id_when_missing(self) -> None:
         response = self.client.post(

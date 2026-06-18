@@ -46,6 +46,8 @@ class ReviewObservationDto(ContractModel):
     observed_at_utc: datetime = Field(alias="observedAtUtc")
     feedback_count: int | None = Field(default=None, alias="feedbackCount")
     parsed_review_count: int | None = Field(default=None, alias="parsedReviewCount")
+    positive_review_count: int | None = Field(default=None, alias="positiveReviewCount")
+    review_sample_size: int | None = Field(default=None, alias="reviewSampleSize")
     parsed_reply_count: int | None = Field(default=None, alias="parsedReplyCount")
 
 
@@ -111,6 +113,7 @@ class MarketProductFeatureDto(ContractModel):
     product_key: str | None = Field(default=None, alias="productKey")
     wb_product_id: WbIdentifier = Field(default=None, alias="wbProductId")
     wb_root_id: WbIdentifier = Field(default=None, alias="wbRootId")
+    source_type: str | None = Field(default=None, alias="sourceType")
     name: str | None = None
     brand_name: str | None = Field(default=None, alias="brandName")
     seller_name: str | None = Field(default=None, alias="sellerName")
@@ -119,9 +122,12 @@ class MarketProductFeatureDto(ContractModel):
     price: float | None = None
     price_without_discount: float | None = Field(default=None, alias="priceWithoutDiscount")
     wallet_price: float | None = Field(default=None, alias="walletPrice")
+    cost_price: float | None = Field(default=None, alias="costPrice")
     rating: float | None = None
     feedback_count: int | None = Field(default=None, alias="feedbackCount")
     parsed_review_count: int | None = Field(default=None, alias="parsedReviewCount")
+    positive_review_count: int | None = Field(default=None, alias="positiveReviewCount")
+    review_sample_size: int | None = Field(default=None, alias="reviewSampleSize")
     parsed_reply_count: int | None = Field(default=None, alias="parsedReplyCount")
     position: int | None = None
     position_state: str | None = Field(default=None, alias="positionState")
@@ -133,6 +139,8 @@ class MarketProductFeatureDto(ContractModel):
     image_count: int | None = Field(default=None, alias="imageCount")
     review_signals: MarketProductReviewSignalDto | None = Field(default=None, alias="reviewSignals")
     delivery_profile: ProductDeliveryProfileDto | None = Field(default=None, alias="deliveryProfile")
+    supplier_name: str | None = Field(default=None, alias="supplierName")
+    supplier_url: str | None = Field(default=None, alias="supplierUrl")
     history: ProductHistoryDto | None = None
 
 
@@ -145,7 +153,7 @@ class MarketScopeDto(ContractModel):
 
 
 class HotProductsOptionsDto(ContractModel):
-    max_recommendations: int = Field(default=10, ge=1, le=200, alias="maxRecommendations")
+    max_recommendations: int = Field(default=10, ge=1, le=1000, alias="maxRecommendations")
     min_confidence: float | None = Field(default=0.45, ge=0, le=1, alias="minConfidence")
     min_products_for_scoring: int = Field(default=20, ge=1, le=10000, alias="minProductsForScoring")
     include_debug: bool = Field(default=False, alias="includeDebug")
@@ -186,6 +194,7 @@ class HotProductsResponse(ContractModel):
     computed_at_utc: datetime = Field(alias="computedAtUtc")
     recommendations: list[HotProductRecommendationDto] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    diagnostics: dict[str, Any] | None = None
 
 
 class ProductAdviceOptionsDto(ContractModel):
@@ -263,6 +272,7 @@ class WorkspaceProductSignalDto(ContractModel):
     description: str
     metric_facts: list[str] = Field(default_factory=list, alias="metricFacts")
     confidence: float = Field(ge=0, le=1)
+    value: dict[str, Any] | None = None
 
 
 class WorkspaceSimilarProductDto(ContractModel):

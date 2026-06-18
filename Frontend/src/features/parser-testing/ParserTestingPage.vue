@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { ChevronLeft, ChevronRight, RefreshCw, Search } from 'lucide-vue-next';
 
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
+import { useAuthStore } from '@/features/auth/auth.store';
 import { recalculateWorkspaceOverview } from '@/features/overview/workspaceOverview.api';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import Badge from '@/shared/ui/Badge.vue';
@@ -77,6 +79,7 @@ const props = withDefaults(defineProps<{
   showAnalysisActions: true
 });
 
+const auth = useAuthStore();
 const workspace = useActiveWorkspace();
 const searchDraft = ref('');
 const search = ref('');
@@ -94,17 +97,31 @@ const overviewRefreshing = ref(false);
 const selected = ref<ParserTestingProduct | null>(null);
 let loadVersion = 0;
 
+const isGuestTestingMode = computed(() => props.showAnalysisActions && !auth.isAuthenticated);
 const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / PAGE_SIZE)));
 
 watch(
-  () => [page.value, search.value] as const,
+  () => [page.value, search.value, isGuestTestingMode.value] as const,
   () => {
+    if (isGuestTestingMode.value) {
+      rows.value = [];
+      detailsById.value = {};
+      totalCount.value = 0;
+      summary.value = null;
+      loading.value = false;
+      return;
+    }
+
     void loadRows();
   },
   { immediate: true }
 );
 
 async function loadRows() {
+  if (isGuestTestingMode.value) {
+    return;
+  }
+
   const version = ++loadVersion;
   loading.value = true;
   error.value = '';
@@ -203,7 +220,7 @@ function resetSearch() {
 }
 
 async function refreshHotProducts(): Promise<void> {
-  if (hotProductsRefreshing.value) {
+  if (isGuestTestingMode.value || hotProductsRefreshing.value) {
     return;
   }
 
@@ -212,7 +229,7 @@ async function refreshHotProducts(): Promise<void> {
   try {
     await recalculateHotProductsRecommendations({
       maxProducts: 100000,
-      maxRecommendations: 200,
+      maxRecommendations: 1000,
       minProductsForScoring: 5,
       forceRecalculate: true
     });
@@ -225,7 +242,7 @@ async function refreshHotProducts(): Promise<void> {
 
 async function refreshOverview(): Promise<void> {
   const workspaceId = workspace.activeWorkspaceId.value;
-  if (!workspaceId || overviewRefreshing.value) {
+  if (isGuestTestingMode.value || !workspaceId || overviewRefreshing.value) {
     return;
   }
 
@@ -491,7 +508,12 @@ function formatDate(value: string | null | undefined): string {
       :description="props.description"
     />
 
-    <section class="testing-toolbar app-operator-panel">
+    <AuthRequiredState
+      v-if="isGuestTestingMode"
+      description="Тестовые действия пересчитывают персональную аналитику и доступны после входа. Авторизуйтесь, чтобы вручную обновить Перспективные товары или Обзор."
+    />
+
+    <section v-if="!isGuestTestingMode" class="testing-toolbar app-operator-panel">
       <div class="testing-toolbar__search">
         <Search :size="17" />
         <input
@@ -522,21 +544,21 @@ function formatDate(value: string | null | undefined): string {
       <p v-if="analysisActionError" class="testing-toolbar__error">{{ analysisActionError }}</p>
     </section>
 
-    <LoadingState v-if="loading" class="app-surface" />
+    <LoadingState v-if="!isGuestTestingMode && loading" class="app-surface" />
     <EmptyState
-      v-else-if="error"
+      v-else-if="!isGuestTestingMode && error"
       class="app-surface"
       :title="props.errorTitle"
       :description="error"
     />
     <EmptyState
-      v-else-if="rows.length === 0"
+      v-else-if="!isGuestTestingMode && rows.length === 0"
       class="app-surface"
       :title="props.emptyTitle"
       :description="props.emptyDescription"
     />
 
-    <section v-else class="testing-list">
+    <section v-else-if="!isGuestTestingMode" class="testing-list">
       <article v-for="row in rows" :key="row.id" class="testing-card app-operator-card">
         <header class="testing-card__header">
           <button class="testing-card__media" type="button" @click="selected = row">

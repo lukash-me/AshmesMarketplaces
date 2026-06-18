@@ -41,11 +41,14 @@ public class ApplicationDbContext : DbContext
     public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
     public DbSet<Logistic> Logistics => Set<Logistic>();
     public DbSet<User> Users => Set<User>();
+    public DbSet<AccessRequest> AccessRequests => Set<AccessRequest>();
     public DbSet<UserAnalysisSchedule> UserAnalysisSchedules => Set<UserAnalysisSchedule>();
+    public DbSet<PublicAnalysisSchedule> PublicAnalysisSchedules => Set<PublicAnalysisSchedule>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();
     public DbSet<WorkspaceMarketProduct> WorkspaceMarketProducts => Set<WorkspaceMarketProduct>();
+    public DbSet<WorkspaceMarketProductMedia> WorkspaceMarketProductMedia => Set<WorkspaceMarketProductMedia>();
     public DbSet<WorkspaceMarketProductUserReadState> WorkspaceMarketProductUserReadStates => Set<WorkspaceMarketProductUserReadState>();
     public DbSet<WorkspaceMarketProductAnalysisRun> WorkspaceMarketProductAnalysisRuns => Set<WorkspaceMarketProductAnalysisRun>();
     public DbSet<WorkspaceMarketProductAnalysis> WorkspaceMarketProductAnalyses => Set<WorkspaceMarketProductAnalysis>();

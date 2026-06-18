@@ -1,23 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import {
   BarChart3,
   Boxes,
   BookmarkCheck,
-  ChevronUp,
   CreditCard,
   FlaskConical,
   LayoutDashboard,
   Lightbulb,
-  Moon,
   Radar,
   Settings,
-  Sun,
   X
 } from 'lucide-vue-next';
-
-import { useThemeStore } from '@/features/theme/theme.store';
 
 defineProps<{
   open: boolean;
@@ -31,9 +26,8 @@ type MarketIntelligenceSection = 'events' | 'weaknesses' | 'prices' | 'stock' | 
 type OrdersSection = 'assumed-orders' | 'new-products' | 'restocks' | 'availability';
 
 const route = useRoute();
-const theme = useThemeStore();
-const themeMenuOpen = ref(false);
 const workspaceMarketProductsPath = '/workspace/market-products';
+const workspaceMarketProductCreatePath = '/workspace/market-products/create';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
 const marketIntelligencePath = '/market/intelligence';
 const ordersPath = '/orders';
@@ -71,6 +65,7 @@ const secondaryNavItems = [
 
 const isMarketIntelligenceRoute = computed(() => route.path === marketIntelligencePath);
 const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(workspaceMarketProductsPath));
+const isWorkspaceMarketProductCreateRoute = computed(() => route.path === workspaceMarketProductCreatePath);
 const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
 const isOrdersRoute = computed(() => route.path === ordersPath || route.path === ordersAvailabilityPath);
 const activeMarketIntelligenceSection = computed(() =>
@@ -130,10 +125,6 @@ function ordersSectionTo(section: OrdersSection) {
   };
 }
 
-function selectTheme(value: 'obsidian' | 'ash') {
-  theme.setTheme(value);
-  themeMenuOpen.value = false;
-}
 </script>
 
 <template>
@@ -193,6 +184,14 @@ function selectTheme(value: 'obsidian' | 'ash') {
         </RouterLink>
 
         <div class="sidebar__subnav" aria-label="Разделы наблюдаемых товаров">
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isWorkspaceMarketProductCreateRoute }"
+            :to="{ path: workspaceMarketProductCreatePath }"
+            @click="$emit('close')"
+          >
+            Создать карточку
+          </RouterLink>
           <RouterLink
             class="sidebar__sublink"
             :class="{ 'sidebar__sublink--active': isWorkspaceMarketProductClustersRoute }"
@@ -276,47 +275,6 @@ function selectTheme(value: 'obsidian' | 'ash') {
         <span>{{ item.label }}</span>
       </RouterLink>
     </nav>
-
-    <div class="sidebar__footer">
-      <div class="sidebar__theme">
-        <section v-if="themeMenuOpen" class="sidebar__theme-menu" role="menu" aria-label="Выбор темы">
-          <button
-            class="sidebar__theme-option"
-            :class="{ 'sidebar__theme-option--active': theme.theme === 'ash' }"
-            type="button"
-            role="menuitemradio"
-            :aria-checked="theme.theme === 'ash'"
-            @click="selectTheme('ash')"
-          >
-            <Sun :size="16" />
-            <span>Светлая</span>
-          </button>
-          <button
-            class="sidebar__theme-option"
-            :class="{ 'sidebar__theme-option--active': theme.theme === 'obsidian' }"
-            type="button"
-            role="menuitemradio"
-            :aria-checked="theme.theme === 'obsidian'"
-            @click="selectTheme('obsidian')"
-          >
-            <Moon :size="16" />
-            <span>Темная</span>
-          </button>
-        </section>
-
-        <button
-          class="sidebar__theme-button"
-          type="button"
-          aria-haspopup="menu"
-          :aria-expanded="themeMenuOpen"
-          @click="themeMenuOpen = !themeMenuOpen"
-        >
-          <component :is="theme.isLight ? Sun : Moon" :size="17" />
-          <span>Выбор темы</span>
-          <ChevronUp class="sidebar__theme-chevron" :size="16" />
-        </button>
-      </div>
-    </div>
   </aside>
 </template>
 
@@ -466,104 +424,6 @@ function selectTheme(value: 'obsidian' | 'ash') {
 
 .sidebar__sublink--active {
   box-shadow: inset 2px 0 0 var(--color-ember);
-}
-
-.sidebar__footer {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border-top: 1px solid var(--color-border);
-}
-
-.sidebar__theme {
-  position: relative;
-}
-
-.sidebar__theme-button {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 2.25rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control-raised);
-  padding: 0 var(--space-3);
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: 0.875rem;
-  font-weight: 700;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.sidebar__theme-button span {
-  flex: 1;
-  text-align: left;
-}
-
-.sidebar__theme-chevron {
-  color: var(--color-text-subtle);
-}
-
-.sidebar__theme-button:hover {
-  border-color: var(--accent-ember-border);
-  background: var(--accent-ember-hover-bg);
-  color: var(--accent-ember-text-strong);
-}
-
-.sidebar__theme-button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.sidebar__theme-menu {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + var(--space-2));
-  left: 0;
-  z-index: 45;
-  display: grid;
-  gap: var(--space-1);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-raised);
-  box-shadow: var(--shadow-panel);
-  padding: var(--space-2);
-}
-
-.sidebar__theme-option {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 2.15rem;
-  width: 100%;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: 0.84rem;
-  font-weight: 720;
-  padding: 0 var(--space-2);
-  text-align: left;
-  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.sidebar__theme-option:hover,
-.sidebar__theme-option--active {
-  border-color: var(--color-border-strong);
-  background: var(--surface-active-overlay);
-  color: var(--color-text);
-}
-
-.sidebar__theme-option--active {
-  box-shadow: inset 2px 0 0 var(--color-ember);
-}
-
-.sidebar__theme-option:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
 }
 
 @media (min-width: 1024px) {

@@ -3,6 +3,7 @@ using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.Application.MarketRecommendations.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.DataAccess;
+using AshmesMarketplaces.Domain.Entities.Users;
 using Microsoft.EntityFrameworkCore;
 
 namespace AshmesMarketplaces.API.Background;
@@ -55,7 +56,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
 
     private async Task ProcessHotProductsDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
-        var scheduleId = await ClaimHotProductsScheduleAsync(nowUtc, cancellationToken);
+        var scheduleId = await ClaimPublicHotProductsScheduleAsync(nowUtc, cancellationToken);
         if (!scheduleId.HasValue)
             return;
 
@@ -64,26 +65,23 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var service = scope.ServiceProvider.GetRequiredService<IMarketHotProductsRecalculationService>();
-            var result = await service.RecalculateForUserAsync(
-                await LoadUserIdAsync(scheduleId.Value, cancellationToken),
-                DefaultHotProductsRequest(),
-                cancellationToken);
+            var result = await service.RecalculatePublicAsync(DefaultHotProductsRequest(), cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
                 throw new InvalidOperationException(result.Error!.Message);
 
-            await CompleteHotProductsScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            await CompletePublicHotProductsScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
-                "Scheduled hot-products refresh completed. scheduleId={ScheduleId} durationMs={DurationMs}",
+                "Scheduled public hot-products refresh completed. scheduleId={ScheduleId} durationMs={DurationMs}",
                 scheduleId.Value,
                 (completedAtUtc - startedAtUtc).TotalMilliseconds);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await FailHotProductsScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            await FailPublicHotProductsScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
             _logger.LogWarning(
                 ex,
-                "Scheduled hot-products refresh failed. scheduleId={ScheduleId}",
+                "Scheduled public hot-products refresh failed. scheduleId={ScheduleId}",
                 scheduleId.Value);
         }
     }
@@ -137,21 +135,22 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         }
     }
 
-    private async Task<Guid?> ClaimHotProductsScheduleAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    private async Task<Guid?> ClaimPublicHotProductsScheduleAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var schedule = await dbContext.UserAnalysisSchedules
+        var schedule = await dbContext.PublicAnalysisSchedules
             .Where(x =>
-                x.NextHotProductsRunAtUtc <= nowUtc
+                x.ScheduleKey == PublicAnalysisSchedule.HotProductsScheduleKey
+                && x.NextRunAtUtc <= nowUtc
                 && (x.LockedUntilUtc == null || x.LockedUntilUtc <= nowUtc))
-            .OrderBy(x => x.NextHotProductsRunAtUtc)
+            .OrderBy(x => x.NextRunAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
         if (schedule is null)
             return null;
 
         schedule.Lock(_workerId, nowUtc.Add(LockDuration), nowUtc);
-        schedule.MarkHotProductsRunning(nowUtc);
+        schedule.MarkRunning(nowUtc);
         await dbContext.SaveChangesAsync(cancellationToken);
         return schedule.Id;
     }
@@ -185,16 +184,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             .FirstAsync(cancellationToken);
     }
 
-    private async Task CompleteHotProductsScheduleAsync(Guid scheduleId, DateTime completedAtUtc, CancellationToken cancellationToken)
+    private async Task CompletePublicHotProductsScheduleAsync(Guid scheduleId, DateTime completedAtUtc, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var schedule = await dbContext.UserAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
+        var schedule = await dbContext.PublicAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
         var nextRunAtUtc = UserAnalysisScheduleService.NextDailyUtc(
-            schedule.HotProductsLocalTime,
+            schedule.LocalTime,
             schedule.TimezoneId,
             completedAtUtc);
-        schedule.MarkHotProductsCompleted(completedAtUtc, nextRunAtUtc);
+        schedule.MarkCompleted(completedAtUtc, nextRunAtUtc);
         schedule.ReleaseLock(completedAtUtc);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -213,12 +212,12 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task FailHotProductsScheduleAsync(Guid scheduleId, DateTime failedAtUtc, string error, CancellationToken cancellationToken)
+    private async Task FailPublicHotProductsScheduleAsync(Guid scheduleId, DateTime failedAtUtc, string error, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var schedule = await dbContext.UserAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
-        schedule.MarkHotProductsFailed(failedAtUtc, failedAtUtc.Add(RetryDelay), Truncate(error));
+        var schedule = await dbContext.PublicAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
+        schedule.MarkFailed(failedAtUtc, failedAtUtc.Add(RetryDelay), Truncate(error));
         schedule.ReleaseLock(failedAtUtc);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
@@ -241,7 +240,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             RankParserRunId: null,
             MaxProducts: 100000,
             ForceRecalculate: true,
-            MaxRecommendations: 200,
+            MaxRecommendations: 1000,
             MinConfidence: null,
             MinProductsForScoring: 5);
 

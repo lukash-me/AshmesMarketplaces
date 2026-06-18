@@ -13,6 +13,7 @@ Backend/.idea/*
 .build/
 downloaded_files/
 Frontend/test-results/
+Backend/AshmesMarketplaces.API/wwwroot/uploads/
 
 # Production Docker deployment local state
 deploy/docker/.env

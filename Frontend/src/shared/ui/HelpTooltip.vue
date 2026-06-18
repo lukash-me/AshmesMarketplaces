@@ -57,7 +57,7 @@ defineProps<{
   top: calc(100% + 0.45rem);
   left: calc(100% + 0.35rem);
   width: max-content;
-  max-width: min(22rem, calc(100vw - 2rem));
+  max-width: min(34rem, calc(100vw - 2rem));
   transform: translate(-0.15rem, -0.15rem);
   transform-origin: top left;
   border: 1px solid var(--color-border-strong);
@@ -73,7 +73,7 @@ defineProps<{
   pointer-events: none;
   text-align: left;
   transition: opacity 140ms ease, transform 140ms ease;
-  white-space: normal;
+  white-space: pre-line;
 }
 
 .help-tooltip:hover .help-tooltip__bubble,

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
 import { useAuthStore } from '@/features/auth/auth.store';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import Button from '@/shared/ui/Button.vue';
@@ -90,6 +91,7 @@ const currentWorkspaceId = computed(
   () => auth.user?.workspaces[0]?.idWorkspace ?? workspaces.value[0]?.id ?? ''
 );
 const currentUserId = computed(() => auth.user?.id ?? '');
+const isGuest = computed(() => !auth.isAuthenticated);
 
 const kpiItems = computed(() => [
   {
@@ -128,7 +130,16 @@ watch(
   { immediate: true }
 );
 
-void loadLookups();
+watch(isGuest, (guest) => {
+  if (!guest) {
+    void loadLookups();
+    void loadExpensesAndSummary();
+  }
+});
+
+if (!isGuest.value) {
+  void loadLookups();
+}
 
 onBeforeUnmount(() => {
   clearToast();
@@ -153,6 +164,17 @@ function showToast(message: string) {
 }
 
 async function loadExpensesAndSummary() {
+  if (isGuest.value) {
+    expenses.value = [];
+    totalCount.value = 0;
+    summary.value = null;
+    error.value = '';
+    summaryError.value = '';
+    loading.value = false;
+    summaryLoading.value = false;
+    return;
+  }
+
   loading.value = true;
   summaryLoading.value = true;
   error.value = '';
@@ -181,6 +203,14 @@ async function loadExpensesAndSummary() {
 }
 
 async function loadLookups() {
+  if (isGuest.value) {
+    categories.value = [];
+    users.value = [];
+    workspaces.value = [];
+    lookupError.value = '';
+    return;
+  }
+
   lookupError.value = '';
 
   try {
@@ -324,6 +354,11 @@ async function changeStatus(expense: ExpenseListItem | ExpenseDetail, statusKey:
       description="Учитывайте операционные траты, платежи и статусы расходов, связанных с товарным бизнесом."
     />
 
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Раздел расходов помогает учитывать закупки, логистику, услуги и платежные статусы по рабочей области. Войдите, чтобы открыть финансовые данные."
+    />
+    <template v-else>
     <ExpensesFilters
       :state="queryState"
       :categories-by-id="categoriesById"
@@ -416,6 +451,7 @@ async function changeStatus(expense: ExpenseListItem | ExpenseDetail, statusKey:
         {{ toastMessage }}
       </div>
     </Teleport>
+    </template>
   </div>
 </template>
 

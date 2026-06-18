@@ -4,6 +4,7 @@ import { computed, ref } from 'vue';
 import { configureHttpAuth } from '@/shared/api/http';
 
 import * as authApi from './auth.api';
+import { useAuthPromptStore } from './authPrompt.store';
 import type { AuthUser, LoginRequest, LoginResponse, StoredAuthSession } from './auth.types';
 
 const STORAGE_KEY = 'ashmes.auth.session';
@@ -143,10 +144,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   function handleUnauthorized(): void {
     clearSession();
-
-    if (window.location.pathname !== '/login') {
-      window.location.assign(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`);
-    }
+    useAuthPromptStore().showLogin('Войдите, чтобы продолжить.');
   }
 
   return {

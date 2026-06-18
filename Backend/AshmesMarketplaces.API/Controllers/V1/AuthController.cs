@@ -12,10 +12,12 @@ namespace AshmesMarketplaces.API.Controllers.V1;
 public sealed class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
+    private readonly IAccessRequestService _accessRequestService;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, IAccessRequestService accessRequestService)
     {
         _authService = authService;
+        _accessRequestService = accessRequestService;
     }
 
     [HttpPost("login")]
@@ -63,6 +65,24 @@ public sealed class AuthController : ControllerBase
     {
         var result = await _authService.GetCurrentUserAsync(cancellationToken);
         return ToActionResult(result);
+    }
+
+    [HttpPost("access-requests")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(AccessRequestResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<AccessRequestResponse>> CreateAccessRequest(
+        [FromBody] CreateAccessRequestRequest request,
+        CancellationToken cancellationToken)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        var result = await _accessRequestService.CreateAsync(request, ipAddress, userAgent, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result);
+
+        var response = result.Value!;
+        return Created($"api/v1/auth/access-requests/{response.Id}", response);
     }
 
     private ActionResult<T> ToActionResult<T>(ServiceResult<T> result)

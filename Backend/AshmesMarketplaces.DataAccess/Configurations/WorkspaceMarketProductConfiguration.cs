@@ -17,8 +17,8 @@ public sealed class WorkspaceMarketProductConfiguration : IEntityTypeConfigurati
         builder.Property(x => x.Id).ValueGeneratedNever().HasColumnName("id");
         builder.Property(x => x.IdWorkspace).IsRequired().HasColumnName("id_workspace");
         builder.Property(x => x.IdCreatedByUser).IsRequired().HasColumnName("id_created_by_user");
-        builder.Property(x => x.ParserProductRowId).IsRequired().HasColumnName("parser_product_row_id");
-        builder.Property(x => x.WbProductId).IsRequired().HasMaxLength(Constants.EXTERNAL_ID_MAX_LENGTH).HasColumnName("wb_product_id");
+        builder.Property(x => x.ParserProductRowId).HasColumnName("parser_product_row_id");
+        builder.Property(x => x.WbProductId).HasMaxLength(Constants.EXTERNAL_ID_MAX_LENGTH).HasColumnName("wb_product_id");
         builder.Property(x => x.WbRootId).HasMaxLength(Constants.EXTERNAL_ID_MAX_LENGTH).HasColumnName("wb_root_id");
         builder.Property(x => x.SourceCategory).HasMaxLength(512).HasColumnName("source_category");
         builder.Property(x => x.SourceSubcategory).HasMaxLength(512).HasColumnName("source_subcategory");
@@ -26,6 +26,7 @@ public sealed class WorkspaceMarketProductConfiguration : IEntityTypeConfigurati
         builder.Property(x => x.SourceSubcategoryKey).IsRequired().HasMaxLength(512).HasColumnName("source_subcategory_key");
         builder.Property(x => x.SourceRegionDestKey).IsRequired().HasMaxLength(Constants.EXTERNAL_ID_MAX_LENGTH).HasColumnName("source_region_dest_key");
         builder.Property(x => x.SourceQuery).HasMaxLength(512).HasColumnName("source_query");
+        builder.Property(x => x.SourceType).IsRequired().HasMaxLength(32).HasColumnName("source_type").HasDefaultValue(WorkspaceMarketProduct.ParserSourceType);
         builder.Property(x => x.TagKey).IsRequired().HasMaxLength(32).HasColumnName("tag_key");
         builder.Property(x => x.Note).HasMaxLength(Constants.PRODUCT_DESCRIPTION_MAX_LENGTH).HasColumnName("note");
         builder.Property(x => x.Name).IsRequired().HasMaxLength(Constants.PRODUCT_NAME_MAX_LENGTH).HasColumnName("name");
@@ -39,15 +40,24 @@ public sealed class WorkspaceMarketProductConfiguration : IEntityTypeConfigurati
         builder.Property(x => x.FeedbackCount).HasColumnName("feedback_count");
         builder.Property(x => x.PositionAbsolute).HasColumnName("position_absolute");
         builder.Property(x => x.TotalQuantity).HasColumnName("total_quantity");
+        builder.Property(x => x.CostPrice).HasPrecision(18, 2).HasColumnName("cost_price");
+        builder.Property(x => x.Description).HasColumnName("description");
+        builder.Property(x => x.CharacteristicsJson).HasColumnType("jsonb").HasColumnName("characteristics_json");
+        builder.Property(x => x.SupplierName).HasMaxLength(512).HasColumnName("supplier_name");
+        builder.Property(x => x.SupplierUrl).HasMaxLength(Constants.URL_MAX_LENGTH).HasColumnName("supplier_url");
+        builder.Property(x => x.DemoPayloadJson).HasColumnType("jsonb").HasColumnName("demo_payload_json");
         builder.Property(x => x.DateCreate).IsRequired().HasColumnName("date_create");
         builder.Property(x => x.DateUpdate).IsRequired().HasColumnName("date_update");
 
         builder.HasIndex(x => x.IdWorkspace);
         builder.HasIndex(x => x.TagKey);
         builder.HasIndex(x => x.WbProductId);
+        builder.HasIndex(x => x.SourceType);
         builder.HasIndex(x => x.SourceSubcategory);
         builder.HasIndex(x => x.DateUpdate);
-        builder.HasIndex(x => new { x.IdWorkspace, x.WbProductId, x.SourceSubcategoryKey, x.SourceRegionDestKey }).IsUnique();
+        builder.HasIndex(x => new { x.IdWorkspace, x.WbProductId, x.SourceSubcategoryKey, x.SourceRegionDestKey })
+            .IsUnique()
+            .HasFilter("wb_product_id IS NOT NULL");
 
         builder.HasOne<Workspace>().WithMany().HasForeignKey(x => x.IdWorkspace).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<User>().WithMany().HasForeignKey(x => x.IdCreatedByUser).OnDelete(DeleteBehavior.Restrict);

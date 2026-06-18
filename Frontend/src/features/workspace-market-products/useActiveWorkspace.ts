@@ -13,8 +13,12 @@ export function useActiveWorkspace() {
   const hasMultipleWorkspaces = computed(() => workspaceOptions.value.length > 1);
 
   watch(
-    workspaceOptions,
-    (workspaces) => {
+    [workspaceOptions, () => auth.ready, () => auth.bootstrapping],
+    ([workspaces]) => {
+      if (!auth.ready || auth.bootstrapping) {
+        return;
+      }
+
       if (workspaces.length === 0) {
         selectedWorkspaceId.value = '';
         localStorage.removeItem(STORAGE_KEY);

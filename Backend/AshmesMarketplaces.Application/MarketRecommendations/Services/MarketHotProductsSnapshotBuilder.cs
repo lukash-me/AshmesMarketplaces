@@ -47,19 +47,27 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 $"Requested maxProducts exceeds supported run maximum of {MaxProductsPerRun}.");
         }
 
-        var productRunId = string.IsNullOrWhiteSpace(request.ProductParserRunId)
-            ? await ResolveLatestParserRunIdAsync(ProductsKind, cancellationToken)
-            : request.ProductParserRunId.Trim();
-        if (string.IsNullOrWhiteSpace(productRunId))
-            return ServiceResult<MarketHotProductsSnapshot>.NotFound("No successful parser product run was found.");
-
+        var explicitProductRunId = !string.IsNullOrWhiteSpace(request.ProductParserRunId);
+        var productRunId = explicitProductRunId ? request.ProductParserRunId!.Trim() : null;
         var rankRunId = string.IsNullOrWhiteSpace(request.RankParserRunId)
-            ? await ResolveLatestParserRunIdAsync(RanksKind, cancellationToken)
+            ? null
             : request.RankParserRunId.Trim();
 
         var productRowsQuery = _dbContext.ParserProductRows
-            .AsNoTracking()
-            .Where(x => x.ParserRunId == productRunId);
+            .AsNoTracking();
+
+        if (explicitProductRunId)
+        {
+            productRowsQuery = productRowsQuery.Where(x => x.ParserRunId == productRunId);
+        }
+        else
+        {
+            var productRunIds = await ResolveParserRunIdsAsync(ProductsKind, cancellationToken);
+            if (productRunIds.Count == 0)
+                return ServiceResult<MarketHotProductsSnapshot>.NotFound("No successful parser product run was found.");
+
+            productRowsQuery = productRowsQuery.Where(x => productRunIds.Contains(x.ParserRunId));
+        }
 
         if (!string.IsNullOrWhiteSpace(request.SourceCategory))
         {
@@ -75,11 +83,13 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 x.SourceSubcategory != null && x.SourceSubcategory.Trim().ToLower() == subcategory);
         }
 
-        var products = await productRowsQuery
-            .OrderBy(x => x.SourceLineNumber)
-            .ThenBy(x => x.Id)
-            .Take(maxProducts)
-            .ToListAsync(cancellationToken);
+        var products = explicitProductRunId
+            ? await productRowsQuery
+                .OrderBy(x => x.SourceLineNumber)
+                .ThenBy(x => x.Id)
+                .Take(maxProducts)
+                .ToListAsync(cancellationToken)
+            : await LoadLatestProductRowsAsync(productRowsQuery, maxProducts, cancellationToken);
 
         if (products.Count == 0)
         {
@@ -87,9 +97,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
                 "No parser product rows were found for the selected Market Analytics scope.");
         }
 
-        var positions = string.IsNullOrWhiteSpace(rankRunId)
-            ? BuildUnknownPositions(products)
-            : await LoadPositionsAsync(products, rankRunId, cancellationToken);
+        var positions = await LoadPositionsAsync(products, rankRunId, cancellationToken);
         var reviews = await LoadReviewEvidenceAsync(products, DateTime.UtcNow, cancellationToken);
         var productDetails = await LoadProductDetailsAsync(products, productRunId, cancellationToken);
         var deliveryProfiles = await LoadDeliveryProfilesAsync(products, cancellationToken);
@@ -216,9 +224,64 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    private async Task<IReadOnlyList<string>> ResolveParserRunIdsAsync(string kind, CancellationToken cancellationToken)
+    {
+        return await _dbContext.ParserRuns
+            .AsNoTracking()
+            .Where(x => x.Kind == kind && x.ManifestStatus == SucceededStatus)
+            .OrderBy(x => x.StartedAtUtc)
+            .ThenBy(x => x.ParserRunId)
+            .Select(x => x.ParserRunId)
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<List<ParserProductRow>> LoadLatestProductRowsAsync(
+        IQueryable<ParserProductRow> productRowsQuery,
+        int maxProducts,
+        CancellationToken cancellationToken)
+    {
+        var latestRowIds = productRowsQuery
+            .GroupBy(x => x.WbProductId)
+            .Select(group => group
+                .OrderByDescending(x => x.ParsedAtUtc)
+                .ThenByDescending(x => x.Id)
+                .Select(x => x.Id)
+                .First());
+
+        return await productRowsQuery
+            .Where(x => latestRowIds.Contains(x.Id))
+            .OrderBy(x => x.SourceCategory)
+            .ThenBy(x => x.SourceSubcategory)
+            .ThenBy(x => x.SourceLineNumber)
+            .ThenBy(x => x.Id)
+            .Take(maxProducts)
+            .ToListAsync(cancellationToken);
+    }
+
+    public static IReadOnlyList<HotProductsProductSelectionRow> SelectLatestProductRowsForDefaultScope(
+        IReadOnlyList<HotProductsProductSelectionRow> rows,
+        int maxProducts)
+    {
+        var selectedByProductId = rows
+            .Where(x => !string.IsNullOrWhiteSpace(x.WbProductId))
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x => x
+                    .OrderByDescending(row => row.ParsedAtUtc)
+                    .ThenByDescending(row => row.Id)
+                    .First(),
+                StringComparer.Ordinal);
+
+        return rows
+            .Where(x => selectedByProductId.TryGetValue(x.WbProductId, out var selected) && selected.Id == x.Id)
+            .Take(Math.Max(maxProducts, 0))
+            .ToList();
+    }
+
     private async Task<IReadOnlyDictionary<Guid, ProductPosition>> LoadPositionsAsync(
         IReadOnlyList<ParserProductRow> products,
-        string rankRunId,
+        string? rankRunId,
         CancellationToken cancellationToken)
     {
         var productIds = products.Select(x => x.WbProductId).Distinct(StringComparer.Ordinal).ToList();
@@ -243,7 +306,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
 
         var rows = await _dbContext.ParserRankSnapshotRows
             .AsNoTracking()
-            .Where(x => x.ParserRunId == rankRunId
+            .Where(x => (rankRunId == null || x.ParserRunId == rankRunId)
                 && (productIds.Contains(x.WbProductId)
                     || (x.WbRootId != null && rootIds.Contains(x.WbRootId))
                     || ((x.SourceCategory == null || categories.Contains(x.SourceCategory))
@@ -343,7 +406,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
 
     private async Task<IReadOnlyDictionary<Guid, ProductDetailEvidence>> LoadProductDetailsAsync(
         IReadOnlyList<ParserProductRow> products,
-        string productRunId,
+        string? productRunId,
         CancellationToken cancellationToken)
     {
         var productIds = products
@@ -354,7 +417,7 @@ public sealed class MarketHotProductsSnapshotBuilder : IMarketHotProductsSnapsho
         var detailRows = await _dbContext.ParserProductDetailRows
             .AsNoTracking()
             .Where(x => productIds.Contains(x.WbProductId) && x.Status == SucceededStatus)
-            .OrderByDescending(x => x.InputProductsParserRunId == productRunId)
+            .OrderByDescending(x => productRunId != null && x.InputProductsParserRunId == productRunId)
             .ThenByDescending(x => x.ParsedAtUtc)
             .ThenByDescending(x => x.SourceLineNumber)
             .ToListAsync(cancellationToken);

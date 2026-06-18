@@ -3,6 +3,7 @@ import { http } from '@/shared/api/http';
 
 import type {
   CreateWorkspaceMarketProductRequest,
+  CreateDemoWorkspaceMarketProductRequest,
   SaveWorkspaceMarketProductRequest,
   WorkspaceMarketProductDetail,
   WorkspaceMarketProductHistory,
@@ -35,6 +36,41 @@ export async function addWorkspaceMarketProduct(
   request: CreateWorkspaceMarketProductRequest
 ): Promise<WorkspaceMarketProductDetail> {
   const response = await http.post<WorkspaceMarketProductDetail>(basePath(workspaceId), request);
+  return response.data;
+}
+
+export async function addDemoWorkspaceMarketProduct(
+  workspaceId: string,
+  request: CreateDemoWorkspaceMarketProductRequest
+): Promise<WorkspaceMarketProductDetail> {
+  const formData = new FormData();
+  formData.append('name', request.name);
+  formData.append('sourceCategory', request.sourceCategory);
+  formData.append('sourceSubcategory', request.sourceSubcategory);
+  formData.append('price', String(request.price));
+  if (request.costPrice !== null) {
+    formData.append('costPrice', String(request.costPrice));
+  }
+  if (request.description) {
+    formData.append('description', request.description);
+  }
+  if (request.characteristicsJson) {
+    formData.append('characteristicsJson', request.characteristicsJson);
+  }
+  if (request.supplierName) {
+    formData.append('supplierName', request.supplierName);
+  }
+  if (request.supplierUrl) {
+    formData.append('supplierUrl', request.supplierUrl);
+  }
+  if (request.note) {
+    formData.append('note', request.note);
+  }
+  for (const file of request.media) {
+    formData.append('media', file);
+  }
+
+  const response = await http.post<WorkspaceMarketProductDetail>(`${basePath(workspaceId)}/demo`, formData);
   return response.data;
 }
 

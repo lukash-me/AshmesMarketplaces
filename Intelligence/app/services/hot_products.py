@@ -64,6 +64,26 @@ OPPORTUNITY_FACTOR_WEIGHTS = {
     "faster_than_peers_region_delivery": 0.70,
 }
 
+ACTIVE_OPPORTUNITY_FACTOR_CODES = (
+    "bad_recent_reviews",
+    "low_review_count_top_position",
+    "good_reviews_weak_visibility",
+    "expensive_without_advantage",
+    "top_low_stock",
+    "good_reviews_low_stock",
+    "good_reviews_high_price",
+    "high_position_weak_card",
+    "good_reviews_weak_card",
+    "weak_description",
+    "missing_key_specs",
+    "duplicate_cards",
+    "seller_stock_slow_central_delivery",
+    "top_slow_central_delivery",
+    "top_low_stock_slow_central_delivery",
+    "peers_slow_region_delivery",
+    "faster_than_peers_region_delivery",
+)
+
 
 @dataclass(frozen=True)
 class FactorScore:
@@ -86,6 +106,7 @@ class EligibleProduct:
     rating: float | None
     review_count: int | None
     position: int | None
+    position_state: str | None
     observed_range_limit: int | None
     total_quantity: int | None
     source_subcategory: str
@@ -117,6 +138,13 @@ class ClusterContext:
     delivery_hours_by_region: dict[str, list[tuple[str, int]]]
 
 
+@dataclass(frozen=True)
+class MarketContext:
+    prices_by_subcategory: dict[str, list[float]]
+    root_counts: dict[str, int]
+    name_counts: dict[str, int]
+
+
 LOGISTICS_FACTOR_CODES = {
     "seller_stock_slow_central_delivery",
     "top_low_stock_slow_central_delivery",
@@ -124,6 +152,9 @@ LOGISTICS_FACTOR_CODES = {
     "peers_slow_region_delivery",
     "faster_than_peers_region_delivery",
 }
+
+MIN_RECOMMENDATIONS_PER_FACTOR = 25
+MAX_RECOMMENDATIONS_PER_FACTOR = 80
 
 
 def _utc_now() -> datetime:
@@ -221,6 +252,7 @@ def _eligible_product_with_skip_reason(product: MarketProductFeatureDto) -> tupl
         rating=rating,
         review_count=review_count,
         position=position,
+        position_state=(product.position_state or "").strip() or None,
         observed_range_limit=observed_range_limit,
         total_quantity=total_quantity,
         source_subcategory=source_subcategory,
@@ -516,6 +548,13 @@ def _is_top_visible(item: EligibleProduct, all_positions: list[int]) -> bool:
     return item.position is not None and item.position <= _top_position_limit(item, all_positions)
 
 
+def _is_weak_visibility(item: EligibleProduct, top_visible: bool) -> bool:
+    if top_visible:
+        return False
+    state = (item.position_state or "").strip().lower()
+    return item.position is not None or state == "beyondobservedrange"
+
+
 def _cluster_sort_key(item: EligibleProduct) -> tuple[Any, ...]:
     return (
         item.source_subcategory.lower(),
@@ -598,6 +637,26 @@ def _cluster_context(cluster: ProductCluster) -> ClusterContext:
         root_counts=dict(root_counts),
         name_counts=dict(name_counts),
         delivery_hours_by_region=delivery_hours_by_region,
+    )
+
+
+def _market_context(products: list[EligibleProduct]) -> MarketContext:
+    prices_by_subcategory: dict[str, list[float]] = {}
+    root_counts: Counter[str] = Counter()
+    name_counts: Counter[str] = Counter()
+    for item in products:
+        if item.price is not None:
+            prices_by_subcategory.setdefault(item.source_subcategory, []).append(item.price)
+        if item.product.wb_root_id:
+            root_counts[str(item.product.wb_root_id)] += 1
+        normalized = _normalized_name(item.product.name)
+        if normalized:
+            name_counts[normalized] += 1
+
+    return MarketContext(
+        prices_by_subcategory=prices_by_subcategory,
+        root_counts=dict(root_counts),
+        name_counts=dict(name_counts),
     )
 
 
@@ -696,6 +755,89 @@ def _cluster_diagnostics_summary(
         "productsWithAllRequiredHeuristicsCalculated": sum(cluster_sizes),
         "productsWithDeliveryDataWithoutLogisticsTags": len(delivery_without_tags),
         "warnings": warnings,
+    }
+
+
+def _recommendation_factor_codes(recommendation: HotProductRecommendationDto) -> set[str]:
+    return {factor.code for factor in recommendation.factors}
+
+
+def _factor_distribution(recommendations: list[HotProductRecommendationDto]) -> dict[str, int]:
+    distribution: Counter[str] = Counter()
+    for recommendation in recommendations:
+        distribution.update(_recommendation_factor_codes(recommendation))
+    return dict(sorted(distribution.items(), key=lambda item: (-item[1], item[0])))
+
+
+def _select_balanced_recommendations(
+    recommendations: list[HotProductRecommendationDto],
+    max_recommendations: int,
+) -> list[HotProductRecommendationDto]:
+    ordered = sorted(recommendations, key=lambda item: item.score, reverse=True)
+    if max_recommendations <= 0:
+        return []
+
+    selected: dict[str, HotProductRecommendationDto] = {}
+
+    def selected_count_for(code: str) -> int:
+        return sum(1 for item in selected.values() if code in _recommendation_factor_codes(item))
+
+    def add_for_factor(code: str, target_count: int) -> None:
+        if len(selected) >= max_recommendations:
+            return
+        needed = target_count - selected_count_for(code)
+        if needed <= 0:
+            return
+        for recommendation in ordered:
+            if len(selected) >= max_recommendations or needed <= 0:
+                return
+            if recommendation.recommendation_key in selected:
+                continue
+            if code not in _recommendation_factor_codes(recommendation):
+                continue
+            selected[recommendation.recommendation_key] = recommendation
+            needed -= 1
+
+    for target in (MIN_RECOMMENDATIONS_PER_FACTOR, MAX_RECOMMENDATIONS_PER_FACTOR):
+        for code in ACTIVE_OPPORTUNITY_FACTOR_CODES:
+            add_for_factor(code, target)
+            if len(selected) >= max_recommendations:
+                break
+        if len(selected) >= max_recommendations:
+            break
+
+    for recommendation in ordered:
+        if len(selected) >= max_recommendations:
+            break
+        selected.setdefault(recommendation.recommendation_key, recommendation)
+
+    return sorted(selected.values(), key=lambda item: item.score, reverse=True)
+
+
+def _selection_diagnostics(
+    *,
+    eligible_products: int,
+    clusters: list[ProductCluster],
+    all_recommendations: list[HotProductRecommendationDto],
+    selected_recommendations: list[HotProductRecommendationDto],
+) -> dict[str, Any]:
+    all_distribution = _factor_distribution(all_recommendations)
+    selected_distribution = _factor_distribution(selected_recommendations)
+    per_factor = {
+        code: {
+            "candidateCount": all_distribution.get(code, 0),
+            "selectedCount": selected_distribution.get(code, 0),
+            "missingPrerequisiteCounts": {},
+        }
+        for code in ACTIVE_OPPORTUNITY_FACTOR_CODES
+    }
+    return {
+        "eligibleProducts": eligible_products,
+        "clusterCount": len(clusters),
+        "clusterSizes": [len(cluster.products) for cluster in clusters],
+        "allFactorDistribution": all_distribution,
+        "selectedFactorDistribution": selected_distribution,
+        "perFactor": per_factor,
     }
 
 
@@ -1084,10 +1226,12 @@ def _opportunity_factors(
     *,
     item: EligibleProduct,
     cluster_context: ClusterContext,
+    market_context: MarketContext,
 ) -> list[FactorScore]:
     factors: list[FactorScore] = []
     top_visible = _is_top_visible(item, cluster_context.positions)
-    median_price = _median_or_none(cluster_context.prices)
+    broader_prices = market_context.prices_by_subcategory.get(item.source_subcategory, [])
+    median_price = _median_or_none(broader_prices) or _median_or_none(cluster_context.prices)
     median_reviews = _median_or_none([float(value) for value in cluster_context.review_counts])
 
     weak_rating = item.rating is not None and item.rating < 4.5
@@ -1166,12 +1310,11 @@ def _opportunity_factors(
         ))
 
     if (
-        not top_visible
+        _is_weak_visibility(item, top_visible)
         and item.rating is not None
         and item.rating >= 4.8
         and item.review_count is not None
         and item.review_count >= 100
-        and item.position is not None
     ):
         factors.append(FactorScore(
             code="good_reviews_weak_visibility",
@@ -1398,10 +1541,12 @@ def _opportunity_factors(
     *,
     item: EligibleProduct,
     cluster_context: ClusterContext,
+    market_context: MarketContext,
 ) -> list[FactorScore]:
     factors: list[FactorScore] = []
     top_visible = _is_top_visible(item, cluster_context.positions)
-    median_price = _median_or_none(cluster_context.prices)
+    broader_prices = market_context.prices_by_subcategory.get(item.source_subcategory, [])
+    median_price = _median_or_none(broader_prices) or _median_or_none(cluster_context.prices)
     median_reviews = _median_or_none([float(value) for value in cluster_context.review_counts])
 
     review_signals = item.product.review_signals
@@ -1514,12 +1659,11 @@ def _opportunity_factors(
         ))
 
     if (
-        not top_visible
+        _is_weak_visibility(item, top_visible)
         and item.rating is not None
         and item.rating >= 4.8
         and item.review_count is not None
         and item.review_count >= 100
-        and item.position is not None
     ):
         factors.append(FactorScore(
             code="good_reviews_weak_visibility",
@@ -1529,12 +1673,20 @@ def _opportunity_factors(
                 "rating": item.rating,
                 "reviewCount": item.review_count,
                 "position": item.position,
+                "positionState": item.position_state,
+                "observedRangeLimit": item.observed_range_limit,
             },
             score=74,
             confidence=0.70,
             weight=OPPORTUNITY_FACTOR_WEIGHTS["good_reviews_weak_visibility"],
             direction=FactorDirection.NEUTRAL,
-            debug={"position": item.position, "rating": item.rating, "reviewCount": item.review_count},
+            debug={
+                "position": item.position,
+                "positionState": item.position_state,
+                "observedRangeLimit": item.observed_range_limit,
+                "rating": item.rating,
+                "reviewCount": item.review_count,
+            },
         ))
 
     if top_visible and weak_card_content:
@@ -1658,11 +1810,11 @@ def _opportunity_factors(
 
     same_root_count = 0
     if item.product.wb_root_id:
-        same_root_count = cluster_context.root_counts.get(str(item.product.wb_root_id), 0)
+        same_root_count = market_context.root_counts.get(str(item.product.wb_root_id), 0)
     normalized_name = _normalized_name(item.product.name)
     same_name_count = 0
     if normalized_name:
-        same_name_count = cluster_context.name_counts.get(normalized_name, 0)
+        same_name_count = market_context.name_counts.get(normalized_name, 0)
     duplicate_count = max(same_root_count, same_name_count)
     if duplicate_count >= 3:
         factors.append(FactorScore(
@@ -1805,6 +1957,7 @@ class HotProductsService:
         include_debug = self._settings.enable_debug or options.include_debug
         valid_for_hours = min(options.valid_for_hours, DEFAULT_VALID_FOR_HOURS)
         clusters = build_product_clusters(eligible, MAX_CLUSTER_SIZE)
+        market_context = _market_context(eligible)
         cluster_contexts = {
             cluster.cluster_id: _cluster_context(cluster)
             for cluster in clusters
@@ -1819,7 +1972,11 @@ class HotProductsService:
         for cluster in clusters:
             context = cluster_contexts[cluster.cluster_id]
             for item in cluster.products:
-                factors = _opportunity_factors(item=item, cluster_context=context)
+                factors = _opportunity_factors(
+                    item=item,
+                    cluster_context=context,
+                    market_context=market_context,
+                )
                 factor_scores_by_product[item.product_key] = factors
                 factor_codes_by_product[item.product_key] = {factor.code for factor in factors}
 
@@ -1830,7 +1987,7 @@ class HotProductsService:
             factor_codes_by_product=factor_codes_by_product,
         )
 
-        recommendations: list[HotProductRecommendationDto] = []
+        all_recommendations: list[HotProductRecommendationDto] = []
         for cluster in clusters:
             for item in cluster.products:
                 factors = factor_scores_by_product[item.product_key]
@@ -1846,10 +2003,19 @@ class HotProductsService:
                     include_debug=include_debug,
                 )
                 if recommendation.score >= MIN_SCORE and recommendation.confidence >= effective_min_confidence:
-                    recommendations.append(recommendation)
+                    all_recommendations.append(recommendation)
 
-        recommendations.sort(key=lambda item: item.score, reverse=True)
-        recommendations = recommendations[: options.max_recommendations]
+        all_recommendations.sort(key=lambda item: item.score, reverse=True)
+        recommendations = _select_balanced_recommendations(
+            all_recommendations,
+            options.max_recommendations,
+        )
+        diagnostics = _selection_diagnostics(
+            eligible_products=len(eligible),
+            clusters=clusters,
+            all_recommendations=all_recommendations,
+            selected_recommendations=recommendations,
+        )
 
         warnings: list[str] = []
         if not recommendations:
@@ -1868,6 +2034,7 @@ class HotProductsService:
             computed_at_utc=computed_at,
             recommendations=recommendations,
             warnings=warnings,
+            diagnostics=diagnostics,
         )
 
     def _not_enough_data(

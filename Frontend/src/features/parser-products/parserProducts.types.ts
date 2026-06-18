@@ -299,6 +299,22 @@ export interface ParserProductFilterOptions {
   sellers: string[];
 }
 
+export interface ParserDemoCardSubcategories {
+  category: string;
+  subcategories: string[];
+}
+
+export interface ParserDemoCardCharacteristics {
+  subcategory: string;
+  characteristics: string[];
+}
+
+export interface ParserDemoCardOptions {
+  categories: string[];
+  subcategoriesByCategory: ParserDemoCardSubcategories[];
+  characteristicsBySubcategory: ParserDemoCardCharacteristics[];
+}
+
 export interface ParserProductFilterOptionsParams {
   parserRunId?: string;
   includeTestRuns?: boolean;

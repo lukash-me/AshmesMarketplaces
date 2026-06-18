@@ -1,5 +1,6 @@
 using System.Text;
 using AshmesMarketplaces.Application.Auth.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
@@ -41,7 +42,12 @@ public static class AuthSecurityServiceCollectionExtensions
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.FallbackPolicy = new AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
+        });
         services.AddHttpContextAccessor();
 
         return services;

@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
+import { useAuthStore } from '@/features/auth/auth.store';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
@@ -23,23 +25,37 @@ import ParserReviewsTable from './ParserReviewsTable.vue';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 const queryState = ref<ParserReviewQueryState>(parseParserReviewsQuery(route.query));
 const rows = ref<ParserReviewListItem[]>([]);
 const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
 const selected = ref<ParserReviewListItem | null>(null);
+const isGuest = computed(() => !auth.isAuthenticated);
 
 watch(
-  () => route.query,
-  async (query) => {
-    queryState.value = parseParserReviewsQuery(query);
+  () => [route.query, isGuest.value] as const,
+  async () => {
+    queryState.value = parseParserReviewsQuery(route.query);
+    if (isGuest.value) {
+      rows.value = [];
+      totalCount.value = 0;
+      loading.value = false;
+      error.value = '';
+      return;
+    }
+
     await loadRows();
   },
   { immediate: true }
 );
 
 async function loadRows() {
+  if (isGuest.value) {
+    return;
+  }
+
   loading.value = true;
   error.value = '';
 
@@ -82,6 +98,12 @@ function removeFilter(key: ParserReviewQueryFilterKey) {
       description="Read-only parser review evidence. Root payload snapshots can be partial or capped and do not prove full review history."
     />
 
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Отзывы парсера относятся к внутренним данным выгрузки. Войдите, чтобы просматривать служебные evidence-строки."
+    />
+
+    <template v-else>
     <ParserReviewsFilters
       :state="queryState"
       @apply="updateQuery"
@@ -116,6 +138,7 @@ function removeFilter(key: ParserReviewQueryFilterKey) {
     />
 
     <ParserReviewDetailDrawer :open="Boolean(selected)" :review="selected" @close="selected = null" />
+    </template>
   </div>
 </template>
 

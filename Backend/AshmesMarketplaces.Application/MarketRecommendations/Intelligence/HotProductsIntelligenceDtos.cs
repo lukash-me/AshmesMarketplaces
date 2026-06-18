@@ -63,7 +63,13 @@ public sealed record MarketProductFeatureDto(
     JsonElement? Characteristics,
     int? ImageCount,
     MarketProductReviewSignalDto? ReviewSignals,
-    MarketProductDeliveryProfileDto? DeliveryProfile = null);
+    MarketProductDeliveryProfileDto? DeliveryProfile = null,
+    string? SourceType = null,
+    decimal? CostPrice = null,
+    string? SupplierName = null,
+    string? SupplierUrl = null,
+    int? PositiveReviewCount = null,
+    int? ReviewSampleSize = null);
 
 public sealed record MarketProductReviewSignalDto(
     int ParsedReviewCount,
@@ -97,7 +103,8 @@ public sealed record HotProductsIntelligenceResponse(
     string ModelVersion,
     DateTime ComputedAtUtc,
     IReadOnlyList<HotProductRecommendationDto> Recommendations,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    JsonElement? Diagnostics = null);
 
 public sealed record HotProductRecommendationDto(
     string RecommendationKey,

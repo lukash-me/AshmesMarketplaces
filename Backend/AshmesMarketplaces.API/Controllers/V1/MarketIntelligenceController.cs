@@ -1,6 +1,7 @@
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketIntelligence.Dtos;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AshmesMarketplaces.API.Controllers.V1;
@@ -18,6 +19,7 @@ public sealed class MarketIntelligenceController : ControllerBase
     }
 
     [HttpGet("public")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PublicMarketIntelligenceDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]

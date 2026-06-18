@@ -272,6 +272,19 @@ public sealed record ParserProductFilterOptionsDto(
     IReadOnlyList<string> Brands,
     IReadOnlyList<string> Sellers);
 
+public sealed record ParserDemoCardOptionsDto(
+    IReadOnlyList<string> Categories,
+    IReadOnlyList<ParserDemoCardSubcategoriesDto> SubcategoriesByCategory,
+    IReadOnlyList<ParserDemoCardCharacteristicsDto> CharacteristicsBySubcategory);
+
+public sealed record ParserDemoCardSubcategoriesDto(
+    string Category,
+    IReadOnlyList<string> Subcategories);
+
+public sealed record ParserDemoCardCharacteristicsDto(
+    string Subcategory,
+    IReadOnlyList<string> Characteristics);
+
 public sealed class ParserProductFilterOptionsQuery
 {
     public string? ParserRunId { get; init; }

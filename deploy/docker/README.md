@@ -178,10 +178,10 @@ The smoke script:
 
 - prints `docker compose ps`;
 - checks the public frontend URL;
-- checks `GET /api/v1/market/recommendations/hot-products`;
-- treats HTTP `200` as success even if the response contains no recommendations.
+- checks `GET /api/v1/health`;
+- prints internal Docker health status for the production services.
 
-A fresh database may return empty valid responses for Market Analytics and recommendations until parser staging and recalculation are performed later.
+A fresh database may return empty valid responses for Market Analytics and recommendations until parser staging and recalculation are performed later. The smoke script does not depend on those data-heavy endpoints.
 
 If DNS is not propagated, ports `80/443` are blocked, or Caddy has not obtained a certificate yet, smoke checks may report HTTPS/TLS readiness problems. That is not automatically an application failure.
 
@@ -193,9 +193,12 @@ Option A: fresh DB
 docker compose -f deploy/docker/compose.prod.yml --env-file deploy/docker/.env up -d postgres
 ./deploy/docker/scripts/migrate.sh
 ./deploy/docker/scripts/up.sh
+sudo ./deploy/docker/scripts/bootstrap-admin.sh
 ```
 
-The application starts with an empty production database. Parser staging and hot-product recalculation are later operational stages.
+The admin credentials are written to `/etc/ashmes/admin-credentials.env` with `600` permissions.
+The application starts with an empty production database except for the initial admin user and workspace.
+Parser staging and hot-product recalculation are later operational stages.
 
 Option B: restore a local demo DB
 
@@ -210,7 +213,18 @@ Option B: restore a local demo DB
 
 Do not enable development seed in production unless explicitly approved.
 
-## 11. Manual Backup
+## 11. Parser Worker
+
+The production parser is a private Docker worker under the `worker` profile. It publishes no ports, reaches PostgreSQL through the internal Compose network, and writes artifacts/checkpoints to `/var/lib/ashmes/parser`.
+
+```bash
+./deploy/docker/scripts/parser-start.sh
+./deploy/docker/scripts/parser-status.sh
+./deploy/docker/scripts/parser-logs.sh
+./deploy/docker/scripts/parser-stop.sh
+```
+
+## 12. Manual Backup
 
 Create a backup:
 
@@ -285,6 +299,12 @@ Empty recommendations:
 - Fresh database has no parser staging data.
 - Hot-products recalculation may not have been run.
 - Empty recommendation results can be valid.
+
+Health check fails:
+
+- Check `https://<ASHMES_PUBLIC_HOST>/api/v1/health`.
+- Check API logs with `./deploy/docker/scripts/logs.sh api`.
+- Confirm the API container is healthy in `docker compose ps`.
 
 ## 14. Security Checklist
 

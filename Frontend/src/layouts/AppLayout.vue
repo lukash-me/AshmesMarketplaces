@@ -1,10 +1,27 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 
+import AuthModal from '@/features/auth/AuthModal.vue';
+import { useAuthPromptStore } from '@/features/auth/authPrompt.store';
 import AppSidebar from '@/widgets/AppSidebar.vue';
 import AppTopbar from '@/widgets/AppTopbar.vue';
 
+const route = useRoute();
+const authPrompt = useAuthPromptStore();
 const sidebarOpen = ref(false);
+
+watch(
+  () => route.query.auth,
+  (authQuery) => {
+    if (authQuery === 'login') {
+      authPrompt.showLogin();
+    } else if (authQuery === 'access') {
+      authPrompt.showAccess();
+    }
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
@@ -16,6 +33,7 @@ const sidebarOpen = ref(false);
         <RouterView />
       </main>
     </div>
+    <AuthModal />
   </div>
 </template>
 

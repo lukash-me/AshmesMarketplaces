@@ -14,6 +14,11 @@ COPY Intelligence/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY Intelligence/app ./app
+RUN addgroup --system app \
+    && adduser --system --ingroup app app \
+    && chown -R app:app /app
+
+USER app
 
 EXPOSE 8020
 

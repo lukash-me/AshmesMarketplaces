@@ -2,12 +2,15 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ArrowLeft, Eye, RefreshCw } from 'lucide-vue-next';
 
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
+import { useAuthStore } from '@/features/auth/auth.store';
 import {
   getWorkspaceOverview,
   recalculateWorkspaceOverview
 } from '@/features/overview/workspaceOverview.api';
 import {
   formatNumber,
+  formatMoney,
   productMetrics,
   similarGroupItemTags,
   similarGroupTabs,
@@ -20,6 +23,7 @@ import type {
   WorkspaceOverview,
   WorkspaceOverviewProduct,
   WorkspaceOverviewSimilarProduct,
+  WorkspaceOverviewSignal,
   WorkspaceOverviewSimilarProductGroup
 } from '@/features/overview/workspaceOverview.types';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
@@ -33,34 +37,49 @@ import Input from '@/shared/ui/Input.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
+import DemoMarketProductDrawer from './DemoMarketProductDrawer.vue';
 import { useActiveWorkspace } from './useActiveWorkspace';
+import { getWorkspaceMarketProducts } from './workspaceMarketProducts.api';
+import type { WorkspaceMarketProductListItem } from './workspaceMarketProducts.types';
 
-type TagFilter = 'all' | 'competitor' | 'idea';
+type TagFilter = 'all' | 'competitor' | 'idea' | 'created';
 
+const ALL_SIMILAR_GROUPS_KEY = '__all';
+
+const auth = useAuthStore();
 const workspace = useActiveWorkspace();
 const overview = ref<WorkspaceOverview | null>(null);
+const fallbackProducts = ref<WorkspaceOverviewProduct[]>([]);
 const selectedProduct = ref<ParserProductListItem | null>(null);
+const selectedDemoProduct = ref<WorkspaceOverviewProduct | null>(null);
 const loading = ref(false);
 const recalculating = ref(false);
 const error = ref('');
+const loadStage = ref('idle');
+const loadAttempts = ref(0);
+const loadStartedAt = ref('');
 const filters = reactive({
   search: '',
   tagKey: 'all' as TagFilter,
   groupKey: ''
 });
+const selectedGroupByProductId = reactive<Record<string, string>>({});
 let requestVersion = 0;
 
 const activeWorkspaceId = computed(() => workspace.activeWorkspaceId.value);
+const isGuest = computed(() => !auth.isAuthenticated);
 const hasProducts = computed(() => allProducts.value.length > 0);
-const hasAnalysis = computed(() => Boolean(overview.value?.lastAnalysis));
+const hasAnalysis = computed(() => Boolean(overview.value?.lastAnalysis) || fallbackProducts.value.length > 0);
+const analysisWarnings = computed(() => overview.value?.lastAnalysis?.warnings?.slice(0, 3) ?? []);
 const allProducts = computed<WorkspaceOverviewProduct[]>(() => {
   if (!overview.value) {
-    return [];
+    return fallbackProducts.value;
   }
 
   return [
-    ...overview.value.competitors.products,
-    ...overview.value.ideas.products
+    ...(overview.value.competitors?.products ?? []),
+    ...(overview.value.ideas?.products ?? []),
+    ...(overview.value.created?.products ?? [])
   ];
 });
 
@@ -113,37 +132,75 @@ const filteredProducts = computed(() => {
 watch(
   activeWorkspaceId,
   () => {
-    void loadOverview();
+    void loadClusterOverview();
   },
   { immediate: true }
 );
 
-async function loadOverview(): Promise<void> {
+async function loadClusterOverview(): Promise<void> {
   const workspaceId = activeWorkspaceId.value;
   const version = ++requestVersion;
+  loadAttempts.value += 1;
+  loadStartedAt.value = new Date().toISOString();
+
+  if (isGuest.value) {
+    overview.value = null;
+    fallbackProducts.value = [];
+    error.value = '';
+    loading.value = false;
+    loadStage.value = 'auth-required';
+    return;
+  }
 
   if (!workspaceId) {
     overview.value = null;
+    fallbackProducts.value = [];
     error.value = '';
+    loading.value = false;
+    loadStage.value = 'no-workspace';
     return;
   }
 
   loading.value = true;
   error.value = '';
+  loadStage.value = 'loading-products';
 
   try {
+    const products = await getWorkspaceMarketProducts(workspaceId, {
+      page: 1,
+      pageSize: 500,
+      sort: 'updated_desc'
+    });
+
+    if (version !== requestVersion) {
+      return;
+    }
+
+    fallbackProducts.value = products.items.map(mapWorkspaceProductToOverviewProduct);
+    loading.value = false;
+    loadStage.value = 'loading-overview';
+
     const response = await getWorkspaceOverview(workspaceId);
-    if (version === requestVersion) {
-      overview.value = response;
-      if (filters.groupKey && !responseHasGroup(response, filters.groupKey)) {
-        filters.groupKey = '';
-      }
+    if (version !== requestVersion) {
+      return;
+    }
+
+    overview.value = response;
+    fallbackProducts.value = [];
+    loadStage.value = 'loaded';
+    if (filters.groupKey && !responseHasGroup(response, filters.groupKey)) {
+      filters.groupKey = '';
     }
   } catch (requestError) {
-    if (version === requestVersion) {
-      error.value = getProblemMessage(requestError, 'Не удалось загрузить кластерный анализ.');
-      overview.value = null;
+    if (version !== requestVersion) {
+      return;
     }
+
+    loadStage.value = 'failed';
+    const message = getProblemMessage(requestError, 'Не удалось загрузить кластерный анализ.');
+    error.value = fallbackProducts.value.length > 0
+      ? `${message} Показан список наблюдаемых товаров без свежих подборок.`
+      : message;
   } finally {
     if (version === requestVersion) {
       loading.value = false;
@@ -151,9 +208,130 @@ async function loadOverview(): Promise<void> {
   }
 }
 
+async function loadOverview(): Promise<void> {
+  const workspaceId = activeWorkspaceId.value;
+  const version = ++requestVersion;
+  loadAttempts.value += 1;
+  loadStartedAt.value = new Date().toISOString();
+
+  if (isGuest.value) {
+    overview.value = null;
+    fallbackProducts.value = [];
+    error.value = '';
+    loading.value = false;
+    loadStage.value = 'auth-required';
+    return;
+  }
+
+  if (!workspaceId) {
+    overview.value = null;
+    fallbackProducts.value = [];
+    error.value = '';
+    loading.value = false;
+    loadStage.value = 'no-workspace';
+    return;
+  }
+
+  loading.value = true;
+  error.value = '';
+  loadStage.value = 'loading-products';
+
+  const watchdog = window.setTimeout(() => {
+    if (version === requestVersion && loading.value) {
+      loading.value = false;
+      loadStage.value = 'timeout';
+      error.value = 'Не удалось загрузить кластерный анализ: запрос занял слишком много времени.';
+    }
+  }, 15000);
+
+  try {
+    const response = await getWorkspaceOverview(workspaceId);
+    if (version === requestVersion) {
+      overview.value = response;
+      loadStage.value = 'loaded';
+      if (filters.groupKey && !responseHasGroup(response, filters.groupKey)) {
+        filters.groupKey = '';
+      }
+    }
+  } catch (requestError) {
+    if (version === requestVersion) {
+      loadStage.value = 'failed';
+      error.value = getProblemMessage(requestError, 'Не удалось загрузить кластерный анализ.');
+      overview.value = null;
+    }
+  } finally {
+    window.clearTimeout(watchdog);
+    if (version === requestVersion) {
+      loading.value = false;
+    }
+  }
+}
+
+function mapWorkspaceProductToOverviewProduct(item: WorkspaceMarketProductListItem): WorkspaceOverviewProduct {
+  const currentPrice = item.priceWbWallet ?? item.priceDiscounted ?? item.priceRegular;
+  const tagKey = item.isDemo ? 'created' : item.tagKey;
+
+  return {
+    id: item.id,
+    parserProductRowId: item.parserProductRowId,
+    wbProductId: item.wbProductId,
+    wbRootId: item.wbRootId,
+    sourceType: item.sourceType,
+    isDemo: item.isDemo,
+    tagKey,
+    note: item.note,
+    name: item.name,
+    brandName: item.brandName,
+    sellerName: item.sellerName,
+    thumbnailUrl: item.thumbnailUrl,
+    sourceCategory: item.sourceCategory,
+    sourceSubcategory: item.sourceSubcategory,
+    currentPrice,
+    costPrice: item.costPrice,
+    description: item.description,
+    supplierName: item.supplierName,
+    supplierUrl: item.supplierUrl,
+    currentPosition: item.positionAbsolute,
+    currentStock: item.totalQuantity,
+    currentFeedbackCount: item.feedbackCount,
+    currentReviewRating: item.reviewRating,
+    latestObservedAtUtc: item.latestObservedAtUtc,
+    priceChange: emptyChange('price', 'Цена', currentPrice, formatMoney(currentPrice)),
+    positionChange: emptyChange(
+      'position',
+      'Позиция',
+      item.positionAbsolute,
+      item.positionAbsolute ? `#${formatNumber(item.positionAbsolute)}` : 'Нет данных'
+    ),
+    stockChange: emptyChange('stock', 'Остаток', item.totalQuantity, formatNumber(item.totalQuantity)),
+    feedbackChange: emptyChange('feedback', 'Отзывы', item.feedbackCount, formatNumber(item.feedbackCount)),
+    reviewRatingChange: emptyChange('rating', 'Оценка', item.reviewRating, formatNumber(item.reviewRating)),
+    signals: [],
+    similarProducts: [],
+    similarProductGroups: []
+  };
+}
+
+function emptyChange(
+  key: string,
+  label: string,
+  currentValue: number | null,
+  displayValue: string
+): WorkspaceOverviewProduct['priceChange'] {
+  return {
+    key,
+    label,
+    currentValue,
+    previousValue: null,
+    delta: null,
+    displayValue,
+    state: 'unknown'
+  };
+}
+
 async function recalculate(): Promise<void> {
   const workspaceId = activeWorkspaceId.value;
-  if (!workspaceId || recalculating.value) {
+  if (!workspaceId || recalculating.value || isGuest.value) {
     return;
   }
 
@@ -162,9 +340,12 @@ async function recalculate(): Promise<void> {
 
   try {
     await recalculateWorkspaceOverview(workspaceId);
-    await loadOverview();
+    await loadClusterOverview();
   } catch (requestError) {
-    error.value = getProblemMessage(requestError, 'Не удалось обновить анализ.');
+    const message = getProblemMessage(requestError, 'Не удалось обновить анализ.');
+    error.value = overview.value
+      ? `${message} Показана последняя успешная версия.`
+      : message;
   } finally {
     recalculating.value = false;
   }
@@ -173,13 +354,104 @@ async function recalculate(): Promise<void> {
 function productGroups(product: WorkspaceOverviewProduct): WorkspaceOverviewSimilarProductGroup[] {
   const groups = similarGroupTabs(product);
   if (!filters.groupKey) {
-    return groups;
+    const selectedKey = selectedSimilarGroupKey(product, groups);
+    if (selectedKey === ALL_SIMILAR_GROUPS_KEY) {
+      return groups;
+    }
+
+    return groups.filter((group) => group.key === selectedKey);
   }
 
   return groups.filter((group) => group.key === filters.groupKey);
 }
 
+function selectedSimilarGroupKey(
+  product: WorkspaceOverviewProduct,
+  groups = similarGroupTabs(product)
+): string {
+  if (groups.length === 0) {
+    return '';
+  }
+
+  const selected = selectedGroupByProductId[product.id];
+  if (selected === ALL_SIMILAR_GROUPS_KEY || (selected && groups.some((group) => group.key === selected))) {
+    return selected;
+  }
+
+  const preferred = product.isDemo
+    ? groups.find((group) => group.key === 'strong_similar_cards')
+    : undefined;
+  const selectedKey = preferred?.key
+    ?? [...groups].sort((left, right) => groupPriority(left.key) - groupPriority(right.key))[0].key;
+  selectedGroupByProductId[product.id] = selectedKey;
+  return selectedKey;
+}
+
+function selectSimilarGroup(product: WorkspaceOverviewProduct, groupKey: string): void {
+  selectedGroupByProductId[product.id] = groupKey;
+}
+
+function isPriceCorridorSignal(signal: WorkspaceOverviewSignal): boolean {
+  return signal.code === 'demo_price_corridor' && Boolean(signal.value);
+}
+
+function isDescriptionSignal(signal: WorkspaceOverviewSignal): boolean {
+  return signal.code === 'demo_description_recommendation';
+}
+
+function signalValue(signal: WorkspaceOverviewSignal): Record<string, unknown> {
+  return signal.value ?? {};
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringArrayValue(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function priceCorridorRows(signal: WorkspaceOverviewSignal): Array<{ label: string; value: string; state?: string }> {
+  const value = signalValue(signal);
+  const currentPrice = numberValue(value.currentPrice);
+  const lowerPrice = numberValue(value.lowerPrice);
+  const upperPrice = numberValue(value.upperPrice);
+  const currentState = currentPrice !== null && lowerPrice !== null && upperPrice !== null
+    ? currentPrice < lowerPrice || currentPrice > upperPrice
+      ? 'warning'
+      : 'ok'
+    : undefined;
+
+  return [
+    { label: 'Нижняя граница', value: formatMoney(numberValue(value.lowerPrice)) },
+    { label: 'Целевая цена', value: formatMoney(numberValue(value.targetPrice)) },
+    { label: 'Верхняя граница', value: formatMoney(numberValue(value.upperPrice)) },
+    { label: 'Цена карточки', value: formatMoney(currentPrice), state: currentState },
+    { label: 'Медиана похожих', value: formatMoney(numberValue(value.peerMedianPrice)) },
+    { label: 'Похожие в расчете', value: formatNumber(numberValue(value.sampleSize)) },
+    { label: 'Минимум с учетом себестоимости', value: formatMoney(numberValue(value.costFloor)) }
+  ];
+}
+
+function descriptionProblems(signal: WorkspaceOverviewSignal): string[] {
+  return stringArrayValue(signalValue(signal).problems);
+}
+
+function descriptionRequiredFields(signal: WorkspaceOverviewSignal): string[] {
+  return stringArrayValue(signalValue(signal).requiredFields);
+}
+
+function descriptionSuggestion(signal: WorkspaceOverviewSignal): string | null {
+  const suggestion = signalValue(signal).suggestedDescription;
+  return typeof suggestion === 'string' && suggestion.trim() ? suggestion : null;
+}
+
 function openProduct(product: WorkspaceOverviewProduct): void {
+  if (product.isDemo) {
+    selectedDemoProduct.value = product;
+    return;
+  }
+
   selectedProduct.value = toParserProduct(product);
 }
 
@@ -188,6 +460,10 @@ function openSimilarProduct(product: WorkspaceOverviewSimilarProduct): void {
 }
 
 function tagLabel(tagKey: WorkspaceOverviewProduct['tagKey']): string {
+  if (tagKey === 'created') {
+    return 'Созданная';
+  }
+
   return tagKey === 'competitor' ? 'Конкурент' : 'Идея';
 }
 
@@ -195,14 +471,27 @@ function tagTone(tagKey: WorkspaceOverviewProduct['tagKey']): 'warning' | 'info'
   return tagKey === 'competitor' ? 'warning' : 'info';
 }
 
+function productTagLabel(product: WorkspaceOverviewProduct): string {
+  if (product.isDemo || product.tagKey === 'created') {
+    return 'Созданная';
+  }
+
+  return tagLabel(product.tagKey);
+}
+
 function responseHasGroup(response: WorkspaceOverview, groupKey: string): boolean {
-  return [...response.competitors.products, ...response.ideas.products]
+  return [
+    ...(response.competitors?.products ?? []),
+    ...(response.ideas?.products ?? []),
+    ...(response.created?.products ?? [])
+  ]
     .some((product) => similarGroupTabs(product).some((group) => group.key === groupKey));
 }
 
 function groupPriority(key: string): number {
   const priority = [
     'duplicate_cards',
+    'strong_similar_cards',
     'price_disadvantage',
     'position_disadvantage',
     'review_count_disadvantage',
@@ -217,7 +506,16 @@ function groupPriority(key: string): number {
 </script>
 
 <template>
-  <div class="cluster-page">
+  <div
+    class="cluster-page"
+    :data-debug-loading="String(loading)"
+    :data-debug-workspace-id="activeWorkspaceId ?? ''"
+    :data-debug-has-overview="String(Boolean(overview))"
+    :data-debug-error="error"
+    :data-debug-load-stage="loadStage"
+    :data-debug-load-attempts="String(loadAttempts)"
+    :data-debug-load-started-at="loadStartedAt"
+  >
     <PageHeader
       title="Кластерный анализ"
       description="Сравнение наблюдаемых товаров с похожими карточками в выбранной нише."
@@ -232,7 +530,18 @@ function groupPriority(key: string): number {
       </Button>
     </PageHeader>
 
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Кластерный анализ сравнивает ваши наблюдаемые карточки с похожими товарами и показывает сильные и слабые примеры. Войдите, чтобы открыть анализ своей рабочей области."
+    />
+    <template v-else>
     <p v-if="error" class="cluster-error">{{ error }}</p>
+    <div v-if="analysisWarnings.length" class="cluster-warning app-surface">
+      <strong>РџСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ Р°РЅР°Р»РёР·Р°</strong>
+      <ul>
+        <li v-for="warning in analysisWarnings" :key="warning">{{ warning }}</li>
+      </ul>
+    </div>
 
     <LoadingState v-if="loading" :rows="6" />
 
@@ -277,6 +586,7 @@ function groupPriority(key: string): number {
             <option value="all">Все</option>
             <option value="competitor">Конкуренты</option>
             <option value="idea">Идеи</option>
+            <option value="created">Созданные</option>
           </select>
         </label>
 
@@ -325,7 +635,7 @@ function groupPriority(key: string): number {
               </p>
             </div>
 
-            <Badge :tone="tagTone(product.tagKey)">{{ tagLabel(product.tagKey) }}</Badge>
+            <Badge :tone="tagTone(product.tagKey)">{{ productTagLabel(product) }}</Badge>
           </header>
 
           <div class="cluster-card__metrics">
@@ -333,6 +643,68 @@ function groupPriority(key: string): number {
               <span>{{ metric.label }}</span>
               <strong>{{ metric.value }}</strong>
             </div>
+          </div>
+
+          <section v-if="product.isDemo && product.signals.length" class="cluster-demo-signals">
+            <article v-for="signal in product.signals" :key="signal.code" class="cluster-demo-signal">
+              <strong>{{ signal.title }}</strong>
+              <p>{{ signal.description }}</p>
+
+              <table v-if="isPriceCorridorSignal(signal)" class="cluster-price-corridor">
+                <tbody>
+                  <tr v-for="row in priceCorridorRows(signal)" :key="row.label" :class="row.state ? `cluster-price-corridor__row--${row.state}` : ''">
+                    <th>{{ row.label }}</th>
+                    <td>{{ row.value }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div v-else-if="isDescriptionSignal(signal)" class="cluster-description-advice">
+                <div v-if="descriptionProblems(signal).length">
+                  <span>Проблемы</span>
+                  <ul>
+                    <li v-for="problem in descriptionProblems(signal)" :key="problem">{{ problem }}</li>
+                  </ul>
+                </div>
+                <div v-if="descriptionRequiredFields(signal).length">
+                  <span>Что заполнить</span>
+                  <ul>
+                    <li v-for="field in descriptionRequiredFields(signal)" :key="field">{{ field }}</li>
+                  </ul>
+                </div>
+                <div v-if="descriptionSuggestion(signal)" class="cluster-description-advice__suggestion">
+                  <span>Вариант текста</span>
+                  <p>{{ descriptionSuggestion(signal) }}</p>
+                </div>
+              </div>
+
+              <ul v-else>
+                <li v-for="fact in signal.metricFacts" :key="fact">{{ fact }}</li>
+              </ul>
+            </article>
+          </section>
+
+          <div v-if="!filters.groupKey && similarGroupTabs(product).length > 1" class="cluster-group-switcher" aria-label="Подборки сравнения">
+            <button
+              class="cluster-group-switcher__button"
+              :class="{ 'cluster-group-switcher__button--active': selectedSimilarGroupKey(product) === ALL_SIMILAR_GROUPS_KEY }"
+              type="button"
+              @click="selectSimilarGroup(product, ALL_SIMILAR_GROUPS_KEY)"
+            >
+              Все
+              <span>{{ similarGroupTabs(product).length }}</span>
+            </button>
+            <button
+              v-for="group in similarGroupTabs(product)"
+              :key="group.key"
+              class="cluster-group-switcher__button"
+              :class="{ 'cluster-group-switcher__button--active': selectedSimilarGroupKey(product) === group.key }"
+              type="button"
+              @click="selectSimilarGroup(product, group.key)"
+            >
+              {{ similarGroupTitle(group) }}
+              <span>{{ group.items.length }}</span>
+            </button>
           </div>
 
           <div v-if="productGroups(product).length" class="cluster-groups">
@@ -394,11 +766,17 @@ function groupPriority(key: string): number {
         </article>
       </section>
     </template>
+    </template>
 
     <ParserProductDetailDrawer
       :open="Boolean(selectedProduct)"
       :product="selectedProduct"
       @close="selectedProduct = null"
+    />
+    <DemoMarketProductDrawer
+      :open="Boolean(selectedDemoProduct)"
+      :product="selectedDemoProduct"
+      @close="selectedDemoProduct = null"
     />
   </div>
 </template>
@@ -422,6 +800,28 @@ function groupPriority(key: string): number {
   background: var(--state-danger-soft);
   padding: var(--space-3);
   color: var(--state-danger);
+  font-weight: 650;
+}
+
+.cluster-warning {
+  display: grid;
+  gap: var(--space-2);
+  border-color: var(--accent-primary-border);
+  background: var(--accent-ember-soft);
+  padding: var(--space-3);
+  color: var(--accent-ember-text-strong);
+}
+
+.cluster-warning strong,
+.cluster-warning ul {
+  margin: 0;
+}
+
+.cluster-warning ul {
+  display: grid;
+  gap: var(--space-1);
+  padding-left: 1.1rem;
+  font-size: var(--operator-meta-size);
   font-weight: 650;
 }
 
@@ -454,6 +854,42 @@ function groupPriority(key: string): number {
 .cluster-groups {
   display: grid;
   gap: var(--space-4);
+}
+
+.cluster-group-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.cluster-group-switcher__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid var(--operator-border-muted);
+  border-radius: 6px;
+  background: var(--operator-panel-bg);
+  color: var(--color-text);
+  padding: 0.38rem 0.58rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cluster-group-switcher__button span {
+  min-width: 1.4rem;
+  border-radius: 999px;
+  background: var(--operator-metric-bg);
+  color: var(--color-text-muted);
+  padding: 0.08rem 0.35rem;
+  text-align: center;
+  font-size: 0.75rem;
+}
+
+.cluster-group-switcher__button--active {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-ember-soft);
+  color: var(--accent-ember-text-strong);
 }
 
 .cluster-card {
@@ -544,6 +980,95 @@ function groupPriority(key: string): number {
   color: var(--color-text);
   font-size: var(--operator-value-size);
   font-weight: 820;
+}
+
+.cluster-demo-signals {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cluster-demo-signal {
+  display: grid;
+  gap: var(--space-2);
+  border: 1px solid var(--accent-primary-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-ember-soft);
+  padding: var(--space-3);
+}
+
+.cluster-demo-signal strong,
+.cluster-demo-signal p {
+  margin: 0;
+}
+
+.cluster-demo-signal ul {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.cluster-price-corridor {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid var(--operator-border-muted);
+  border-radius: 6px;
+  font-size: 0.88rem;
+}
+
+.cluster-price-corridor th,
+.cluster-price-corridor td {
+  border-bottom: 1px solid var(--operator-border-muted);
+  padding: 0.42rem 0.55rem;
+  text-align: left;
+}
+
+.cluster-price-corridor tr:last-child th,
+.cluster-price-corridor tr:last-child td {
+  border-bottom: 0;
+}
+
+.cluster-price-corridor th {
+  width: 52%;
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+
+.cluster-price-corridor td {
+  font-weight: 800;
+}
+
+.cluster-price-corridor__row--warning td {
+  color: var(--state-danger-text);
+}
+
+.cluster-price-corridor__row--ok td {
+  color: var(--state-success-text);
+}
+
+.cluster-description-advice {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cluster-description-advice > div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.cluster-description-advice span {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.cluster-description-advice__suggestion p {
+  border: 1px solid var(--operator-border-muted);
+  border-radius: 6px;
+  background: var(--operator-metric-bg);
+  padding: 0.55rem;
 }
 
 .cluster-group {

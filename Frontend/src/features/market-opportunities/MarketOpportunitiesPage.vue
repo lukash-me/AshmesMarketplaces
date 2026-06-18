@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
-import { storeToRefs } from 'pinia';
-import { X } from 'lucide-vue-next';
+import { SlidersHorizontal, X } from 'lucide-vue-next';
 
-import { useAuthStore } from '@/features/auth/auth.store';
 import MarketFilterSelect from '@/features/parser-products/MarketFilterSelect.vue';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
@@ -23,6 +21,7 @@ import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import Input from '@/shared/ui/Input.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
+import { hotProductsHeuristicsHelpText } from './hotProductsHeuristicsCatalog';
 
 type FactorMode = 'any' | 'all';
 
@@ -207,8 +206,6 @@ const emptyFilterOptions: ParserProductFilterOptions = {
   sellers: []
 };
 
-const authStore = useAuthStore();
-const { user } = storeToRefs(authStore);
 const response = ref<HotProductsListResponse | null>(null);
 const filterOptions = ref<ParserProductFilterOptions>(emptyFilterOptions);
 const selectedProduct = ref<ParserProductListItem | null>(null);
@@ -239,13 +236,30 @@ const selectedGroup = computed(() =>
 );
 
 const hotProductsScheduleText = computed(() => {
-  const schedule = user.value?.analysisSchedule;
+  const schedule = response.value?.schedule;
   if (!schedule) {
     return 'Перспективные товары обновляются автоматически один раз в сутки.';
   }
 
-  return `Обновляется ежедневно в ${schedule.hotProductsLocalTime}. Следующий запуск: ${formatScheduleDate(schedule.nextHotProductsRunAtUtc)}.`;
+  return `Обновляется ежедневно в ${schedule.localTime}. Следующий запуск: ${formatScheduleDate(schedule.nextRunAtUtc)}.`;
 });
+
+const numberFormatter = new Intl.NumberFormat('ru-RU');
+
+const hotProductsRunStats = computed(() => {
+  const run = response.value?.run;
+  if (!run) {
+    return [];
+  }
+
+  return [
+    { label: 'Рассчитано товаров', value: numberFormatter.format(run.productsSent || 0) },
+    { label: 'Подборок', value: numberFormatter.format(response.value?.totalCount ?? run.itemsTotal ?? 0) },
+    { label: 'Эвристик найдено', value: numberFormatter.format(run.factorCodeCount || 0) }
+  ];
+});
+
+const hotProductsRunWarnings = computed(() => response.value?.run?.warnings ?? []);
 
 function formatScheduleDate(value: string | null | undefined): string {
   if (!value) {
@@ -944,8 +958,17 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 
 <template>
   <div class="market-opportunities">
-    <PageHeader title="Перспективные товары" />
+    <PageHeader title="Перспективные товары" :description="hotProductsHeuristicsHelpText" />
     <p class="analysis-schedule-note">{{ hotProductsScheduleText }}</p>
+    <dl v-if="hotProductsRunStats.length" class="analysis-run-stats" aria-label="Сводка расчета перспективных товаров">
+      <div v-for="item in hotProductsRunStats" :key="item.label" class="analysis-run-stat">
+        <dt>{{ item.label }}</dt>
+        <dd>{{ item.value }}</dd>
+      </div>
+    </dl>
+    <p v-if="hotProductsRunWarnings.length" class="analysis-run-warning">
+      Выдача требует диагностики: {{ hotProductsRunWarnings[0] }}
+    </p>
 
     <form class="filters app-surface" @submit.prevent="applyFilters">
       <div class="filters__search">
@@ -1200,6 +1223,38 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   margin: calc(var(--space-2) * -1) 0 0;
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+
+.analysis-run-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: calc(var(--space-3) * -1) 0 0;
+}
+
+.analysis-run-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.analysis-run-stat dt {
+  margin: 0;
+}
+
+.analysis-run-stat dd {
+  margin: 0;
+  color: var(--text-strong);
+  font-weight: 800;
+}
+
+.analysis-run-warning {
+  margin: calc(var(--space-3) * -1) 0 0;
+  color: var(--color-warning);
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .filters {

@@ -1,4 +1,4 @@
-export type WorkspaceOverviewTagKey = 'competitor' | 'idea';
+export type WorkspaceOverviewTagKey = 'competitor' | 'idea' | 'created';
 export type WorkspaceOverviewGroupKey = WorkspaceOverviewTagKey | 'new';
 export type WorkspaceOverviewChangeState = 'positive' | 'negative' | 'neutral' | 'unknown';
 
@@ -31,6 +31,7 @@ export interface WorkspaceOverviewSignal {
   description: string;
   metricFacts: string[];
   confidence: number;
+  value?: Record<string, unknown> | null;
 }
 
 export interface WorkspaceOverviewSimilarProduct {
@@ -67,9 +68,11 @@ export interface WorkspaceOverviewSimilarProductGroup {
 
 export interface WorkspaceOverviewProduct {
   id: string;
-  parserProductRowId: string;
-  wbProductId: string;
+  parserProductRowId: string | null;
+  wbProductId: string | null;
   wbRootId: string | null;
+  sourceType: 'parser' | 'demo' | string;
+  isDemo: boolean;
   tagKey: WorkspaceOverviewTagKey;
   note: string | null;
   name: string;
@@ -79,6 +82,10 @@ export interface WorkspaceOverviewProduct {
   sourceCategory: string | null;
   sourceSubcategory: string | null;
   currentPrice: number | null;
+  costPrice: number | null;
+  description: string | null;
+  supplierName: string | null;
+  supplierUrl: string | null;
   currentPosition: number | null;
   currentStock: number | null;
   currentFeedbackCount: number | null;
@@ -109,6 +116,7 @@ export interface WorkspaceOverview {
   newItems: WorkspaceOverviewGroup;
   competitors: WorkspaceOverviewGroup;
   ideas: WorkspaceOverviewGroup;
+  created: WorkspaceOverviewGroup;
 }
 
 export interface WorkspaceOverviewRecalculateResponse {

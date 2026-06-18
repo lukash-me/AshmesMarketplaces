@@ -1,7 +1,14 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   proxy:
     image: caddy:2-alpine
     restart: unless-stopped
+    stop_grace_period: 20s
     environment:
       ASHMES_PUBLIC_HOST: ${ASHMES_PUBLIC_HOST}
     ports:
@@ -13,28 +20,48 @@ services:
       - caddy_config:/config
     depends_on:
       frontend:
-        condition: service_started
+        condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
     networks:
       - ashmes_public
       - ashmes_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header=\"Host: $${ASHMES_PUBLIC_HOST}\" http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: "0.50"
 
   frontend:
     build:
       context: ../..
       dockerfile: Frontend/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 20s
     expose:
       - "80"
     networks:
       - ashmes_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: "0.50"
 
   api:
     build:
       context: ../..
       dockerfile: Backend/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
@@ -50,6 +77,10 @@ services:
       Intelligence__TimeoutSeconds: "20"
       Intelligence__MaxProductsPerRequest: "1000"
       Intelligence__HotProductsAlgorithm: rule_based_hot_products_v1
+      WorkspaceMarketProductMediaStorage__RootPath: /app/wwwroot/uploads
+      WorkspaceMarketProductMediaStorage__PublicBasePath: /uploads
+    volumes:
+      - /var/lib/ashmes/uploads:/app/wwwroot/uploads
     expose:
       - "8080"
     depends_on:
@@ -59,12 +90,22 @@ services:
         condition: service_healthy
     networks:
       - ashmes_internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    mem_limit: 1536m
+    cpus: "1.50"
 
   intelligence:
     build:
       context: ../..
       dockerfile: Intelligence/Dockerfile
     restart: unless-stopped
+    stop_grace_period: 30s
     environment:
       INTELLIGENCE_ENV: production
       INTELLIGENCE_LOG_LEVEL: ${INTELLIGENCE_LOG_LEVEL}
@@ -86,10 +127,14 @@ services:
       start_period: 20s
     networks:
       - ashmes_internal
+    logging: *default-logging
+    mem_limit: 1024m
+    cpus: "1.00"
 
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    stop_grace_period: 60s
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -106,6 +151,9 @@ services:
       start_period: 10s
     networks:
       - ashmes_internal
+    logging: *default-logging
+    mem_limit: 2048m
+    cpus: "2.00"
 
   migrator:
     profiles:
@@ -129,7 +177,41 @@ services:
       --project Backend/AshmesMarketplaces.DataAccess/AshmesMarketplaces.DataAccess.csproj
       --startup-project Backend/AshmesMarketplaces.API/AshmesMarketplaces.API.csproj"
     networks:
+      - ashmes_public
       - ashmes_internal
+    logging: *default-logging
+    mem_limit: 1536m
+    cpus: "1.50"
+
+  parser:
+    profiles:
+      - worker
+    build:
+      context: ../..
+      dockerfile: Parser/Dockerfile
+    restart: on-failure
+    stop_grace_period: 60s
+    environment:
+      PARSER_POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      ASHMES_POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+    volumes:
+      - /var/lib/ashmes/parser:/parser-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app
+    command: >
+      /bin/sh -c "python Parser/market_refresh_runner.py
+      --config Parser/presets/market_refresh_selected_niches_batched.prod.json
+      --mode batched_full_enrichment
+      --stage-to-db
+      --connection-string \"$${PARSER_POSTGRES_CONNECTION}\""
+    networks:
+      - ashmes_public
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 2048m
+    cpus: "1.50"
 
 networks:
   ashmes_public:

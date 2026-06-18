@@ -6,10 +6,17 @@ public sealed record MarketHotProductsSnapshot(
     string Marketplace,
     string? SourceCategory,
     IReadOnlyList<string> SourceSubcategories,
-    string ProductParserRunId,
+    string? ProductParserRunId,
     string? RankParserRunId,
     IReadOnlyList<string> ReviewParserRunIds,
     IReadOnlyList<MarketProductFeatureSnapshot> Products);
+
+public sealed record HotProductsProductSelectionRow(
+    Guid Id,
+    string WbProductId,
+    string ParserRunId,
+    DateTime ParsedAtUtc,
+    long SourceLineNumber);
 
 public sealed record MarketProductFeatureSnapshot(
     Guid ParserProductRowId,

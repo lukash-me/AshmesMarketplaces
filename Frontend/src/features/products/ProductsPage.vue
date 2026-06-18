@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
+import { useAuthStore } from '@/features/auth/auth.store';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
@@ -25,6 +27,7 @@ import type { ProductListItem, ProductQueryState } from './products.types';
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 
 const queryState = ref<ProductQueryState>(parseProductsQuery(route.query));
 const products = ref<ProductListItem[]>([]);
@@ -32,6 +35,7 @@ const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
 const selectedProduct = ref<ProductListItem | null>(null);
+const isGuest = computed(() => !auth.isAuthenticated);
 
 const kpis = computed(() => {
   const activeCount = products.value.filter((product) => product.status === 2).length;
@@ -54,15 +58,27 @@ const kpis = computed(() => {
 });
 
 watch(
-  () => route.query,
-  async (query) => {
-    queryState.value = parseProductsQuery(query);
+  () => [route.query, isGuest.value] as const,
+  async () => {
+    queryState.value = parseProductsQuery(route.query);
+    if (isGuest.value) {
+      products.value = [];
+      totalCount.value = 0;
+      loading.value = false;
+      error.value = '';
+      return;
+    }
+
     await loadProducts();
   },
   { immediate: true }
 );
 
 async function loadProducts() {
+  if (isGuest.value) {
+    return;
+  }
+
   loading.value = true;
   error.value = '';
 
@@ -118,6 +134,12 @@ function closeProduct() {
       description="Каталог товаров пользователя с идентификаторами маркетплейса, статусами и операционными полями."
     />
 
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Этот раздел содержит пользовательский каталог и операционные данные. Войдите, чтобы работать с товарами своей рабочей области."
+    />
+
+    <template v-else>
     <KpiGrid :items="kpis" />
 
     <ProductsFilters
@@ -161,6 +183,7 @@ function closeProduct() {
       :product="selectedProduct"
       @close="closeProduct"
     />
+    </template>
   </div>
 </template>
 

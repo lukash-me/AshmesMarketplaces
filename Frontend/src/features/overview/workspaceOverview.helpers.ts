@@ -38,6 +38,13 @@ export function formatRating(value: number | null | undefined): string {
 }
 
 export function productMetrics(product: WorkspaceOverviewProduct): ProductMetric[] {
+  if (product.isDemo) {
+    return [
+      { label: 'Цена', value: formatMoney(product.currentPrice) },
+      { label: 'Себестоимость', value: formatMoney(product.costPrice) }
+    ];
+  }
+
   return [
     { label: 'Цена', value: formatMoney(product.currentPrice) },
     { label: 'Позиция', value: product.currentPosition ? `#${formatNumber(product.currentPosition)}` : 'Нет данных' },
@@ -165,6 +172,7 @@ export function similarGroupTitle(group: WorkspaceOverviewSimilarProductGroup): 
     review_count_disadvantage: 'Больше отзывов',
     rating_disadvantage: 'Оценка выше',
     stock_disadvantage: 'Остаток выше',
+    strong_similar_cards: 'Сильные похожие',
     weak_competitor_cards: 'Слабые похожие',
     similar_faster_region_delivery: 'Похожие доставляют быстрее'
   };
@@ -194,6 +202,17 @@ export function similarGroupItemTags(
           tone: 'negative'
         }))
       : [{ key: 'weak', label: 'Слабые параметры', tone: 'negative' }];
+  }
+
+  if (groupKey === 'strong_similar_cards') {
+    const facts = item.tags.length > 0 ? item.tags : item.facts;
+    return facts.length > 0
+      ? facts.map((fact, index) => ({
+          key: `strong-${index}`,
+          label: fact,
+          tone: 'positive'
+        }))
+      : [{ key: 'strong', label: 'Сильная похожая карточка', tone: 'positive' }];
   }
 
   if (groupKey === 'similar_faster_region_delivery') {
@@ -227,6 +246,7 @@ export function similarGroupTabs(product: WorkspaceOverviewProduct): WorkspaceOv
 export function preferredSimilarGroup(groups: WorkspaceOverviewSimilarProductGroup[]): WorkspaceOverviewSimilarProductGroup {
   const priority = [
     'duplicate_cards',
+    'strong_similar_cards',
     'price_disadvantage',
     'position_disadvantage',
     'review_count_disadvantage',
@@ -251,10 +271,10 @@ export function tagClass(tag: TagItem, prefix = 'overview-tag'): string {
 
 export function toParserProduct(product: WorkspaceOverviewProduct): ParserProductListItem {
   return {
-    id: product.parserProductRowId,
+    id: product.parserProductRowId ?? '',
     parserRunId: '',
     parsedAtUtc: product.latestObservedAtUtc ?? new Date().toISOString(),
-    wbProductId: product.wbProductId,
+    wbProductId: product.wbProductId ?? '',
     wbRootId: product.wbRootId,
     name: product.name,
     brandName: product.brandName,

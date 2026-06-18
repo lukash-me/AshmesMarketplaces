@@ -1,4 +1,5 @@
 import time
+import os
 
 from loguru import logger
 from seleniumbase import Driver
@@ -18,6 +19,7 @@ class WebdriverCookies:
         self.user_agent = user_agent or USER_AGENT
         self.url = url or URL
         self.cookie_need = cookie_need or COOKIE_NEED
+        self.headed = os.environ.get("PARSER_BROWSER_HEADED", "").strip().lower() in {"1", "true", "yes", "on"}
 
     def get_token(self) -> str | None:
         driver = None
@@ -25,14 +27,13 @@ class WebdriverCookies:
         try:
             driver = Driver(
                 uc=True,
-                headed=True,
+                headed=self.headed,
                 agent=self.user_agent,
             )
             driver.open(self.url)
 
             for _ in range(6):
                 cookies = driver.execute_cdp_cmd("Network.getAllCookies", {})
-                logger.debug(cookies)
                 for cookie in cookies.get("cookies", []):
                     if cookie.get("name") == self.cookie_need:
                         logger.success("Куки получены")

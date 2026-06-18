@@ -5,7 +5,7 @@ using AshmesMarketplaces.API.DevelopmentSeed;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDatabase(builder.Configuration);
-builder.Services.AddApplicationServices();
+builder.Services.AddApplicationServices(builder.Configuration);
 builder.Services.AddIntelligenceIntegration(builder.Configuration);
 builder.Services.AddApiProblemDetails();
 builder.Services.AddAuthSecurity(builder.Configuration);
@@ -23,6 +23,7 @@ await app.SeedDevelopmentDataAsync();
 
 app.UseExceptionHandler();
 app.UseSwaggerDocumentation();
+app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 

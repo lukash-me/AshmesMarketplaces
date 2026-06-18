@@ -21,6 +21,12 @@ public interface IWorkspaceMarketProductService
         CreateWorkspaceMarketProductRequest request,
         CancellationToken cancellationToken);
 
+    Task<ServiceResult<WorkspaceMarketProductResponse>> AddDemoAsync(
+        Guid workspaceId,
+        CreateDemoWorkspaceMarketProductRequest request,
+        IReadOnlyList<WorkspaceMarketProductUpload> media,
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<WorkspaceMarketProductResponse>> UpdateAsync(
         Guid workspaceId,
         Guid id,

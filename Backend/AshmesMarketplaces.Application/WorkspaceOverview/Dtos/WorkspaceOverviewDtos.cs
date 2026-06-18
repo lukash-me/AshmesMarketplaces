@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace AshmesMarketplaces.Application.WorkspaceOverview.Dtos;
 
 public sealed record WorkspaceOverviewResponse(
@@ -7,7 +9,8 @@ public sealed record WorkspaceOverviewResponse(
     int SimilarProductCount,
     WorkspaceOverviewGroupDto NewItems,
     WorkspaceOverviewGroupDto Competitors,
-    WorkspaceOverviewGroupDto Ideas);
+    WorkspaceOverviewGroupDto Ideas,
+    WorkspaceOverviewGroupDto Created);
 
 public sealed record WorkspaceOverviewRunDto(
     Guid Id,
@@ -28,9 +31,11 @@ public sealed record WorkspaceOverviewGroupDto(
 
 public sealed record WorkspaceOverviewProductDto(
     Guid Id,
-    Guid ParserProductRowId,
-    string WbProductId,
+    Guid? ParserProductRowId,
+    string? WbProductId,
     string? WbRootId,
+    string SourceType,
+    bool IsDemo,
     string TagKey,
     string? Note,
     string Name,
@@ -40,6 +45,10 @@ public sealed record WorkspaceOverviewProductDto(
     string? SourceCategory,
     string? SourceSubcategory,
     decimal? CurrentPrice,
+    decimal? CostPrice,
+    string? Description,
+    string? SupplierName,
+    string? SupplierUrl,
     int? CurrentPosition,
     int? CurrentStock,
     int? CurrentFeedbackCount,
@@ -69,7 +78,8 @@ public sealed record WorkspaceOverviewSignalDto(
     string Title,
     string Description,
     IReadOnlyList<string> MetricFacts,
-    decimal Confidence);
+    decimal Confidence,
+    JsonElement? Value = null);
 
 public sealed record WorkspaceOverviewSimilarProductDto(
     string ProductKey,

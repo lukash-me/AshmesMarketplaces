@@ -71,6 +71,47 @@ public sealed class WorkspaceMarketProductsController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { workspaceId, id = response.Id }, response);
     }
 
+    [HttpPost("demo")]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(WorkspaceMarketProductResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<WorkspaceMarketProductResponse>> AddDemo(
+        Guid workspaceId,
+        [FromForm] CreateDemoWorkspaceMarketProductRequest request,
+        [FromForm] List<IFormFile> media,
+        CancellationToken cancellationToken)
+    {
+        var uploads = media
+            .Where(file => file.Length > 0)
+            .Select(file => new WorkspaceMarketProductUpload(
+                file.OpenReadStream(),
+                file.FileName,
+                file.ContentType,
+                file.Length))
+            .ToList();
+
+        try
+        {
+            var result = await _service.AddDemoAsync(workspaceId, request, uploads, cancellationToken);
+            if (!result.IsSuccess)
+                return ToActionResult(result);
+
+            var response = result.Value!;
+            return CreatedAtAction(nameof(GetById), new { workspaceId, id = response.Id }, response);
+        }
+        finally
+        {
+            foreach (var upload in uploads)
+            {
+                await upload.Content.DisposeAsync();
+            }
+        }
+    }
+
     [HttpPut("{id:guid}")]
     [ProducesResponseType(typeof(WorkspaceMarketProductResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

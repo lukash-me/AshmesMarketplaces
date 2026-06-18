@@ -27,6 +27,7 @@ CONTRACT_ONLY_ALGORITHM_VERSION = "0.1.0"
 WORKSPACE_ANALYSIS_ALGORITHM = "workspace_product_analysis_v1"
 WORKSPACE_ANALYSIS_ALGORITHM_VERSION = "1.0.0"
 NO_MODEL_VERSION = "none"
+DEMO_MIN_MARGIN = 0.20
 
 
 class ProductAdviceService:
@@ -534,6 +535,14 @@ def _build_similar_product_groups(
             _weak_competitor_facts,
             lambda candidate: -len(_weak_competitor_facts(candidate)),
         ),
+        (
+            "strong_similar_cards",
+            "Сильные похожие",
+            "Похожие карточки с сильным заполнением, отзывами или визуальной базой.",
+            _is_strong_similar_card,
+            _strong_similar_facts,
+            lambda candidate: -len(_strong_similar_facts(candidate)),
+        ),
     ]
 
     groups: list[WorkspaceSimilarProductGroupDto] = []
@@ -618,6 +627,57 @@ def _weak_competitor_facts(candidate: MarketProductFeatureDto) -> list[str]:
     return facts
 
 
+def _is_strong_similar_card(candidate: MarketProductFeatureDto) -> bool:
+    return len(_strong_similar_facts(candidate)) >= 2
+
+
+def _strong_similar_facts(candidate: MarketProductFeatureDto) -> list[str]:
+    facts: list[str] = []
+    positive_reviews = _safe_positive_int(candidate.positive_review_count)
+    review_sample = _safe_positive_int(candidate.review_sample_size)
+    feedback = _safe_positive_int(candidate.feedback_count)
+    rating = _safe_float(candidate.rating)
+    characteristics_count = _characteristics_count(candidate.characteristics)
+    image_count = _safe_positive_int(candidate.image_count)
+    description = (candidate.description or "").strip()
+
+    if positive_reviews is not None:
+        facts.append(f"положительных отзывов {positive_reviews}")
+    elif rating is not None and rating >= 4.7 and feedback is not None and feedback >= 50:
+        facts.append(f"рейтинг {rating:g}, отзывов WB {feedback}")
+
+    if review_sample is not None and review_sample >= 20:
+        facts.append(f"отзывов в выборке {review_sample}")
+    if len(description) >= 160:
+        facts.append("описание заполнено")
+    if characteristics_count >= 3:
+        facts.append(f"характеристик {characteristics_count}")
+    if image_count is not None and image_count >= 3:
+        facts.append(f"фото {image_count}")
+
+    return facts
+
+
+def _safe_positive_int(value: int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result > 0 else None
+
+
+def _characteristics_count(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, dict):
+        return len([key for key, entry in value.items() if str(key).strip() and entry not in (None, "", [])])
+    if isinstance(value, list):
+        return len([entry for entry in value if entry not in (None, "", {})])
+    return 0
+
+
 def _place_word(value: int) -> str:
     normalized = abs(value)
     last_two = normalized % 100
@@ -657,6 +717,9 @@ def _build_workspace_signals(
     history,
     candidates: list[MarketProductFeatureDto],
 ) -> list[WorkspaceProductSignalDto]:
+    if _is_demo_product(product):
+        return _build_demo_workspace_signals(product, candidates)[:6]
+
     signals: list[WorkspaceProductSignalDto] = []
     position = _safe_float(product.position)
     rating = _safe_float(product.rating)
@@ -731,7 +794,310 @@ def _build_workspace_signals(
             0.74,
         ))
 
+    if _is_demo_product(product):
+        signals.extend(_build_demo_workspace_signals(product, candidates))
+
     return signals[:6]
+
+
+def _is_demo_product(product: MarketProductFeatureDto) -> bool:
+    return (product.source_type or "").lower() == "demo"
+
+
+def _build_demo_workspace_signals(
+    product: MarketProductFeatureDto,
+    candidates: list[MarketProductFeatureDto],
+) -> list[WorkspaceProductSignalDto]:
+    signals: list[WorkspaceProductSignalDto] = []
+    price_signal = _build_demo_price_corridor_signal_v2(product, candidates)
+    if price_signal is not None:
+        signals.append(price_signal)
+
+    description_signal = _build_demo_description_signal_v2(product)
+    if description_signal is not None:
+        signals.append(description_signal)
+
+    positive_reviews_signal = _build_demo_peer_positive_reviews_signal(candidates)
+    if positive_reviews_signal is not None:
+        signals.append(positive_reviews_signal)
+
+    return signals
+
+
+def _build_demo_price_corridor_signal_v2(
+    product: MarketProductFeatureDto,
+    candidates: list[MarketProductFeatureDto],
+) -> WorkspaceProductSignalDto | None:
+    prices = sorted(
+        value
+        for value in (_safe_float(candidate.wallet_price or candidate.price) for candidate in candidates)
+        if value is not None and math.isfinite(value) and value > 0
+    )
+    if len(prices) < 3:
+        return None
+
+    lower = _percentile(prices, 0.25)
+    target = _median(prices)
+    upper = _percentile(prices, 0.75)
+    if lower is None or target is None or upper is None:
+        return None
+
+    cost_price = _safe_float(product.cost_price)
+    min_profitable = cost_price * (1 + DEMO_MIN_MARGIN) if cost_price is not None and cost_price > 0 else None
+    adjusted_lower = max(lower, min_profitable) if min_profitable is not None else lower
+    current_price = _safe_float(product.wallet_price or product.price)
+    confidence = 0.72 if len(prices) >= 8 else 0.58
+    facts = [
+        f"нижняя граница: {adjusted_lower:.0f} ₽",
+        f"целевая цена: {target:.0f} ₽",
+        f"верхняя граница: {upper:.0f} ₽",
+        f"похожих товаров в расчете: {len(prices)}",
+    ]
+    if current_price is not None:
+        facts.append(f"цена карточки: {current_price:.0f} ₽")
+    if min_profitable is not None:
+        facts.append(f"минимум с учетом себестоимости и маржи 20%: {min_profitable:.0f} ₽")
+
+    return _signal(
+        "demo_price_corridor",
+        "medium",
+        "Ценовой коридор для созданной карточки",
+        "Оценка цены рассчитана по похожим товарам в выбранной нише. Если указана себестоимость, нижняя граница не опускается ниже минимальной маржи.",
+        facts,
+        confidence,
+        value={
+            "lowerPrice": round(adjusted_lower),
+            "targetPrice": round(target),
+            "upperPrice": round(upper),
+            "currentPrice": round(current_price) if current_price is not None else None,
+            "peerMedianPrice": round(target),
+            "sampleSize": len(prices),
+            "costFloor": round(min_profitable) if min_profitable is not None else None,
+        },
+    )
+
+
+def _build_demo_description_signal_v2(product: MarketProductFeatureDto) -> WorkspaceProductSignalDto | None:
+    description = (product.description or "").strip()
+    characteristics = _characteristic_pairs(product.characteristics)
+    missing: list[str] = []
+
+    if len(description) < 160:
+        missing.append("описание короткое")
+    if not characteristics:
+        missing.append("характеристики не заполнены")
+    if not _text_mentions_any(description, ["материал", "состав", "покрытие"]):
+        missing.append("не описан материал")
+    if not _text_mentions_any(description, ["размер", "габарит", "см", "мм"]):
+        missing.append("не указан размер или формат")
+    if not _text_mentions_any(description, ["для", "подходит", "назначение", "использ"]):
+        missing.append("не описано назначение")
+
+    has_enough_inputs = len(description) >= 80 and len(characteristics) >= 2
+    suggested = _suggest_demo_description_v2(product, characteristics) if has_enough_inputs else None
+    facts = missing or ["описание выглядит базово заполненным"]
+    if suggested:
+        facts.append(f"вариант описания: {suggested}")
+
+    return _signal(
+        "demo_description_recommendation",
+        "medium" if missing else "low",
+        "Рекомендации по описанию созданной карточки",
+        "Недостаточно введенных данных для уверенного описания." if missing else "Проверка описания использует только введенные продавцом данные и характеристики карточки.",
+        facts,
+        0.68 if missing else 0.52,
+        value={
+            "problems": missing,
+            "requiredFields": ["материал", "размер", "назначение", "комплектность", "сценарии использования"] if missing else [],
+            "suggestedDescription": suggested,
+            "hasEnoughInputsForSuggestion": has_enough_inputs,
+        },
+    )
+
+
+def _build_demo_peer_positive_reviews_signal(
+    candidates: list[MarketProductFeatureDto],
+) -> WorkspaceProductSignalDto | None:
+    positive_counts = sorted(
+        count
+        for count in (_safe_positive_int(candidate.positive_review_count) for candidate in candidates)
+        if count is not None
+    )
+    if len(positive_counts) < 3:
+        return None
+
+    median_positive = _median([float(value) for value in positive_counts])
+    if median_positive is None:
+        return None
+    strongest = max(positive_counts)
+
+    return _signal(
+        "demo_peer_positive_reviews",
+        "low",
+        "Положительные отзывы у похожих",
+        f"У похожих товаров есть социальное доказательство: медиана {median_positive:.0f} положительных отзывов, у сильных примеров до {strongest}.",
+        [
+            f"медиана положительных отзывов: {median_positive:.0f}",
+            f"у сильных примеров до: {strongest}",
+            f"похожих товаров в расчете: {len(positive_counts)}",
+        ],
+        0.64,
+        value={
+            "peerMedianPositiveReviews": round(median_positive),
+            "strongestPositiveReviews": strongest,
+            "peerSampleSize": len(positive_counts),
+        },
+    )
+
+
+def _build_demo_price_corridor_signal(
+    product: MarketProductFeatureDto,
+    candidates: list[MarketProductFeatureDto],
+) -> WorkspaceProductSignalDto | None:
+    prices = sorted(
+        value
+        for value in (_safe_float(candidate.wallet_price or candidate.price) for candidate in candidates)
+        if value is not None and math.isfinite(value) and value > 0
+    )
+    if len(prices) < 3:
+        return None
+
+    lower = _percentile(prices, 0.25)
+    target = _median(prices)
+    upper = _percentile(prices, 0.75)
+    if lower is None or target is None or upper is None:
+        return None
+
+    cost_price = _safe_float(product.cost_price)
+    min_profitable = cost_price * (1 + DEMO_MIN_MARGIN) if cost_price is not None and cost_price > 0 else None
+    adjusted_lower = max(lower, min_profitable) if min_profitable is not None else lower
+    current_price = _safe_float(product.wallet_price or product.price)
+
+    facts = [
+        f"нижняя граница: {adjusted_lower:.0f} ₽",
+        f"целевая цена: {target:.0f} ₽",
+        f"верхняя граница: {upper:.0f} ₽",
+        f"похожих товаров в расчете: {len(prices)}",
+    ]
+    if current_price is not None:
+        facts.append(f"цена карточки: {current_price:.0f} ₽")
+    if min_profitable is not None:
+        facts.append(f"минимум с учетом себестоимости и маржи 20%: {min_profitable:.0f} ₽")
+
+    return _signal(
+        "demo_price_corridor",
+        "medium",
+        "Ценовой коридор для демо-карточки",
+        "Оценка цены рассчитана по похожим товарам в выбранной нише. Если указана себестоимость, нижняя граница не опускается ниже минимальной маржи.",
+        facts,
+        0.72 if len(prices) >= 8 else 0.58,
+    )
+
+
+def _build_demo_description_signal(product: MarketProductFeatureDto) -> WorkspaceProductSignalDto | None:
+    description = (product.description or "").strip()
+    characteristics = _characteristic_pairs(product.characteristics)
+    missing: list[str] = []
+
+    if len(description) < 160:
+        missing.append("описание короткое")
+    if not characteristics:
+        missing.append("характеристики не заполнены")
+    if not _text_mentions_any(description, ["материал", "состав", "покрытие"]):
+        missing.append("не описан материал")
+    if not _text_mentions_any(description, ["размер", "габарит", "см", "мм"]):
+        missing.append("не указан размер или формат")
+    if not _text_mentions_any(description, ["для", "подходит", "назначение", "использ"]):
+        missing.append("не описано назначение")
+
+    suggested = _suggest_demo_description(product, characteristics)
+    facts = missing or ["описание выглядит базово заполненным"]
+    if suggested:
+        facts.append(f"вариант описания: {suggested}")
+
+    return _signal(
+        "demo_description_recommendation",
+        "medium" if missing else "low",
+        "Рекомендации по описанию демо-карточки",
+        "Проверка описания использует только введенные продавцом данные и характеристики карточки.",
+        facts,
+        0.68 if missing else 0.52,
+    )
+
+
+def _percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    position = (len(values) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return values[int(position)]
+    return values[lower] + (values[upper] - values[lower]) * (position - lower)
+
+
+def _characteristic_pairs(characteristics: Any) -> list[tuple[str, str]]:
+    if characteristics is None:
+        return []
+    if isinstance(characteristics, dict):
+        return [
+            (str(key).strip(), str(value).strip())
+            for key, value in characteristics.items()
+            if str(key).strip() and str(value).strip()
+        ]
+    if isinstance(characteristics, list):
+        pairs: list[tuple[str, str]] = []
+        for item in characteristics:
+            if isinstance(item, dict):
+                key = item.get("key") or item.get("name") or item.get("title")
+                value = item.get("value") or item.get("text")
+                if key and value:
+                    pairs.append((str(key).strip(), str(value).strip()))
+        return pairs
+    return []
+
+
+def _text_mentions_any(text: str, needles: list[str]) -> bool:
+    lowered = text.casefold()
+    return any(needle.casefold() in lowered for needle in needles)
+
+
+def _suggest_demo_description(
+    product: MarketProductFeatureDto,
+    characteristics: list[tuple[str, str]],
+) -> str | None:
+    name = (product.name or "").strip()
+    if not name:
+        return None
+
+    parts = [name]
+    if characteristics:
+        top_characteristics = ", ".join(f"{key}: {value}" for key, value in characteristics[:4])
+        parts.append(f"основные характеристики: {top_characteristics}")
+    if product.source_subcategory:
+        parts.append(f"подходит для ниши {product.source_subcategory}")
+    parts.append("Добавьте в итоговый текст проверенные материалы, размеры и сценарии использования, если они подтверждены.")
+    return ". ".join(parts)
+
+def _suggest_demo_description_v2(
+    product: MarketProductFeatureDto,
+    characteristics: list[tuple[str, str]],
+) -> str | None:
+    name = (product.name or "").strip()
+    description = (product.description or "").strip()
+    if not name or not characteristics:
+        return None
+
+    top_characteristics = ", ".join(f"{key}: {value}" for key, value in characteristics[:4])
+    parts = [
+        name,
+        f"Основные характеристики: {top_characteristics}.",
+    ]
+    if description:
+        parts.append(f"Базовое описание: {description}")
+    return " ".join(parts)
 
 
 def _signal(
@@ -741,6 +1107,7 @@ def _signal(
     description: str,
     metric_facts: list[str],
     confidence: float,
+    value: dict[str, Any] | None = None,
 ) -> WorkspaceProductSignalDto:
     return WorkspaceProductSignalDto(
         code=code,
@@ -749,4 +1116,5 @@ def _signal(
         description=description,
         metric_facts=metric_facts,
         confidence=confidence,
+        value=value,
     )

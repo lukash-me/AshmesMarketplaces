@@ -3,6 +3,8 @@ import { computed, reactive, ref, watch } from 'vue';
 import { Eye, History, Pencil, Save, Trash2, X } from 'lucide-vue-next';
 
 import type { PagedResponse } from '@/entities/pagination';
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
+import { useAuthStore } from '@/features/auth/auth.store';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
 import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
@@ -21,6 +23,7 @@ import {
   getWorkspaceMarketProducts,
   updateWorkspaceMarketProduct
 } from './workspaceMarketProducts.api';
+import DemoMarketProductDrawer from './DemoMarketProductDrawer.vue';
 import type {
   WorkspaceMarketProductHistory,
   WorkspaceMarketProductListItem,
@@ -36,6 +39,7 @@ type ProductDraft = {
 };
 
 const pageSize = 20;
+const auth = useAuthStore();
 const workspace = useActiveWorkspace();
 const products = ref<WorkspaceMarketProductListItem[]>([]);
 const totalCount = ref(0);
@@ -53,7 +57,9 @@ const editingIds = ref<Set<string>>(new Set());
 const savingIds = ref<Set<string>>(new Set());
 const deletingIds = ref<Set<string>>(new Set());
 const selectedProduct = ref<ParserProductListItem | null>(null);
+const selectedDemoProduct = ref<WorkspaceMarketProductListItem | null>(null);
 const pendingDeleteProduct = ref<WorkspaceMarketProductListItem | null>(null);
+const deleteError = ref('');
 const historyProductId = ref<string | null>(null);
 const historyLoading = ref(false);
 const historyError = ref('');
@@ -62,8 +68,9 @@ let requestVersion = 0;
 
 const totalPages = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize)));
 const activeWorkspaceId = computed(() => workspace.activeWorkspaceId.value);
+const isGuest = computed(() => !auth.isAuthenticated);
 const hasRows = computed(() => products.value.length > 0);
-const tagOptions = ['Конкурент', 'Идея'];
+const tagOptions = ['Конкурент', 'Идея', 'Созданная'];
 const chips = computed(() => {
   const items: Array<{ key: 'search' | 'tagKey'; label: string; value: string }> = [];
 
@@ -93,6 +100,14 @@ function tagLabel(tagKey: WorkspaceMarketProductTagKey): string {
 
 function tagTone(tagKey: WorkspaceMarketProductTagKey): 'warning' | 'info' {
   return tagKey === 'competitor' ? 'warning' : 'info';
+}
+
+function productTagLabel(product: WorkspaceMarketProductListItem): string {
+  if (product.isDemo || product.tagKey === 'created') {
+    return 'Созданная';
+  }
+
+  return tagLabel(product.tagKey);
 }
 
 function formatNumber(value: number | null | undefined): string {
@@ -165,6 +180,10 @@ function isActive(value: string): boolean {
 }
 
 function tagFromLabel(value: string): TagFilter {
+  if (value === 'Созданная') {
+    return 'created';
+  }
+
   if (value === 'Конкурент') {
     return 'competitor';
   }
@@ -287,10 +306,12 @@ function isEditing(id: string): boolean {
 }
 
 function requestDeleteProduct(product: WorkspaceMarketProductListItem): void {
+  deleteError.value = '';
   pendingDeleteProduct.value = product;
 }
 
 function cancelDeleteProduct(): void {
+  deleteError.value = '';
   pendingDeleteProduct.value = null;
 }
 
@@ -320,11 +341,18 @@ async function removeProduct(product: WorkspaceMarketProductListItem): Promise<v
     if (historyProductId.value === product.id) {
       closeHistory();
     }
+    if (selectedDemoProduct.value?.id === product.id) {
+      closeDemoProduct();
+    }
+    if (selectedProduct.value?.id === product.parserProductRowId) {
+      closeProduct();
+    }
     if (pendingDeleteProduct.value?.id === product.id) {
       pendingDeleteProduct.value = null;
     }
+    deleteError.value = '';
   } catch (requestError) {
-    window.alert(getProblemMessage(requestError, 'Не удалось удалить товар.'));
+    deleteError.value = getProblemMessage(requestError, 'Не удалось удалить товар.');
   } finally {
     setDeleting(product.id, false);
   }
@@ -392,6 +420,11 @@ function setDeleting(id: string, deleting: boolean): void {
 }
 
 function openProduct(product: WorkspaceMarketProductListItem): void {
+  if (product.isDemo) {
+    selectedDemoProduct.value = product;
+    return;
+  }
+
   selectedProduct.value = toParserProduct(product);
 }
 
@@ -399,12 +432,16 @@ function closeProduct(): void {
   selectedProduct.value = null;
 }
 
+function closeDemoProduct(): void {
+  selectedDemoProduct.value = null;
+}
+
 function toParserProduct(product: WorkspaceMarketProductListItem): ParserProductListItem {
   return {
-    id: product.parserProductRowId,
+    id: product.parserProductRowId ?? '',
     parserRunId: '',
     parsedAtUtc: product.latestObservedAtUtc ?? product.dateUpdate,
-    wbProductId: product.wbProductId,
+    wbProductId: product.wbProductId ?? '',
     wbRootId: product.wbRootId,
     name: product.name,
     brandName: product.brandName,
@@ -450,6 +487,11 @@ function changePage(nextPage: number): void {
       description="Рыночные карточки, которые вы добавили в рабочую область для сравнения и отслеживания изменений."
     />
 
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Наблюдаемые товары сохраняют карточки вашей рабочей области, сравнивают их с конкурентами и показывают изменения. Войдите, чтобы открыть свой список."
+    />
+    <template v-else>
     <form class="filters app-surface" @submit.prevent="applyFilters">
       <label v-if="workspace.hasMultipleWorkspaces.value" class="workspace-products__field">
         <span>Рабочая область</span>
@@ -547,7 +589,9 @@ function changePage(nextPage: number): void {
               <h2>{{ product.name }}</h2>
               <p>{{ product.brandName || 'Бренд не указан' }} · {{ product.sellerName || 'Продавец не указан' }}</p>
             </div>
-            <Badge :tone="tagTone(product.tagKey)">{{ tagLabel(product.tagKey) }}</Badge>
+            <Badge :tone="product.isDemo ? 'info' : tagTone(product.tagKey)">
+              {{ productTagLabel(product) }}
+            </Badge>
           </div>
 
           <div class="workspace-product__metrics">
@@ -589,6 +633,7 @@ function changePage(nextPage: number): void {
               <select v-model="drafts[product.id].tagKey" class="app-select">
                 <option value="competitor">Конкурент</option>
                 <option value="idea">Идея</option>
+                <option value="created">Созданная</option>
               </select>
             </label>
 
@@ -680,6 +725,12 @@ function changePage(nextPage: number): void {
       @close="closeProduct"
     />
 
+    <DemoMarketProductDrawer
+      :open="Boolean(selectedDemoProduct)"
+      :product="selectedDemoProduct"
+      @close="closeDemoProduct"
+    />
+
     <Teleport to="body">
       <div v-if="pendingDeleteProduct" class="confirm-modal" role="presentation">
         <button
@@ -702,6 +753,9 @@ function changePage(nextPage: number): void {
             <p>
               {{ pendingDeleteProduct.name }}
             </p>
+            <p v-if="deleteError" class="confirm-modal__error">
+              {{ deleteError }}
+            </p>
           </div>
           <div class="confirm-modal__actions">
             <Button variant="secondary" @click="cancelDeleteProduct">Отмена</Button>
@@ -717,6 +771,7 @@ function changePage(nextPage: number): void {
         </section>
       </div>
     </Teleport>
+    </template>
   </div>
 </template>
 
@@ -1109,6 +1164,14 @@ function changePage(nextPage: number): void {
   color: var(--color-text-muted);
   font-size: var(--operator-body-size);
   line-height: 1.45;
+}
+
+.confirm-modal__content .confirm-modal__error {
+  padding: var(--space-2);
+  border: 1px solid var(--state-danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--state-danger-bg);
+  color: var(--state-danger-text);
 }
 
 .confirm-modal__actions {

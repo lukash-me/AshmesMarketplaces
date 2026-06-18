@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
+import { useAuthStore } from '@/features/auth/auth.store';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
@@ -37,6 +39,7 @@ import type {
 
 const route = useRoute();
 const router = useRouter();
+const auth = useAuthStore();
 
 const queryState = ref<AccessSettingsQueryState>(parseAccessSettingsQuery(route.query));
 const memberships = ref<UserWorkspaceListItem[]>([]);
@@ -85,6 +88,7 @@ const selectedMembershipKey = computed(() =>
     ? membershipKey(selectedMembership.value.idUser, selectedMembership.value.idWorkspace)
     : null
 );
+const isGuest = computed(() => !auth.isAuthenticated);
 
 watch(
   () => route.query,
@@ -95,9 +99,26 @@ watch(
   { immediate: true }
 );
 
-void loadLookups();
+watch(isGuest, (guest) => {
+  if (!guest) {
+    void loadLookups();
+    void loadMemberships();
+  }
+});
+
+if (!isGuest.value) {
+  void loadLookups();
+}
 
 async function loadMemberships() {
+  if (isGuest.value) {
+    memberships.value = [];
+    totalCount.value = 0;
+    error.value = '';
+    loading.value = false;
+    return;
+  }
+
   loading.value = true;
   error.value = '';
 
@@ -115,6 +136,16 @@ async function loadMemberships() {
 }
 
 async function loadLookups() {
+  if (isGuest.value) {
+    users.value = [];
+    workspaces.value = [];
+    roles.value = [];
+    permissions.value = [];
+    lookupsError.value = '';
+    lookupsLoading.value = false;
+    return;
+  }
+
   lookupsLoading.value = true;
   lookupsError.value = '';
 
@@ -183,6 +214,11 @@ function closeMembership() {
       description="Read-only users, workspaces, roles and persisted workspace membership records."
     />
 
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Раздел доступа показывает пользователей, рабочие области и роли. Войдите, чтобы управлять доступом команды."
+    />
+    <template v-else>
     <AccessMembershipsFilters
       :state="queryState"
       :users-by-id="usersById"
@@ -242,6 +278,7 @@ function closeMembership() {
       :permissions-by-id="permissionsById"
       @close="closeMembership"
     />
+    </template>
   </div>
 </template>
 
@@ -266,4 +303,3 @@ function closeMembership() {
   color: var(--color-text-muted);
 }
 </style>
-

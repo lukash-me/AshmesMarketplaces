@@ -11,9 +11,22 @@ namespace AshmesMarketplaces.Application.ParserObservability.Services;
 
 public sealed class ParserProductReadService : IParserProductReadService
 {
+    private static readonly SemaphoreSlim ProductFilterOptionsCacheLock = new(1, 1);
+    private static readonly TimeSpan ProductFilterOptionsCacheDuration = TimeSpan.FromMinutes(5);
+    private static readonly SemaphoreSlim DemoCardOptionsCacheLock = new(1, 1);
+    private static readonly TimeSpan DemoCardOptionsCacheDuration = TimeSpan.FromMinutes(15);
+    private static ParserProductFilterOptionsDto? _productionProductFilterOptionsCache;
+    private static DateTime _productionProductFilterOptionsCacheExpiresAtUtc;
+    private static ParserDemoCardOptionsDto? _demoCardOptionsCache;
+    private static ParserDemoCardOptionsDto? _demoCardBaseOptionsCache;
+    private static DateTime _demoCardOptionsCacheExpiresAtUtc;
+    private static DateTime _demoCardBaseOptionsCacheExpiresAtUtc;
+    private static readonly Dictionary<string, (ParserDemoCardCharacteristicsDto Value, DateTime ExpiresAtUtc)> DemoCardCharacteristicsCache = new(StringComparer.Ordinal);
+
     private const string ProductsKind = "products";
     private const string RanksKind = "ranks";
     private const string LogisticsKind = "logistics";
+    private const string ProductDetailsKind = "product_details";
     private const string SucceededStatus = "succeeded";
     private const string PartialStatus = "partial";
     private const string DefaultAttributionMode = "root_payload";
@@ -28,6 +41,18 @@ public sealed class ParserProductReadService : IParserProductReadService
     private const string MoscowDeliveryCity = "Москва";
     private const string MoscowDeliveryLabel = "Москва, ПВЗ WB на улице Зацепа 32";
     private const string MoscowDeliveryAddress = "г Москва, улица Зацепа 32";
+
+    private static readonly string[] DemoCardSubcategoryAllowlist =
+    [
+        "Органайзеры для хранения вещей",
+        "Коврики для ванной",
+        "Светильники бра"
+    ];
+    private static readonly IReadOnlyDictionary<string, string> DemoCardCategoryBySubcategory =
+        DemoCardSubcategoryAllowlist.ToDictionary(
+            subcategory => subcategory,
+            _ => "Товары для дома",
+            StringComparer.Ordinal);
 
     private static readonly ParserProductReviewEvidenceDto EmptyReviewEvidence = new(
         RootFetchCount: 0,
@@ -85,7 +110,7 @@ public sealed class ParserProductReadService : IParserProductReadService
                 .ToListAsync(cancellationToken);
         }
 
-        var evidence = await LoadEvidenceAsync(pageRows, includeLogisticsDetail: false, runScope, cancellationToken);
+        var evidence = await LoadListEvidenceAsync(pageRows, runScope, cancellationToken);
         var items = pageRows
             .Select(row => MapToListItem(row, evidence))
             .ToList();
@@ -99,6 +124,13 @@ public sealed class ParserProductReadService : IParserProductReadService
         CancellationToken cancellationToken)
     {
         var runScope = ParserRunScope.From(query.IncludeTestRuns, query.TestRunsOnly, query.TestLabel);
+        if (CanUseProductionFilterOptionsCache(query))
+        {
+            var cached = await GetCachedProductionFilterOptionsAsync(runScope, cancellationToken);
+            if (cached is not null)
+                return ServiceResult<ParserProductFilterOptionsDto>.Success(cached);
+        }
+
         var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, runScope, cancellationToken);
         if (rows is null)
             return ServiceResult<ParserProductFilterOptionsDto>.Success(EmptyFilterOptions());
@@ -124,6 +156,164 @@ public sealed class ParserProductReadService : IParserProductReadService
 
         return ServiceResult<ParserProductFilterOptionsDto>.Success(
             new ParserProductFilterOptionsDto(categories, subcategories, brands, sellers));
+    }
+
+    public async Task<ServiceResult<ParserDemoCardOptionsDto>> GetDemoCardOptionsAsync(
+        bool includeCharacteristics,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var cachedOptions = includeCharacteristics ? _demoCardOptionsCache : _demoCardBaseOptionsCache;
+        var cacheExpiresAtUtc = includeCharacteristics ? _demoCardOptionsCacheExpiresAtUtc : _demoCardBaseOptionsCacheExpiresAtUtc;
+        if (cachedOptions is not null && cacheExpiresAtUtc > now)
+        {
+            return ServiceResult<ParserDemoCardOptionsDto>.Success(cachedOptions);
+        }
+
+        await DemoCardOptionsCacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            now = DateTime.UtcNow;
+            cachedOptions = includeCharacteristics ? _demoCardOptionsCache : _demoCardBaseOptionsCache;
+            cacheExpiresAtUtc = includeCharacteristics ? _demoCardOptionsCacheExpiresAtUtc : _demoCardBaseOptionsCacheExpiresAtUtc;
+            if (cachedOptions is not null && cacheExpiresAtUtc > now)
+            {
+                return ServiceResult<ParserDemoCardOptionsDto>.Success(cachedOptions);
+            }
+
+            var options = await BuildDemoCardOptionsAsync(includeCharacteristics, cancellationToken);
+            if (includeCharacteristics)
+            {
+                _demoCardOptionsCache = options;
+                _demoCardOptionsCacheExpiresAtUtc = now.Add(DemoCardOptionsCacheDuration);
+            }
+            else
+            {
+                _demoCardBaseOptionsCache = options;
+                _demoCardBaseOptionsCacheExpiresAtUtc = now.Add(DemoCardOptionsCacheDuration);
+            }
+
+            return ServiceResult<ParserDemoCardOptionsDto>.Success(options);
+        }
+        finally
+        {
+            DemoCardOptionsCacheLock.Release();
+        }
+    }
+
+    public async Task<ServiceResult<ParserDemoCardCharacteristicsDto>> GetDemoCardCharacteristicsAsync(
+        string subcategory,
+        CancellationToken cancellationToken)
+    {
+        var normalized = string.IsNullOrWhiteSpace(subcategory) ? string.Empty : subcategory.Trim();
+        if (normalized.Length == 0)
+        {
+            return ServiceResult<ParserDemoCardCharacteristicsDto>.BadRequest("Subcategory is required.");
+        }
+
+        if (!DemoCardSubcategoryAllowlist.Contains(normalized, StringComparer.Ordinal))
+        {
+            return ServiceResult<ParserDemoCardCharacteristicsDto>.Success(
+                new ParserDemoCardCharacteristicsDto(normalized, []));
+        }
+
+        var now = DateTime.UtcNow;
+        if (DemoCardCharacteristicsCache.TryGetValue(normalized, out var cached)
+            && cached.ExpiresAtUtc > now)
+        {
+            return ServiceResult<ParserDemoCardCharacteristicsDto>.Success(cached.Value);
+        }
+
+        await DemoCardOptionsCacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            now = DateTime.UtcNow;
+            if (DemoCardCharacteristicsCache.TryGetValue(normalized, out cached)
+                && cached.ExpiresAtUtc > now)
+            {
+                return ServiceResult<ParserDemoCardCharacteristicsDto>.Success(cached.Value);
+            }
+
+            var characteristics = await LoadDemoCardCharacteristicsAsync(normalized, cancellationToken);
+            DemoCardCharacteristicsCache[normalized] = (
+                characteristics,
+                now.Add(DemoCardOptionsCacheDuration));
+
+            return ServiceResult<ParserDemoCardCharacteristicsDto>.Success(characteristics);
+        }
+        finally
+        {
+            DemoCardOptionsCacheLock.Release();
+        }
+    }
+
+    private async Task<ParserDemoCardOptionsDto> BuildDemoCardOptionsAsync(
+        bool includeCharacteristics,
+        CancellationToken cancellationToken)
+    {
+        var comparer = StringComparer.Create(CultureInfo.GetCultureInfo("ru-RU"), ignoreCase: true);
+
+        var categories = DemoCardCategoryBySubcategory.Values
+            .Select(x => x.Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(comparer)
+            .OrderBy(x => x, comparer)
+            .ToList();
+
+        var subcategoriesByCategory = DemoCardCategoryBySubcategory
+            .GroupBy(x => x.Value.Trim(), comparer)
+            .Select(group => new ParserDemoCardSubcategoriesDto(
+                group.Key,
+                group
+                    .Select(x => x.Key.Trim())
+                    .Where(x => x.Length > 0)
+                    .Distinct(comparer)
+                    .OrderBy(x => x, comparer)
+                    .ToList()))
+            .OrderBy(x => x.Category, comparer)
+            .ToList();
+
+        var characteristicsBySubcategory = new List<ParserDemoCardCharacteristicsDto>();
+        if (includeCharacteristics)
+        {
+            foreach (var subcategory in DemoCardSubcategoryAllowlist)
+            {
+                characteristicsBySubcategory.Add(await LoadDemoCardCharacteristicsAsync(subcategory, cancellationToken));
+            }
+
+            characteristicsBySubcategory = characteristicsBySubcategory
+                .OrderBy(x => x.Subcategory, comparer)
+                .ToList();
+        }
+
+        return new ParserDemoCardOptionsDto(categories, subcategoriesByCategory, characteristicsBySubcategory);
+    }
+
+    private async Task<ParserDemoCardCharacteristicsDto> LoadDemoCardCharacteristicsAsync(
+        string subcategory,
+        CancellationToken cancellationToken)
+    {
+        var comparer = StringComparer.Create(CultureInfo.GetCultureInfo("ru-RU"), ignoreCase: true);
+        var detailRows = await _dbContext.ParserProductDetailRows
+            .AsNoTracking()
+            .Where(x =>
+                x.Status == SucceededStatus
+                && x.SourceSubcategory == subcategory
+                && x.Characteristics != null)
+            .OrderByDescending(x => x.ParsedAtUtc)
+            .Take(50)
+            .Select(x => new DemoCardDetailCharacteristicsRow(
+                x.SourceSubcategory!,
+                x.Characteristics))
+            .ToListAsync(cancellationToken);
+
+        var names = detailRows
+            .SelectMany(x => ExtractCharacteristicNames(x.Characteristics))
+            .Distinct(comparer)
+            .OrderBy(x => x, comparer)
+            .ToList();
+
+        return new ParserDemoCardCharacteristicsDto(subcategory, names);
     }
 
     public async Task<ServiceResult<ParserProductLogisticsSummaryAggregateDto>> GetLogisticsSummaryAsync(
@@ -216,10 +406,103 @@ public sealed class ParserProductReadService : IParserProductReadService
         if (!string.IsNullOrWhiteSpace(parserRunId))
             return rows.Where(x => x.ParserRunId == parserRunId.Trim());
 
-        var latestProductRunId = await ResolveEffectiveProductRunIdAsync(parserRunId, runScope, cancellationToken);
-        return latestProductRunId is null
-            ? null
-            : rows.Where(x => x.ParserRunId == latestProductRunId);
+        var productRunIds = await ResolveParserRunIdsAsync(ProductsKind, runScope, cancellationToken);
+        if (productRunIds.Count == 0)
+            return null;
+
+        var scopedRows = rows.Where(x => productRunIds.Contains(x.ParserRunId));
+        var latestRowIds = scopedRows
+            .GroupBy(x => x.WbProductId)
+            .Select(group => group
+                .OrderByDescending(x => x.ParsedAtUtc)
+                .ThenByDescending(x => x.Id)
+                .Select(x => x.Id)
+                .First());
+
+        return rows.Where(x => latestRowIds.Contains(x.Id));
+    }
+
+    private async Task<IReadOnlyList<string>> ResolveParserRunIdsAsync(
+        string kind,
+        ParserRunScope runScope,
+        CancellationToken cancellationToken)
+    {
+        var candidates = await _dbContext.ParserRuns
+            .AsNoTracking()
+            .Where(x =>
+                x.Kind == kind
+                && (x.ManifestStatus == SucceededStatus
+                    || (kind == ProductsKind && x.ManifestStatus == PartialStatus)))
+            .OrderByDescending(x => x.FinishedAtUtc.HasValue)
+            .ThenByDescending(x => x.FinishedAtUtc)
+            .ThenByDescending(x => x.DateRegisteredUtc)
+            .ThenByDescending(x => x.StartedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return candidates
+            .Where(runScope.Matches)
+            .Select(x => x.ParserRunId)
+            .ToList();
+    }
+
+    private async Task<ParserProductFilterOptionsDto?> GetCachedProductionFilterOptionsAsync(
+        ParserRunScope runScope,
+        CancellationToken cancellationToken)
+    {
+        if (!runScope.IsDefaultProduction)
+            return null;
+
+        var now = DateTime.UtcNow;
+        if (_productionProductFilterOptionsCache is not null
+            && _productionProductFilterOptionsCacheExpiresAtUtc > now)
+        {
+            return _productionProductFilterOptionsCache;
+        }
+
+        await ProductFilterOptionsCacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            now = DateTime.UtcNow;
+            if (_productionProductFilterOptionsCache is not null
+                && _productionProductFilterOptionsCacheExpiresAtUtc > now)
+            {
+                return _productionProductFilterOptionsCache;
+            }
+
+            var rows = await BuildEffectiveProductRowsAsync(parserRunId: null, runScope, cancellationToken);
+            if (rows is null)
+            {
+                _productionProductFilterOptionsCache = EmptyFilterOptions();
+                _productionProductFilterOptionsCacheExpiresAtUtc = now.Add(ProductFilterOptionsCacheDuration);
+                return _productionProductFilterOptionsCache;
+            }
+
+            var categories = await LoadDistinctOptionValuesAsync(rows.Select(x => x.SourceCategory), cancellationToken);
+            var subcategories = await LoadDistinctOptionValuesAsync(rows.Select(x => x.SourceSubcategory), cancellationToken);
+            var brands = await LoadDistinctOptionValuesAsync(rows.Select(x => x.BrandName), cancellationToken);
+            var sellers = await LoadDistinctOptionValuesAsync(rows.Select(x => x.SellerName), cancellationToken);
+
+            _productionProductFilterOptionsCache = new ParserProductFilterOptionsDto(categories, subcategories, brands, sellers);
+            _productionProductFilterOptionsCacheExpiresAtUtc = now.Add(ProductFilterOptionsCacheDuration);
+            return _productionProductFilterOptionsCache;
+        }
+        finally
+        {
+            ProductFilterOptionsCacheLock.Release();
+        }
+    }
+
+    private static bool CanUseProductionFilterOptionsCache(ParserProductFilterOptionsQuery query)
+    {
+        return string.IsNullOrWhiteSpace(query.ParserRunId)
+            && !query.IncludeTestRuns
+            && !query.TestRunsOnly
+            && string.IsNullOrWhiteSpace(query.TestLabel)
+            && string.IsNullOrWhiteSpace(query.Search)
+            && string.IsNullOrWhiteSpace(query.SourceCategory)
+            && string.IsNullOrWhiteSpace(query.SourceSubcategory)
+            && string.IsNullOrWhiteSpace(query.BrandName)
+            && string.IsNullOrWhiteSpace(query.SellerName);
     }
 
     private async Task<string?> ResolveEffectiveProductRunIdAsync(
@@ -392,6 +675,31 @@ public sealed class ParserProductReadService : IParserProductReadService
             ? ProductLogisticsEvidence.Empty
             : await LoadLogisticsEvidenceAsync(products, latestLogisticsRunId, includeLogisticsDetail, cancellationToken);
         return new ProductEvidenceLookup(ranks, positions, reviews, logistics.Summaries, logistics.Details, logistics.DeliveryProfiles);
+    }
+
+    private async Task<ProductEvidenceLookup> LoadListEvidenceAsync(
+        IReadOnlyList<ParserProductRow> products,
+        ParserRunScope runScope,
+        CancellationToken cancellationToken)
+    {
+        if (products.Count == 0)
+            return ProductEvidenceLookup.Empty;
+
+        var latestRankRunId = await ResolveLatestParserRunIdAsync(RanksKind, runScope, cancellationToken);
+        var ranks = latestRankRunId is null
+            ? new Dictionary<Guid, ParserProductRankSummaryDto>()
+            : await LoadRankSummariesAsync(products, latestRankRunId, cancellationToken);
+        var positions = latestRankRunId is null
+            ? BuildUnknownPositions(products)
+            : await LoadPositionSummariesAsync(products, latestRankRunId, ranks, cancellationToken);
+
+        return new ProductEvidenceLookup(
+            ranks,
+            positions,
+            new Dictionary<Guid, ParserProductReviewEvidenceDto>(),
+            new Dictionary<Guid, ParserProductLogisticsSummaryDto>(),
+            new Dictionary<Guid, ParserProductLogisticsDetailDto>(),
+            new Dictionary<Guid, ParserProductDeliveryProfileDto>());
     }
 
     private async Task<IReadOnlyDictionary<Guid, ParserProductRankSummaryDto>> LoadRankSummariesAsync(
@@ -1957,12 +2265,32 @@ public sealed class ParserProductReadService : IParserProductReadService
             .ToList();
     }
 
+    private static IEnumerable<string> ExtractCharacteristicNames(JsonDocument? characteristics)
+    {
+        if (characteristics is null || characteristics.RootElement.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return characteristics.RootElement
+            .EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.Object && x.TryGetProperty("name", out _))
+            .Select(x => x.GetProperty("name").GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Where(x => x.Length > 0)
+            .ToList();
+    }
+
+    private sealed record DemoCardDetailCharacteristicsRow(
+        string Subcategory,
+        JsonDocument? Characteristics);
+
     private sealed record ParserRunScope(
         bool IncludeTestRuns,
         bool TestRunsOnly,
         string? TestLabel)
     {
         public static ParserRunScope Production { get; } = new(false, false, null);
+        public bool IsDefaultProduction => !IncludeTestRuns && !TestRunsOnly && string.IsNullOrWhiteSpace(TestLabel);
 
         public static ParserRunScope From(bool includeTestRuns, bool testRunsOnly, string? testLabel)
         {

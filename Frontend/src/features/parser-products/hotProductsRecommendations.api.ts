@@ -1,4 +1,4 @@
-import { http } from '@/shared/api/http';
+import { http, publicHttp } from '@/shared/api/http';
 
 import type {
   HotProductsListParams,
@@ -28,7 +28,7 @@ export async function getHotProductsRecommendations(
     searchParams.append(key, String(value));
   });
 
-  const response = await http.get<HotProductsListResponse>('/market/recommendations/hot-products', {
+  const response = await publicHttp.get<HotProductsListResponse>('/market/recommendations/hot-products', {
     params: searchParams
   });
   return response.data;

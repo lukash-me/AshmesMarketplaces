@@ -12,7 +12,7 @@ load_env_file
 [[ -n "${ASHMES_PUBLIC_HOST:-}" ]] || die "ASHMES_PUBLIC_HOST is missing in ${ENV_FILE}."
 
 BASE_URL="https://${ASHMES_PUBLIC_HOST}"
-RECOMMENDATIONS_URL="${BASE_URL}/api/v1/market/recommendations/hot-products"
+API_HEALTH_URL="${BASE_URL}/api/v1/health"
 
 info "Docker Compose service status:"
 compose ps
@@ -46,6 +46,9 @@ check_http_200() {
 }
 
 check_http_200 "${BASE_URL}/" "Frontend"
-check_http_200 "${RECOMMENDATIONS_URL}" "Recommendations API"
+check_http_200 "${API_HEALTH_URL}" "API health"
 
-info "Smoke checks completed. An empty recommendations response is valid on a fresh database."
+info "Internal Docker health status:"
+compose ps frontend api intelligence postgres proxy
+
+info "Smoke checks completed."

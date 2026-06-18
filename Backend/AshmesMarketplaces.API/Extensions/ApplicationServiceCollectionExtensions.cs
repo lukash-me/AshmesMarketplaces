@@ -2,6 +2,7 @@ using AshmesMarketplaces.API.Filters;
 using AshmesMarketplaces.API.Background;
 using AshmesMarketplaces.API.DevelopmentSeed;
 using AshmesMarketplaces.API.Security;
+using AshmesMarketplaces.API.Storage;
 using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Auth.Services;
 using AshmesMarketplaces.Application.Brands.Services;
@@ -42,8 +43,12 @@ namespace AshmesMarketplaces.API.Extensions;
 
 public static class ApplicationServiceCollectionExtensions
 {
-    public static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
+        services.Configure<WorkspaceMarketProductMediaStorageOptions>(
+            configuration.GetSection(WorkspaceMarketProductMediaStorageOptions.SectionName));
+        services.AddScoped<IWorkspaceMarketProductMediaStorage, FileWorkspaceMarketProductMediaStorage>();
+
         services.AddScoped<IMarketplaceService, MarketplaceService>();
         services.AddScoped<IBrandService, BrandService>();
         services.AddScoped<ICategoryService, CategoryService>();
@@ -81,6 +86,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IRecommendationProductService, RecommendationProductService>();
         services.AddScoped<IRecommendationCategoryService, RecommendationCategoryService>();
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IAccessRequestService, AccessRequestService>();
         services.AddScoped<IUserAnalysisScheduleService, UserAnalysisScheduleService>();
         services.AddScoped<IPasswordHashService, PasswordHashService>();
         services.AddScoped<IRefreshTokenService, RefreshTokenService>();

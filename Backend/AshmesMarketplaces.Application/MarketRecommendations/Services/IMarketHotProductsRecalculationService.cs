@@ -13,4 +13,8 @@ public interface IMarketHotProductsRecalculationService
         Guid userId,
         RecalculateHotProductsRequest request,
         CancellationToken cancellationToken);
+
+    Task<ServiceResult<RecalculateHotProductsResponse>> RecalculatePublicAsync(
+        RecalculateHotProductsRequest request,
+        CancellationToken cancellationToken);
 }

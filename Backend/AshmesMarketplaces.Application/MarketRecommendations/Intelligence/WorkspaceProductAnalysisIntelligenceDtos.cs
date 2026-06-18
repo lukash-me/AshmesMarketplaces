@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace AshmesMarketplaces.Application.MarketRecommendations.Intelligence;
 
 public sealed record WorkspaceProductAnalysisIntelligenceRequest(
@@ -41,7 +43,8 @@ public sealed record WorkspaceProductSignalDto(
     string Title,
     string Description,
     IReadOnlyList<string> MetricFacts,
-    decimal Confidence);
+    decimal Confidence,
+    JsonElement? Value = null);
 
 public sealed record WorkspaceSimilarProductDto(
     string ProductKey,

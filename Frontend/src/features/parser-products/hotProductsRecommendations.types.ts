@@ -41,11 +41,20 @@ export interface RecalculateHotProductsResponse {
 
 export interface HotProductsListResponse {
   run: HotProductsRunSummary | null;
+  schedule: PublicHotProductsSchedule | null;
   page: number;
   pageSize: number;
   totalCount: number;
   items: HotProductRecommendationItem[];
   groups: HotProductsGroup[];
+}
+
+export interface PublicHotProductsSchedule {
+  localTime: string;
+  timezoneId: string;
+  nextRunAtUtc: string;
+  lastCompletedAtUtc: string | null;
+  lastStatus: string | null;
 }
 
 export interface HotProductsGroup {
@@ -72,6 +81,9 @@ export interface HotProductsRunSummary {
   algorithmVersion: string;
   itemsTotal: number;
   warningCount: number;
+  productsSent: number;
+  factorCodeCount: number;
+  warnings: string[];
 }
 
 export interface HotProductRecommendationItem {

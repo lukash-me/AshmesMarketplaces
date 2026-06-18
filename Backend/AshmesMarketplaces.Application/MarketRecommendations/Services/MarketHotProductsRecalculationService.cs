@@ -80,6 +80,21 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         if (userId == Guid.Empty)
             return ServiceResult<RecalculateHotProductsResponse>.BadRequest("User id is required.");
 
+        return await RecalculateForScopeAsync(userId, request, cancellationToken);
+    }
+
+    public async Task<ServiceResult<RecalculateHotProductsResponse>> RecalculatePublicAsync(
+        RecalculateHotProductsRequest request,
+        CancellationToken cancellationToken)
+    {
+        return await RecalculateForScopeAsync(null, request, cancellationToken);
+    }
+
+    private async Task<ServiceResult<RecalculateHotProductsResponse>> RecalculateForScopeAsync(
+        Guid? userId,
+        RecalculateHotProductsRequest request,
+        CancellationToken cancellationToken)
+    {
         if (!_options.Enabled)
             return ServiceResult<RecalculateHotProductsResponse>.Unavailable("Intelligence service integration is disabled.");
 
@@ -151,6 +166,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             errorCode: null,
             errorMessage: null,
             recommendations,
+            batchResponse.IntelligenceDiagnostics,
             cancellationToken);
 
         return ServiceResult<RecalculateHotProductsResponse>.Success(MapRunSummary(persistedRun));
@@ -269,7 +285,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
 
     private async Task<MarketRecommendationRun> PersistRunAsync(
         MarketHotProductsSnapshot snapshot,
-        Guid idUser,
+        Guid? idUser,
         HotProductsIntelligenceRequest request,
         string inputSnapshotHash,
         string status,
@@ -282,9 +298,15 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         string? errorCode,
         string? errorMessage,
         IReadOnlyList<HotProductRecommendationDto> recommendations,
+        IReadOnlyList<JsonElement> intelligenceDiagnostics,
         CancellationToken cancellationToken)
     {
         var createdAtUtc = DateTime.UtcNow;
+        var runWarnings = warnings
+            .Concat(BuildSnapshotWarnings(snapshot))
+            .Concat(BuildDiversityWarnings(intelligenceDiagnostics, recommendations))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
         var run = new MarketRecommendationRun(
             MarketRecommendationRun.HotProductsKind,
             idUser,
@@ -305,11 +327,18 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             validUntilUtc,
             snapshot.Products.Count,
             recommendationsCount,
-            warnings.Count,
+            runWarnings.Count,
             errorCode,
             errorMessage,
-            warnings.Count == 0 ? null : ToJsonDocument(warnings),
-            ToJsonDocument(request.Options),
+            runWarnings.Count == 0 ? null : ToJsonDocument(runWarnings),
+            ToJsonDocument(new
+            {
+                request.Options.MaxRecommendations,
+                request.Options.MinConfidence,
+                request.Options.MinProductsForScoring,
+                request.Options.Algorithm,
+                Diagnostics = BuildRunDiagnostics(snapshot, recommendations, intelligenceDiagnostics)
+            }),
             createdAtUtc);
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
@@ -386,9 +415,138 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             ReadWarnings(run.RawWarnings));
     }
 
+    private static IReadOnlyList<string> BuildSnapshotWarnings(MarketHotProductsSnapshot snapshot)
+    {
+        if (snapshot.ProductParserRunId is null && snapshot.Products.Count is > 0 and < 1000)
+        {
+            return
+            [
+                $"hot_products_snapshot_small: productsSent={snapshot.Products.Count}; expected accumulated latest-per-product scope"
+            ];
+        }
+
+        return [];
+    }
+
+    private static IReadOnlyList<string> BuildDiversityWarnings(
+        IReadOnlyList<JsonElement> intelligenceDiagnostics,
+        IReadOnlyList<HotProductRecommendationDto> recommendations)
+    {
+        var allFactors = MergeDiagnosticDistribution(intelligenceDiagnostics, "allFactorDistribution");
+        var selectedFactors = MergeDiagnosticDistribution(intelligenceDiagnostics, "selectedFactorDistribution");
+        if (selectedFactors.Count == 0)
+            selectedFactors = BuildFactorDistribution(recommendations);
+
+        var warnings = new List<string>();
+        var candidateFactorCount = allFactors.Count(x => x.Value > 0);
+        var selectedFactorCount = selectedFactors.Count(x => x.Value > 0);
+        if (candidateFactorCount >= 5 && selectedFactorCount < 5)
+        {
+            warnings.Add(
+                $"hot_products_low_factor_diversity: selectedFactors={selectedFactorCount}; candidateFactors={candidateFactorCount}");
+        }
+
+        var selectedTotal = selectedFactors.Values.Sum();
+        if (selectedTotal > 0)
+        {
+            var top = selectedFactors.OrderByDescending(x => x.Value).First();
+            var share = (decimal)top.Value / selectedTotal;
+            if (share > 0.70m)
+            {
+                warnings.Add(
+                    $"hot_products_factor_skew: topFactor={top.Key}; share={Math.Round(share * 100m, 1)}%; selectedFactors={selectedFactorCount}");
+            }
+        }
+
+        return warnings;
+    }
+
+    private static object BuildRunDiagnostics(
+        MarketHotProductsSnapshot snapshot,
+        IReadOnlyList<HotProductRecommendationDto> recommendations,
+        IReadOnlyList<JsonElement> intelligenceDiagnostics)
+    {
+        var products = snapshot.Products;
+        var factorDistribution = BuildFactorDistribution(recommendations);
+
+        return new
+        {
+            ProductsSent = products.Count,
+            SnapshotMode = snapshot.ProductParserRunId is null ? "latest_per_product" : "parser_run",
+            Coverage = new
+            {
+                WithPrice = products.Count(x => x.Price.HasValue || x.WalletPrice.HasValue || x.PriceWithoutDiscount.HasValue),
+                WithRating = products.Count(x => x.Rating.HasValue),
+                WithFeedback = products.Count(x => x.FeedbackCount.HasValue),
+                WithParsedReviews = products.Count(x => x.ParsedReviewCount.HasValue && x.ParsedReviewCount.Value > 0),
+                WithDetails = products.Count(x => x.Product.Description is not null || x.Product.Characteristics is not null),
+                WithImages = products.Count(x => x.Product.ImageCount.HasValue && x.Product.ImageCount.Value > 0),
+                WithLogistics = products.Count(x => x.Product.DeliveryProfile?.Destinations.Count > 0),
+                WithObservedPosition = products.Count(x => x.Position.HasValue),
+                WithObservedRange = products.Count(x => x.ObservedRangeLimit.HasValue)
+            },
+            Recommendations = new
+            {
+                Count = recommendations.Count,
+                FactorDistribution = factorDistribution
+            },
+            Intelligence = BuildIntelligenceDiagnosticsValue(intelligenceDiagnostics)
+        };
+    }
+
+    private static Dictionary<string, int> BuildFactorDistribution(IReadOnlyList<HotProductRecommendationDto> recommendations) =>
+        recommendations
+            .SelectMany(x => x.Factors)
+            .GroupBy(x => x.Code, StringComparer.Ordinal)
+            .OrderByDescending(x => x.Count())
+            .ThenBy(x => x.Key, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal);
+
+    private static Dictionary<string, int> MergeDiagnosticDistribution(
+        IReadOnlyList<JsonElement> diagnostics,
+        string propertyName)
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var diagnostic in diagnostics)
+        {
+            if (diagnostic.ValueKind != JsonValueKind.Object
+                || !diagnostic.TryGetProperty(propertyName, out var distribution)
+                || distribution.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            foreach (var property in distribution.EnumerateObject())
+            {
+                var value = property.Value.ValueKind switch
+                {
+                    JsonValueKind.Number when property.Value.TryGetInt32(out var intValue) => intValue,
+                    JsonValueKind.Number when property.Value.TryGetDecimal(out var decimalValue) => (int)decimalValue,
+                    _ => 0
+                };
+                if (value <= 0)
+                    continue;
+
+                result[property.Name] = result.TryGetValue(property.Name, out var existing)
+                    ? existing + value
+                    : value;
+            }
+        }
+
+        return result;
+    }
+
+    private static object? BuildIntelligenceDiagnosticsValue(IReadOnlyList<JsonElement> diagnostics) =>
+        diagnostics.Count switch
+        {
+            0 => null,
+            1 => diagnostics[0],
+            _ => diagnostics
+        };
+
     private async Task<ServiceResult<HotProductsBatchResponse>> CalculateInBatchesAsync(
         RecalculateHotProductsRequest request,
-        Guid userId,
+        Guid? userId,
         MarketHotProductsSnapshot snapshot,
         string requestId,
         string inputSnapshotHash,
@@ -397,6 +555,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         var chunkSize = Math.Max(_options.MaxProductsPerRequest, 1);
         var recommendations = new List<HotProductRecommendationDto>();
         var warnings = new List<string>();
+        var intelligenceDiagnostics = new List<JsonElement>();
         var computedAtUtc = DateTime.UtcNow;
         var algorithmVersion = AlgorithmVersion;
         var modelVersion = ModelVersion;
@@ -432,6 +591,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
                         : "intelligence_error",
                     errorMessage: clientResult.Error.Message,
                     recommendations: [],
+                    intelligenceDiagnostics: [],
                     cancellationToken);
 
                 return clientResult.Error.Type == ServiceErrorType.BadRequest
@@ -458,6 +618,7 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
                     errorCode: "intelligence_response_validation_failed",
                     errorMessage: string.Join("; ", validationErrors),
                     recommendations: [],
+                    intelligenceDiagnostics: response.Diagnostics.HasValue ? [response.Diagnostics.Value] : [],
                     cancellationToken);
 
                 return ServiceResult<HotProductsBatchResponse>.Unavailable(
@@ -468,11 +629,13 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             algorithmVersion = response.AlgorithmVersion;
             modelVersion = response.ModelVersion;
             warnings.AddRange(response.Warnings);
+            if (response.Diagnostics.HasValue)
+                intelligenceDiagnostics.Add(response.Diagnostics.Value);
             if (response.Status == StatusCompleted)
                 recommendations.AddRange(response.Recommendations);
         }
 
-        var maxRecommendations = request.MaxRecommendations ?? 200;
+        var maxRecommendations = request.MaxRecommendations ?? 1000;
         recommendations = recommendations
             .GroupBy(x => x.ProductKey, StringComparer.Ordinal)
             .Select(x => x.OrderByDescending(item => item.Score).First())
@@ -487,7 +650,8 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
             modelVersion,
             computedAtUtc,
             recommendations,
-            warnings.Distinct(StringComparer.Ordinal).ToList()));
+            warnings.Distinct(StringComparer.Ordinal).ToList(),
+            intelligenceDiagnostics));
     }
 
     private sealed record HotProductsBatchResponse(
@@ -496,7 +660,8 @@ public sealed class MarketHotProductsRecalculationService : IMarketHotProductsRe
         string ModelVersion,
         DateTime ComputedAtUtc,
         IReadOnlyList<HotProductRecommendationDto> Recommendations,
-        IReadOnlyList<string> Warnings);
+        IReadOnlyList<string> Warnings,
+        IReadOnlyList<JsonElement> IntelligenceDiagnostics);
 
     private static IReadOnlyList<string> ReadWarnings(JsonDocument? warnings)
     {

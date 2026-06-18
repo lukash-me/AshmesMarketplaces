@@ -1,10 +1,10 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Recommendations;
+using AshmesMarketplaces.Domain.Entities.Users;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -83,16 +83,13 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
     ];
 
     private readonly ApplicationDbContext _dbContext;
-    private readonly ICurrentUser _currentUser;
     private readonly ILogger<MarketHotProductsReadService> _logger;
 
     public MarketHotProductsReadService(
         ApplicationDbContext dbContext,
-        ICurrentUser currentUser,
         ILogger<MarketHotProductsReadService> logger)
     {
         _dbContext = dbContext;
-        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -103,16 +100,13 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 50);
         var nowUtc = DateTime.UtcNow;
-        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
-            return ServiceResult<HotProductsListResponse>.Unauthorized("Authentication is required.");
-
-        var userId = _currentUser.UserId.Value;
+        var schedule = await LoadScheduleAsync(cancellationToken);
 
         var runs = _dbContext.MarketRecommendationRuns
             .AsNoTracking()
             .Where(x =>
                 x.Kind == MarketRecommendationRun.HotProductsKind
-                && (x.IdUser == userId || x.IdUser == null)
+                && x.IdUser == null
                 && x.Status == StatusCompleted
                 && x.RecommendationsCount > 0
                 && (x.ValidUntilUtc == null || x.ValidUntilUtc >= nowUtc));
@@ -126,15 +120,14 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         }
 
         var run = await runs
-            .OrderByDescending(x => x.IdUser == userId)
-            .ThenByDescending(x => x.CompletedAtUtc)
+            .OrderByDescending(x => x.CompletedAtUtc)
             .ThenByDescending(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (run is null)
         {
             return ServiceResult<HotProductsListResponse>.Success(
-                new HotProductsListResponse(null, page, pageSize, 0, [], []));
+                new HotProductsListResponse(null, schedule, page, pageSize, 0, [], []));
         }
 
         var allItemRows = await ApplyItemFilters(
@@ -149,7 +142,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         if (allItemRows.Count == 0)
         {
             return ServiceResult<HotProductsListResponse>.Success(
-                new HotProductsListResponse(null, page, pageSize, 0, [], []));
+                new HotProductsListResponse(null, schedule, page, pageSize, 0, [], []));
         }
 
         var thumbnailUrls = await LoadThumbnailUrlsAsync(allItemRows, cancellationToken);
@@ -160,7 +153,7 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
         if (allRunItems.Count == 0)
         {
             return ServiceResult<HotProductsListResponse>.Success(
-                new HotProductsListResponse(null, page, pageSize, 0, [], []));
+                new HotProductsListResponse(null, schedule, page, pageSize, 0, [], []));
         }
 
         var groupedItems = ApplyGroupFilter(allRunItems, query.GroupKey);
@@ -176,6 +169,12 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             .Select(item => MapItem(item, thumbnailUrls))
             .ToList();
 
+        var factorCodeCount = allRunItems
+            .SelectMany(x => x.Factors)
+            .Select(x => x.Code)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
         var response = new HotProductsListResponse(
             new HotProductsRunSummaryDto(
                 run.Id,
@@ -184,7 +183,11 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
                 run.Algorithm,
                 run.AlgorithmVersion,
                 totalCount,
-                run.WarningCount),
+                run.WarningCount,
+                ReadProductsSent(run.ConfigOptions) ?? run.ProductCountSent,
+                factorCodeCount,
+                ReadWarnings(run.RawWarnings)),
+            schedule,
             page,
             pageSize,
             totalCount,
@@ -192,6 +195,61 @@ public sealed class MarketHotProductsReadService : IMarketHotProductsReadService
             BuildGroups(allRunItems));
 
         return ServiceResult<HotProductsListResponse>.Success(response);
+    }
+
+    private static int? ReadProductsSent(JsonDocument? configOptions)
+    {
+        if (configOptions?.RootElement.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (!TryGetProperty(configOptions.RootElement, "Diagnostics", "diagnostics", out var diagnostics)
+            || diagnostics.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        if (TryGetProperty(diagnostics, "ProductsSent", "productsSent", out var productsSent)
+            && productsSent.ValueKind == JsonValueKind.Number
+            && productsSent.TryGetInt32(out var value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<string> ReadWarnings(JsonDocument? warnings)
+    {
+        if (warnings is null || warnings.RootElement.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return warnings.RootElement
+            .EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => x.GetString())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToList();
+    }
+
+    private static bool TryGetProperty(JsonElement element, string name, string camelCaseName, out JsonElement value) =>
+        element.TryGetProperty(name, out value) || element.TryGetProperty(camelCaseName, out value);
+
+    private async Task<PublicHotProductsScheduleDto?> LoadScheduleAsync(CancellationToken cancellationToken)
+    {
+        var schedule = await _dbContext.PublicAnalysisSchedules
+            .AsNoTracking()
+            .Where(x => x.ScheduleKey == PublicAnalysisSchedule.HotProductsScheduleKey)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (schedule is null)
+            return null;
+
+        return new PublicHotProductsScheduleDto(
+            schedule.LocalTime.ToString("HH:mm"),
+            schedule.TimezoneId,
+            schedule.NextRunAtUtc,
+            schedule.LastCompletedAtUtc,
+            schedule.LastStatus);
     }
 
     private async Task<IReadOnlyDictionary<Guid, string?>> LoadThumbnailUrlsAsync(

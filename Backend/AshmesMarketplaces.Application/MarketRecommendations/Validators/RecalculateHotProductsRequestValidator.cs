@@ -14,7 +14,7 @@ public sealed class RecalculateHotProductsRequestValidator : AbstractValidator<R
 
         RuleFor(x => x.MaxRecommendations)
             .GreaterThan(0)
-            .LessThanOrEqualTo(200)
+            .LessThanOrEqualTo(1000)
             .When(x => x.MaxRecommendations.HasValue);
 
         RuleFor(x => x.MinConfidence)

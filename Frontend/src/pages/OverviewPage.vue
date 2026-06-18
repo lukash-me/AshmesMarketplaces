@@ -20,6 +20,7 @@ import MarketProductImage from '@/features/parser-products/MarketProductImage.vu
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
 import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
 import { useAuthStore } from '@/features/auth/auth.store';
+import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
 import { useActiveWorkspace } from '@/features/workspace-market-products/useActiveWorkspace';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import Button from '@/shared/ui/Button.vue';
@@ -51,6 +52,7 @@ const markingAllViewed = ref(false);
 let requestVersion = 0;
 
 const activeWorkspaceId = computed(() => workspace.activeWorkspaceId.value);
+const isGuest = computed(() => !authStore.isAuthenticated);
 const hasProducts = computed(() => (overview.value?.workspaceProductCount ?? 0) > 0);
 const groups = computed<WorkspaceOverviewGroup[]>(() =>
   overview.value ? [overview.value.newItems] : []
@@ -75,6 +77,13 @@ watch(
 async function loadOverview(): Promise<void> {
   const workspaceId = activeWorkspaceId.value;
   const version = ++requestVersion;
+
+  if (isGuest.value) {
+    overview.value = null;
+    error.value = '';
+    loading.value = false;
+    return;
+  }
 
   if (!workspaceId) {
     overview.value = null;
@@ -642,7 +651,12 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
       title="Обзор"
       description="Сводка по товарам, которые добавлены в рабочую область."
     />
-    <p class="analysis-schedule-note">{{ overviewScheduleText }}</p>
+    <AuthRequiredState
+      v-if="isGuest"
+      description="Обзор показывает ежедневную сводку по вашим наблюдаемым товарам: новые события, изменения карточек и похожие товары. Войдите, чтобы увидеть данные своей рабочей области."
+    />
+    <template v-else>
+      <p class="analysis-schedule-note">{{ overviewScheduleText }}</p>
 
     <p v-if="error" class="overview-error">{{ error }}</p>
 
@@ -841,11 +855,12 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
       </section>
     </template>
 
-    <ParserProductDetailDrawer
-      :open="Boolean(selectedProduct)"
-      :product="selectedProduct"
-      @close="selectedProduct = null"
-    />
+      <ParserProductDetailDrawer
+        :open="Boolean(selectedProduct)"
+        :product="selectedProduct"
+        @close="selectedProduct = null"
+      />
+    </template>
   </div>
 </template>
 

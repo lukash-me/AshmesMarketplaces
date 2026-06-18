@@ -2,6 +2,7 @@ using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.Orders.Dtos;
 using AshmesMarketplaces.Application.Orders.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AshmesMarketplaces.API.Controllers.V1;
@@ -19,6 +20,7 @@ public sealed class OrdersController : ControllerBase
     }
 
     [HttpGet]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PagedResponse<OrderListItemResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResponse<OrderListItemResponse>>> GetList([FromQuery] OrderListQuery query, CancellationToken cancellationToken)
@@ -28,6 +30,7 @@ public sealed class OrdersController : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(OrderResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]

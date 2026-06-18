@@ -1,4 +1,6 @@
 using System.Text.Json;
+using AshmesMarketplaces.Application.Auth.Security;
+using AshmesMarketplaces.Application.Bootstrap;
 using AshmesMarketplaces.Application.ParserIngestion.Dtos;
 using AshmesMarketplaces.Application.ParserIngestion.Services;
 using AshmesMarketplaces.DataAccess;
@@ -21,6 +23,25 @@ Console.CancelKeyPress += (_, eventArgs) =>
 try
 {
     await using var dbContext = CreateDbContext(parsed);
+    if (parsed.Command == "ensure-admin-user")
+    {
+        var password = parsed.Password
+            ?? Environment.GetEnvironmentVariable("ASHMES_ADMIN_PASSWORD");
+        var workspaceName = parsed.WorkspaceName
+            ?? Environment.GetEnvironmentVariable("ASHMES_ADMIN_WORKSPACE_NAME")
+            ?? "Ashmes Production Workspace";
+        var bootstrap = new AdminBootstrapService(dbContext, new PasswordHashService());
+        var bootstrapResult = await bootstrap.EnsureAdminAsync(
+            parsed.Target,
+            password ?? string.Empty,
+            workspaceName,
+            parsed.ResetPassword,
+            cancellation.Token);
+
+        Console.WriteLine(JsonSerializer.Serialize(bootstrapResult, new JsonSerializerOptions { WriteIndented = true }));
+        return 0;
+    }
+
     if (parsed.Command is "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps")
     {
         var maintenance = new ParserDataQualityMaintenance(dbContext);
@@ -103,10 +124,13 @@ internal sealed record CliArguments(
     bool DryRun,
     string? ConnectionString,
     bool Confirm,
+    string? Password,
+    string? WorkspaceName,
+    bool ResetPassword,
     bool ShowHelp)
 {
     public bool RequiresDatabase =>
-        Command is "promote-products" or "complete-parser-pipeline" or "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps"
+        Command is "ensure-admin-user" or "promote-products" or "complete-parser-pipeline" or "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps"
         || (!DryRun && Command is "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "stage-complete-batch");
 
     public static string HelpText =>
@@ -132,8 +156,10 @@ internal sealed record CliArguments(
           audit-defective-cards <output-directory>
           purge-defective-cards <output-directory> --confirm
           repair-parser-batch-timestamps <output-directory> [--confirm]
+          ensure-admin-user <login> [--password <password>] [--workspace-name <name>] [--reset-password]
 
         Write commands need --connection-string or ConnectionStrings__Postgres.
+        ensure-admin-user can read ASHMES_ADMIN_PASSWORD and ASHMES_ADMIN_WORKSPACE_NAME from environment.
         purge-quality creates backup tables in schema ParserQualityBackups before deleting rows.
         purge-defective-cards creates backup tables in schema ParserQualityBackups before deleting rows.
         repair-parser-batch-timestamps writes a report and updates batch ParserRuns / parser-owned Products only with --confirm.
@@ -146,13 +172,13 @@ internal sealed record CliArguments(
     public static CliArguments Parse(string[] args)
     {
         if (args.Length == 0 || args[0] is "--help" or "-h")
-            return new CliArguments(string.Empty, string.Empty, 5000, null, false, null, false, true);
+            return new CliArguments(string.Empty, string.Empty, 5000, null, false, null, false, null, null, false, true);
 
         if (args.Length < 2)
             throw new ArgumentException("A command and target are required. Use --help for syntax.");
 
         var command = args[0].Trim().ToLowerInvariant();
-        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "validate-product-details" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "stage-complete-batch" or "complete-parser-pipeline" or "promote-products" or "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps"))
+        if (command is not ("validate-products" or "validate-reviews" or "validate-ranks" or "validate-logistics" or "validate-product-details" or "stage-products" or "stage-reviews" or "stage-ranks" or "stage-logistics" or "stage-product-details" or "stage-complete-batch" or "complete-parser-pipeline" or "promote-products" or "audit-quality" or "purge-quality" or "audit-defective-cards" or "purge-defective-cards" or "repair-parser-batch-timestamps" or "ensure-admin-user"))
             throw new ArgumentException($"Unsupported command '{args[0]}'. Use --help for syntax.");
 
         var batchSize = command is "promote-products" or "stage-complete-batch" ? 1000 : 5000;
@@ -160,12 +186,18 @@ internal sealed record CliArguments(
         var dryRun = false;
         string? connectionString = null;
         var confirm = false;
+        string? password = null;
+        string? workspaceName = null;
+        var resetPassword = false;
         for (var index = 2; index < args.Length; index++)
         {
             switch (args[index])
             {
                 case "--confirm":
                     confirm = true;
+                    break;
+                case "--reset-password":
+                    resetPassword = true;
                     break;
                 case "--dry-run":
                     dryRun = true;
@@ -179,12 +211,18 @@ internal sealed record CliArguments(
                 case "--connection-string":
                     connectionString = RequiredOptionValue(args, ref index, "--connection-string");
                     break;
+                case "--password":
+                    password = RequiredOptionValue(args, ref index, "--password");
+                    break;
+                case "--workspace-name":
+                    workspaceName = RequiredOptionValue(args, ref index, "--workspace-name");
+                    break;
                 default:
                     throw new ArgumentException($"Unknown option '{args[index]}'. Use --help for syntax.");
             }
         }
 
-        return new CliArguments(command, args[1], batchSize, maxRows, dryRun, connectionString, confirm, false);
+        return new CliArguments(command, args[1], batchSize, maxRows, dryRun, connectionString, confirm, password, workspaceName, resetPassword, false);
     }
 
     private static int ParseIntOption(string[] args, ref int index, string option)

@@ -55,6 +55,10 @@ public sealed class ParserProductRowConfiguration : IEntityTypeConfiguration<Par
         builder.HasIndex(x => x.WbRootId);
         builder.HasIndex(x => x.ParsedAtUtc);
         builder.HasIndex(x => new { x.ParserRunId, x.ParsedAtUtc });
+        builder
+            .HasIndex(x => new { x.WbProductId, x.ParsedAtUtc, x.Id })
+            .IsDescending(false, true, true)
+            .HasDatabaseName("IX_ParserProductRows_wb_product_id_parsed_at_utc_id");
 
         builder.HasOne<ParserRun>().WithMany().HasForeignKey(x => x.IdParserRun).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<ParserFile>().WithMany().HasForeignKey(x => x.IdParserFile).OnDelete(DeleteBehavior.Restrict);

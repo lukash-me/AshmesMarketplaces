@@ -3,6 +3,19 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface AccessRequestPayload {
+  contact: string;
+  comment: string;
+  sourcePath?: string;
+}
+
+export interface AccessRequestResponse {
+  id: string;
+  contact: string;
+  status: string;
+  createdAtUtc: string;
+}
+
 export interface RefreshRequest {
   sessionId: number;
   refreshToken: string;

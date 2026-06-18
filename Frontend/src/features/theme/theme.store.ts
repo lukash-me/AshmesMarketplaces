@@ -4,24 +4,22 @@ import { defineStore } from 'pinia';
 export type AppTheme = 'obsidian' | 'ash';
 
 const STORAGE_KEY = 'ashmes.theme';
-const DEFAULT_THEME: AppTheme = 'obsidian';
-const THEMES = new Set<AppTheme>(['obsidian', 'ash']);
+const DEFAULT_THEME: AppTheme = 'ash';
 
 export const useThemeStore = defineStore('theme', () => {
-  const theme = ref<AppTheme>(readStoredTheme());
+  const theme = ref<AppTheme>(DEFAULT_THEME);
   const isLight = computed(() => theme.value === 'ash');
   const nextThemeLabel = computed(() => isLight.value ? 'Темная тема' : 'Светлая тема');
 
-  applyTheme(theme.value);
+  applyTheme(DEFAULT_THEME);
 
   function toggleTheme(): void {
-    setTheme(isLight.value ? 'obsidian' : 'ash');
+    setTheme(DEFAULT_THEME);
   }
 
-  function setTheme(value: AppTheme): void {
-    theme.value = value;
-    applyTheme(value);
-    localStorage.setItem(STORAGE_KEY, value);
+  function setTheme(_value: AppTheme = DEFAULT_THEME): void {
+    theme.value = DEFAULT_THEME;
+    applyTheme(DEFAULT_THEME);
   }
 
   return {
@@ -39,23 +37,18 @@ export function applyStoredTheme(): AppTheme {
   return theme;
 }
 
-function applyTheme(theme: AppTheme): void {
+function applyTheme(_theme: AppTheme = DEFAULT_THEME): void {
   if (typeof document === 'undefined') {
     return;
   }
 
-  document.documentElement.dataset.theme = theme;
+  document.documentElement.dataset.theme = DEFAULT_THEME;
+
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(STORAGE_KEY, DEFAULT_THEME);
+  }
 }
 
 function readStoredTheme(): AppTheme {
-  if (typeof localStorage === 'undefined') {
-    return DEFAULT_THEME;
-  }
-
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return isAppTheme(stored) ? stored : DEFAULT_THEME;
-}
-
-function isAppTheme(value: unknown): value is AppTheme {
-  return typeof value === 'string' && THEMES.has(value as AppTheme);
+  return DEFAULT_THEME;
 }

@@ -14,6 +14,7 @@ let authHandlers: AuthHandlers | null = null;
 
 export const publicHttp = axios.create({
   baseURL: '/api/v1',
+  timeout: 15000,
   headers: {
     Accept: 'application/json'
   }
@@ -21,6 +22,7 @@ export const publicHttp = axios.create({
 
 export const http = axios.create({
   baseURL: '/api/v1',
+  timeout: 15000,
   headers: {
     Accept: 'application/json'
   }

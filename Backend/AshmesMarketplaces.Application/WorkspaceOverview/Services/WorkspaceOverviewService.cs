@@ -121,13 +121,28 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         var algorithm = AlgorithmFallback;
         var algorithmVersion = AlgorithmVersionFallback;
         var modelVersion = ModelVersionFallback;
+        var successfulAnalyses = 0;
+        var failedAnalyses = 0;
+        var previousRun = await LoadLatestRunAsync(workspaceId, cancellationToken);
+        var previousAnalyses = previousRun is null
+            ? new Dictionary<Guid, WorkspaceMarketProductAnalysis>()
+            : await _dbContext.WorkspaceMarketProductAnalyses
+                .AsNoTracking()
+                .Where(x => x.IdAnalysisRun == previousRun.Id)
+                .ToDictionaryAsync(x => x.IdWorkspaceMarketProduct, cancellationToken);
 
         foreach (var product in products)
         {
             var history = await LoadHistoryAsync(product, cancellationToken);
             var candidates = await LoadSimilarCandidatesAsync(product, products, cancellationToken);
-            var productDeliveryProfiles = await LoadDeliveryProfilesByWbProductIdAsync([product.WbProductId], cancellationToken);
-            productDeliveryProfiles.TryGetValue(product.WbProductId, out var productDeliveryProfile);
+            if (product.SourceType == WorkspaceMarketProduct.DemoSourceType && candidates.Count < 3)
+                warnings.Add($"Демо-карточка {product.Name}: недостаточно похожих товаров для ценового коридора.");
+            var productDeliveryProfiles = await LoadDeliveryProfilesByWbProductIdAsync(
+                string.IsNullOrWhiteSpace(product.WbProductId) ? [] : [product.WbProductId],
+                cancellationToken);
+            var productDeliveryProfile = string.IsNullOrWhiteSpace(product.WbProductId)
+                ? null
+                : productDeliveryProfiles.GetValueOrDefault(product.WbProductId);
             var requestId = $"workspace-overview-{workspaceId:N}-{product.Id:N}-{startedAt:yyyyMMddHHmmss}";
             var intelligence = await _intelligenceClient.AnalyzeWorkspaceProductAsync(
                 new WorkspaceProductAnalysisIntelligenceRequest(
@@ -157,7 +172,8 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                         x.Title,
                         x.Description,
                         x.MetricFacts,
-                        x.Confidence))
+                        x.Confidence,
+                        x.Value))
                     .ToArray();
                 similarProducts = MapSimilarProducts(intelligence.Value.SimilarProducts ?? [], candidates);
                 similarProductGroups = MapSimilarProductGroups(intelligence.Value.SimilarProductGroups ?? [], candidates);
@@ -166,8 +182,21 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             }
             else if (intelligence.Error is not null)
             {
-                warnings.Add($"Товар {product.WbProductId}: {intelligence.Error.Message}");
+                failedAnalyses++;
+                warnings.Add($"Товар {product.WbProductId ?? product.Name}: {intelligence.Error.Message}");
+                if (previousAnalyses.TryGetValue(product.Id, out var previousAnalysis))
+                {
+                    analyses.Add(ClonePendingAnalysis(product.Id, previousAnalysis, DateTime.UtcNow));
+                    continue;
+                }
             }
+            else
+            {
+                failedAnalyses++;
+            }
+
+            if (intelligence.IsSuccess)
+                successfulAnalyses++;
 
             analyses.Add(new PendingAnalysis(
                 product.Id,
@@ -191,6 +220,12 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                 ToJsonDocument(similarProducts),
                 ToJsonDocument(similarProductGroups),
                 DateTime.UtcNow));
+        }
+
+        if (products.Count > 0 && successfulAnalyses == 0 && failedAnalyses >= products.Count)
+        {
+            return ServiceResult<WorkspaceOverviewRecalculateResponse>.Unavailable(
+                $"Не удалось пересчитать кластерный анализ: все {products.Count} товаров получили ошибку Intelligence. Последний успешный анализ сохранен.");
         }
 
         var completedAt = DateTime.UtcNow;
@@ -329,12 +364,19 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
 
     private async Task<WorkspaceMarketProductAnalysisRun?> LoadLatestRunAsync(Guid workspaceId, CancellationToken cancellationToken)
     {
-        return await _dbContext.WorkspaceMarketProductAnalysisRuns
+        var runs = await _dbContext.WorkspaceMarketProductAnalysisRuns
             .AsNoTracking()
             .Where(x => x.IdWorkspace == workspaceId)
             .OrderByDescending(x => x.CompletedAtUtc ?? x.StartedAtUtc)
             .ThenByDescending(x => x.StartedAtUtc)
-            .FirstOrDefaultAsync(cancellationToken);
+            .Take(20)
+            .ToListAsync(cancellationToken);
+
+        return runs.FirstOrDefault(x => !IsDefectiveValidationRun(
+            x.ProductCount,
+            x.SignalCount,
+            x.SimilarProductCount,
+            DeserializeWarnings(x.Warnings)));
     }
 
     private WorkspaceOverviewResponse MapOverview(
@@ -386,7 +428,12 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
                 WorkspaceMarketProduct.IdeaTag,
                 "Идеи",
                 items.Count(x => x.TagKey == WorkspaceMarketProduct.IdeaTag),
-                items.Where(x => x.TagKey == WorkspaceMarketProduct.IdeaTag).ToList()));
+                items.Where(x => x.TagKey == WorkspaceMarketProduct.IdeaTag).ToList()),
+            new WorkspaceOverviewGroupDto(
+                WorkspaceMarketProduct.CreatedTag,
+                "Созданные",
+                items.Count(x => x.TagKey == WorkspaceMarketProduct.CreatedTag),
+                items.Where(x => x.TagKey == WorkspaceMarketProduct.CreatedTag).ToList()));
     }
 
     private WorkspaceOverviewProductDto MapProduct(
@@ -404,6 +451,8 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             product.ParserProductRowId,
             product.WbProductId,
             product.WbRootId,
+            product.SourceType,
+            product.SourceType == WorkspaceMarketProduct.DemoSourceType,
             product.TagKey,
             product.Note,
             product.Name,
@@ -413,6 +462,10 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             product.SourceCategory,
             product.SourceSubcategory,
             viewedChanges?.Price.CurrentValue ?? currentSnapshot?.Price ?? analysis?.CurrentPrice ?? CurrentPrice(product),
+            product.CostPrice,
+            product.Description,
+            product.SupplierName,
+            product.SupplierUrl,
             ToInt(viewedChanges?.Position.CurrentValue) ?? currentSnapshot?.Position ?? analysis?.CurrentPosition ?? product.PositionAbsolute,
             ToInt(viewedChanges?.Stock.CurrentValue) ?? currentSnapshot?.Stock ?? analysis?.CurrentStock ?? product.TotalQuantity,
             ToInt(viewedChanges?.Feedback.CurrentValue) ?? currentSnapshot?.FeedbackCount ?? analysis?.CurrentFeedbackCount ?? product.FeedbackCount,
@@ -580,8 +633,79 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             DeserializeWarnings(run.Warnings),
             run.ErrorMessage);
 
+    private static PendingAnalysis ClonePendingAnalysis(
+        Guid idWorkspaceMarketProduct,
+        WorkspaceMarketProductAnalysis analysis,
+        DateTime computedAtUtc) =>
+        new(
+            idWorkspaceMarketProduct,
+            analysis.CurrentPrice,
+            analysis.PreviousPrice,
+            analysis.PriceDelta,
+            analysis.CurrentPosition,
+            analysis.PreviousPosition,
+            analysis.PositionDelta,
+            analysis.CurrentStock,
+            analysis.PreviousStock,
+            analysis.StockDelta,
+            analysis.CurrentFeedbackCount,
+            analysis.PreviousFeedbackCount,
+            analysis.FeedbackDelta,
+            analysis.CurrentReviewRating,
+            analysis.PreviousReviewRating,
+            analysis.ReviewRatingDelta,
+            analysis.LatestObservedAtUtc,
+            CloneJson(analysis.Signals),
+            CloneJson(analysis.SimilarProducts),
+            CloneJson(analysis.SimilarProductGroups),
+            computedAtUtc);
+
+    public static bool IsDefectiveValidationRunForTesting(
+        int productCount,
+        int signalCount,
+        int similarProductCount,
+        IReadOnlyList<string> warnings) =>
+        IsDefectiveValidationRun(productCount, signalCount, similarProductCount, warnings);
+
+    private static bool IsDefectiveValidationRun(
+        int productCount,
+        int signalCount,
+        int similarProductCount,
+        IReadOnlyList<string> warnings)
+    {
+        if (productCount <= 0 || signalCount != 0 || similarProductCount != 0 || warnings.Count < productCount)
+            return false;
+
+        var validationWarnings = warnings.Count(IsWorkspaceAnalysisValidationWarning);
+        return validationWarnings >= productCount && validationWarnings == warnings.Count;
+    }
+
+    private static bool IsWorkspaceAnalysisValidationWarning(string warning) =>
+        warning.Contains("Request payload validation failed:", StringComparison.OrdinalIgnoreCase)
+        && warning.Contains("Extra inputs are not permitted", StringComparison.OrdinalIgnoreCase);
+
     private async Task<ProductHistory> LoadHistoryAsync(WorkspaceMarketProduct product, CancellationToken cancellationToken)
     {
+        if (product.SourceType == WorkspaceMarketProduct.DemoSourceType || string.IsNullOrWhiteSpace(product.WbProductId))
+        {
+            var price = CurrentPrice(product);
+            var demoPriceRows = price.HasValue
+                ? new List<HistoryPoint> { new(product.DateUpdate, price.Value) }
+                : [];
+            return new ProductHistory(
+                ToChange(demoPriceRows),
+                ToChange([]),
+                ToChange([]),
+                ToChange([]),
+                ToChange([]),
+                product.DateUpdate,
+                demoPriceRows,
+                [],
+                [],
+                [],
+                []);
+        }
+
         var priceRows = await _dbContext.ParserProductRows
             .AsNoTracking()
             .Where(x => x.WbProductId == product.WbProductId
@@ -662,12 +786,24 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         IReadOnlyList<WorkspaceMarketProduct> workspaceProducts,
         CancellationToken cancellationToken)
     {
-        var excluded = workspaceProducts.Select(x => x.WbProductId).Append(product.WbProductId).ToHashSet(StringComparer.Ordinal);
-        var rows = await _dbContext.ParserProductRows
+        var excluded = workspaceProducts
+            .Select(x => x.WbProductId)
+            .Append(product.WbProductId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.Ordinal);
+        var sourceSubcategory = product.SourceSubcategory;
+        if (string.IsNullOrWhiteSpace(sourceSubcategory))
+            return [];
+
+        var query = _dbContext.ParserProductRows
             .AsNoTracking()
-            .Where(x => x.SourceSubcategory == product.SourceSubcategory
-                && x.SourceRegionDest == product.SourceRegionDest
-                && !excluded.Contains(x.WbProductId))
+            .Where(x => x.SourceSubcategory == sourceSubcategory
+                && !excluded.Contains(x.WbProductId));
+
+        if (product.SourceType != WorkspaceMarketProduct.DemoSourceType && !string.IsNullOrWhiteSpace(product.SourceRegionDest))
+            query = query.Where(x => x.SourceRegionDest == product.SourceRegionDest);
+
+        var rows = await query
             .OrderByDescending(x => x.ParsedAtUtc)
             .Take(300)
             .ToListAsync(cancellationToken);
@@ -683,7 +819,9 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             .AsNoTracking()
             .Where(x => candidateIds.Contains(x.WbProductId)
                 && x.SourceSubcategory == product.SourceSubcategory
-                && x.SourceRegionDest == product.SourceRegionDest)
+                && (product.SourceType == WorkspaceMarketProduct.DemoSourceType
+                    || product.SourceRegionDest == null
+                    || x.SourceRegionDest == product.SourceRegionDest))
             .OrderByDescending(x => x.ObservedAtUtc)
             .Select(x => new
             {
@@ -697,13 +835,81 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         var deliveryProfiles = await LoadDeliveryProfilesByWbProductIdAsync(
             latestRows.Select(x => x.WbProductId).Distinct(StringComparer.Ordinal).ToArray(),
             cancellationToken);
+        var reviewQuality = await LoadReviewQualityByWbProductIdAsync(candidateIds, cancellationToken);
+        var details = await LoadProductDetailsByWbProductIdAsync(candidateIds, cancellationToken);
 
         return latestRows
             .Select(row => new CandidateFeature(
                 row,
-                BuildFeature(row, deliveryProfiles.GetValueOrDefault(row.WbProductId)),
+                BuildFeature(
+                    row,
+                    deliveryProfiles.GetValueOrDefault(row.WbProductId),
+                    reviewQuality.GetValueOrDefault(row.WbProductId),
+                    details.GetValueOrDefault(row.WbProductId)),
                 positions.GetValueOrDefault(row.WbProductId)))
             .ToList();
+    }
+
+    private async Task<IReadOnlyDictionary<string, ProductDetails>> LoadProductDetailsByWbProductIdAsync(
+        IReadOnlyCollection<string> wbProductIds,
+        CancellationToken cancellationToken)
+    {
+        var productIds = wbProductIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (productIds.Count == 0)
+            return new Dictionary<string, ProductDetails>(StringComparer.Ordinal);
+
+        var rows = await _dbContext.ParserProductDetailRows
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId))
+            .OrderByDescending(x => x.ParsedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x =>
+                {
+                    var row = x.First();
+                    return new ProductDetails(
+                        row.Description,
+                        row.Characteristics?.RootElement.Clone());
+                },
+                StringComparer.Ordinal);
+    }
+
+    private async Task<IReadOnlyDictionary<string, ReviewQuality>> LoadReviewQualityByWbProductIdAsync(
+        IReadOnlyCollection<string> wbProductIds,
+        CancellationToken cancellationToken)
+    {
+        var productIds = wbProductIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (productIds.Count == 0)
+            return new Dictionary<string, ReviewQuality>(StringComparer.Ordinal);
+
+        var rows = await _dbContext.ParserReviewRows
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId))
+            .Select(x => new { x.WbProductId, x.Rating })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x =>
+                {
+                    var rated = x.Where(row => row.Rating.HasValue).ToList();
+                    return new ReviewQuality(
+                        rated.Count(row => row.Rating >= 4),
+                        rated.Count);
+                },
+                StringComparer.Ordinal);
     }
 
     private async Task<IReadOnlyDictionary<string, MarketProductDeliveryProfileDto>> LoadDeliveryProfilesByWbProductIdAsync(
@@ -809,15 +1015,21 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             null,
             ToInt(history.Stock.Current) ?? product.TotalQuantity,
             history.LatestObservedAtUtc,
-            Description: null,
-            Characteristics: null,
-            ImageCount: null,
+            Description: product.Description,
+            Characteristics: ParseJsonElement(product.CharacteristicsJson),
+            ImageCount: product.SourceType == WorkspaceMarketProduct.DemoSourceType && product.ThumbnailUrl is not null ? 1 : null,
             ReviewSignals: null,
-            DeliveryProfile: deliveryProfile);
+            DeliveryProfile: deliveryProfile,
+            SourceType: product.SourceType,
+            CostPrice: product.CostPrice,
+            SupplierName: product.SupplierName,
+            SupplierUrl: product.SupplierUrl);
 
     private static MarketProductFeatureDto BuildFeature(
         ParserProductRow row,
-        MarketProductDeliveryProfileDto? deliveryProfile) =>
+        MarketProductDeliveryProfileDto? deliveryProfile,
+        ReviewQuality? reviewQuality = null,
+        ProductDetails? details = null) =>
         new(
             $"parser:{row.Id:N}",
             row.WbProductId,
@@ -839,11 +1051,14 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
             null,
             row.TotalQuantity,
             row.ParsedAtUtc,
-            Description: null,
-            Characteristics: null,
+            Description: details?.Description,
+            Characteristics: details?.Characteristics,
             ImageCount: row.ImageCount,
             ReviewSignals: null,
-            DeliveryProfile: deliveryProfile);
+            DeliveryProfile: deliveryProfile,
+            SourceType: WorkspaceMarketProduct.ParserSourceType,
+            PositiveReviewCount: reviewQuality?.PositiveReviewCount,
+            ReviewSampleSize: reviewQuality?.ReviewSampleSize);
 
     private static WorkspaceProductHistoryDto BuildIntelligenceHistory(ProductHistory history) =>
         new(
@@ -1176,6 +1391,22 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
     private static JsonDocument CloneJson(JsonDocument document) =>
         JsonDocument.Parse(document.RootElement.GetRawText());
 
+    private static JsonElement? ParseJsonElement(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static IReadOnlyList<string> DeserializeWarnings(JsonDocument document) =>
         JsonSerializer.Deserialize<IReadOnlyList<string>>(document.RootElement.GetRawText(), JsonOptions) ?? [];
 
@@ -1249,6 +1480,10 @@ public sealed class WorkspaceOverviewService : IWorkspaceOverviewService
         WorkspaceOverviewChangeDto ReviewRating);
 
     private sealed record CandidateFeature(ParserProductRow Row, MarketProductFeatureDto Feature, int? Position);
+
+    private sealed record ReviewQuality(int PositiveReviewCount, int ReviewSampleSize);
+
+    private sealed record ProductDetails(string? Description, JsonElement? Characteristics);
 
     private sealed record DeliveryProfileRow(
         string WbProductId,

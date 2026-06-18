@@ -2,6 +2,7 @@ using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.ParserObservability.Dtos;
 using AshmesMarketplaces.Application.ParserObservability.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AshmesMarketplaces.API.Controllers.V1;
@@ -32,6 +33,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("products")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PagedResponse<ParserProductListItemDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResponse<ParserProductListItemDto>>> GetProducts(
@@ -43,6 +45,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("products/filter-options")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ParserProductFilterOptionsDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ParserProductFilterOptionsDto>> GetProductFilterOptions(
@@ -53,7 +56,32 @@ public sealed class ParserController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("products/demo-card-options")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserDemoCardOptionsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserDemoCardOptionsDto>> GetDemoCardOptions(
+        [FromQuery] bool? includeCharacteristics,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetDemoCardOptionsAsync(includeCharacteristics ?? true, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("products/demo-card-options/characteristics")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserDemoCardCharacteristicsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserDemoCardCharacteristicsDto>> GetDemoCardCharacteristics(
+        [FromQuery] string subcategory,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetDemoCardCharacteristicsAsync(subcategory, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("products/logistics-summary")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ParserProductLogisticsSummaryAggregateDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ParserProductLogisticsSummaryAggregateDto>> GetProductLogisticsSummary(
@@ -65,6 +93,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("logistics/observed-stock-decreases")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ParserObservedStockDecreaseResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ParserObservedStockDecreaseResponse>> GetObservedStockDecreases(
@@ -76,6 +105,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("logistics/observed-events")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ParserObservedMarketEventResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<ParserObservedMarketEventResponse>> GetObservedMarketEvents(
@@ -87,6 +117,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("products/{id:guid}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ParserProductDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -99,6 +130,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("reviews")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PagedResponse<ParserReviewListItemDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResponse<ParserReviewListItemDto>>> GetReviews(
@@ -110,6 +142,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("reviews/{id:guid}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ParserReviewDetailDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
@@ -122,6 +155,7 @@ public sealed class ParserController : ControllerBase
     }
 
     [HttpGet("reviews/{id:guid}/replies")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PagedResponse<ParserReviewReplyDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
