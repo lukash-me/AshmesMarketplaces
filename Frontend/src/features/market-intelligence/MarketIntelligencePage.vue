@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import PageHeader from '@/widgets/PageHeader.vue';
@@ -8,58 +8,60 @@ import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
-import SectionSelector from '@/shared/ui/SectionSelector.vue';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import MarketProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
-import type { ParserProductListItem, ParserProductPosition } from '@/features/parser-products/parserProducts.types';
+import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
 
 import { getPublicMarketIntelligence } from './marketIntelligence.api';
 import type {
-  CompetitorWeakness,
-  ConcentrationLeader,
-  HighPriceVisibleProduct,
-  HighRankLowStockProduct,
-  MarketEvent,
-  PressureSummary,
+  DeliveryBucket,
+  PriceQualityPoint,
   PublicMarketIntelligence,
   PublicMarketIntelligenceParams,
-  RootCluster
+  QualityBucket
 } from './marketIntelligence.types';
 
-type SectionKey = 'events' | 'weaknesses' | 'prices' | 'stock' | 'repeats';
+type ChartPoint = PriceQualityPoint & {
+  x: number;
+  y: number;
+  radius: number;
+  hasRating: boolean;
+};
 
-type EventGroup = {
+type CorridorProductDot = {
   key: string;
-  title: string;
-  description: string;
-  events: MarketEvent[];
+  left: number;
 };
 
-type DeltaView = {
+type CorridorDistributionPoint = {
+  x: number;
+  y: number;
+};
+
+type CorridorMarkerKey = 'p25' | 'median' | 'p75';
+
+type CorridorMarkerLayout = {
+  key: CorridorMarkerKey;
   label: string;
-  tone: 'positive' | 'negative' | 'neutral';
-};
-
-type ProductLike = {
-  wbProductId: string;
-  wbRootId?: string | null;
-  productRowId: string | null;
-  thumbnailUrl: string | null;
-  productName: string | null;
-  brandName: string | null;
-  sellerName: string | null;
-  position?: number;
-  currentPrice?: number | null;
-  stock?: { status: string; value: number | null };
-  afterValue?: string | null;
+  value: number | null | undefined;
+  left: number;
+  level: number;
+  tone: 'boundary' | 'median';
 };
 
 const defaultRegionDest = '12354108';
 const defaultSort = 'popular';
-const collapsedEventCount = 4;
-const topNOptions = [50, 100, 300, 1000];
-const sectionKeys: SectionKey[] = ['events', 'weaknesses', 'prices', 'stock', 'repeats'];
+const legacyTopN = 1000;
+const chartWidth = 1000;
+const chartHeight = 560;
+const plot = {
+  left: 74,
+  right: 958,
+  top: 40,
+  bottom: 404,
+  noRatingY: 462
+};
 
 const demoContexts = [
   {
@@ -82,26 +84,17 @@ const demoContexts = [
   }
 ] as const;
 
-const sections: Array<{ key: SectionKey; label: string }> = [
-  { key: 'events', label: 'События' },
-  { key: 'weaknesses', label: 'Зоны для проверки' },
-  { key: 'prices', label: 'Скидки и цены' },
-  { key: 'stock', label: 'Остатки' },
-  { key: 'repeats', label: 'Повторы' }
-];
-
 const route = useRoute();
 const router = useRouter();
 
 const selectedSubcategory = ref(readInitialSubcategory());
-const selectedTopN = ref(readInitialTopN());
-const activeSection = ref<SectionKey>(readInitialSection());
-const expandedEventGroups = ref<string[]>([]);
-const activeEventGroupKey = ref<string | null>(null);
 const intelligence = ref<PublicMarketIntelligence | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
+const activePoint = ref<ChartPoint | null>(null);
 const selectedProduct = ref<ParserProductListItem | null>(null);
+const chartCanvas = ref<HTMLCanvasElement | null>(null);
+let pointerFrame: number | null = null;
 
 const selectedContext = computed(
   () => demoContexts.find((context) => context.sourceSubcategory === selectedSubcategory.value) ?? demoContexts[0]
@@ -113,739 +106,692 @@ const requestParams = computed<PublicMarketIntelligenceParams>(() => ({
   query: selectedContext.value.query,
   sourceRegionDest: readStringQuery('sourceRegionDest') ?? defaultRegionDest,
   sort: readStringQuery('sort') ?? defaultSort,
-  topN: selectedTopN.value,
+  topN: legacyTopN,
   latestRankRunId: readStringQuery('latestRankRunId'),
   baselineRankRunId: readStringQuery('baselineRankRunId'),
   latestProductRunId: readStringQuery('latestProductRunId'),
   baselineProductRunId: readStringQuery('baselineProductRunId')
 }));
 
-const topLabel = computed(() => `Топ-${intelligence.value?.context.topN ?? selectedTopN.value}`);
-
-const promoSummaries = computed(() =>
-  (intelligence.value?.promoPressure.summaries ?? []).filter((summary) => !isWalletSummary(summary))
-);
-
-const priceSummaries = computed(() =>
-  (intelligence.value?.pricePressure.summaries ?? []).filter((summary) => !isWalletSummary(summary))
-);
-
-const eventGroups = computed<EventGroup[]>(() => {
-  const groups = new Map<string, MarketEvent[]>();
-
-  for (const event of intelligence.value?.events ?? []) {
-    const key = event.type || event.group || 'other';
-    groups.set(key, [...(groups.get(key) ?? []), event]);
-  }
-
-  return [...groups.entries()]
-    .map(([key, events]) => ({
-      key,
-      ...eventGroupCopy(key),
-      events
-    }))
-    .sort((left, right) => eventGroupOrder(left.key) - eventGroupOrder(right.key));
-});
-
-const selectedEventGroup = computed<EventGroup | null>(() => {
-  if (eventGroups.value.length === 0) {
-    return null;
-  }
-
-  return eventGroups.value.find((group) => group.key === activeEventGroupKey.value) ?? eventGroups.value[0] ?? null;
-});
-
-const summaryCards = computed(() => {
-  const data = intelligence.value;
-
+const points = computed(() => intelligence.value?.priceQualityMap.points ?? []);
+const summary = computed(() => intelligence.value?.priceQualityMap.summary ?? null);
+const priceCorridors = computed(() => intelligence.value?.priceCorridors ?? null);
+const marketConcentration = computed(() => intelligence.value?.marketConcentration ?? null);
+const chartPoints = computed<ChartPoint[]>(() => buildChartPoints(points.value));
+const corridorProductDots = computed<CorridorProductDot[]>(() => buildCorridorProductDots(points.value));
+const corridorDistributionPoints = computed<CorridorDistributionPoint[]>(() => buildCorridorDistributionPoints(points.value));
+const corridorDistributionPath = computed(() => buildSmoothDistributionPath(corridorDistributionPoints.value));
+const corridorMarkerLayouts = computed<CorridorMarkerLayout[]>(() => buildCorridorMarkerLayouts());
+const priceRange = computed(() => range(points.value.map((point) => point.price)));
+const chartLegend = computed(() => [
+  { bucket: 'strong' as const, label: 'Сильная карточка', count: summary.value?.strongCount ?? 0 },
+  { bucket: 'medium' as const, label: 'Средняя', count: summary.value?.mediumCount ?? 0 },
+  { bucket: 'weak' as const, label: 'Слабая', count: summary.value?.weakCount ?? 0 },
+  { bucket: 'unknown' as const, label: 'Недостаточно данных', count: summary.value?.unknownCount ?? 0 }
+]);
+const corridorTopMarkers = computed(() => {
+  const data = priceCorridors.value;
   if (!data) {
     return [];
   }
 
-  const medianPrice = priceSummaries.value.find((summary) => summary.type === 'median_current_price');
-  const topSeller = data.concentration.sellerLeaders[0];
+  return [
+    { key: 'top10', label: 'Топ-10', value: data.top10Median },
+    { key: 'top50', label: 'Топ-50', value: data.top50Median },
+    { key: 'top100', label: 'Топ-100', value: data.top100Median }
+  ].filter((marker) => marker.value !== null && marker.value !== undefined);
+});
+const concentrationMetrics = computed(() => {
+  const data = marketConcentration.value;
+  if (!data) {
+    return [];
+  }
 
   return [
-    {
-      label: 'Количество событий',
-      value: formatNumber(data.events.length),
-      detail: data.observationWindow.isComparable ? 'изменения в выбранном топе' : 'нужны данные для сравнения'
-    },
-    {
-      label: 'Медианная цена',
-      value: medianPrice ? formatSummaryValue(medianPrice.currentValue, medianPrice.unit) : '—',
-      detail: medianPrice?.delta != null
-        ? `изменение ${formatSignedNumber(medianPrice.delta, medianPrice.unit)}`
-        : 'ориентир по нише'
-    },
-    {
-      label: 'Низкий остаток',
-      value: formatNumber(data.stockPressure.exactLowStockCount),
-      detail: 'точные низкие остатки'
-    },
-    {
-      label: 'Концентрация',
-      value: topSeller ? `${formatNumber(topSeller.sharePercent)}%` : '—',
-      detail: topSeller ? topSeller.name : 'лидер не выделен'
-    }
+    { label: 'Продавцов', value: formatNumber(data.uniqueSellersCount), detail: 'уникальных в topN' },
+    { label: 'Брендов', value: formatNumber(data.uniqueBrandsCount), detail: 'уникальных в topN' },
+    { label: 'Доля top-5', value: formatPercent(data.top5SellersSharePercent), detail: 'пять крупнейших продавцов' },
+    { label: 'Индекс', value: formatPercent(data.normalizedConcentrationScore), detail: '0% фрагментирован, 100% занят лидерами' }
   ];
 });
 
 onMounted(() => {
+  window.addEventListener('resize', handleWindowResize);
   void refresh();
 });
 
-watch(
-  () => route.query.section,
-  (section) => {
-    activeSection.value = normalizeSection(section);
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleWindowResize);
+  if (pointerFrame !== null) {
+    window.cancelAnimationFrame(pointerFrame);
   }
+});
+
+watch(
+  chartPoints,
+  () => {
+    activePoint.value = null;
+    void nextTick(drawChart);
+  },
+  { flush: 'post' }
 );
 
-watch(eventGroups, ensureActiveEventGroup, { immediate: true });
+watch(
+  activePoint,
+  () => {
+    void nextTick(drawChart);
+  },
+  { flush: 'post' }
+);
+
+watch(
+  () => route.hash,
+  () => {
+    void nextTick(scrollToCurrentHash);
+  },
+  { flush: 'post' }
+);
+
+function handleWindowResize(): void {
+  void nextTick(drawChart);
+}
 
 async function refresh(): Promise<void> {
   loading.value = true;
   error.value = null;
+  activePoint.value = null;
 
   try {
     intelligence.value = await getPublicMarketIntelligence(requestParams.value);
-    expandedEventGroups.value = [];
   } catch (requestError) {
     intelligence.value = null;
-    error.value = sanitizeText(getProblemMessage(requestError, 'Не удалось загрузить данные по нише.'));
+    error.value = getProblemMessage(requestError, 'Не удалось загрузить карту ниши.');
   } finally {
     loading.value = false;
   }
+
+  await nextTick();
+  scrollToCurrentHash();
 }
 
-async function applySubcategorySelection(): Promise<void> {
-  const section = defaultSectionForSubcategory(selectedContext.value.sourceSubcategory);
-
-  await router.replace({
-    query: {
-      sourceCategory: selectedContext.value.sourceCategory,
-      sourceSubcategory: selectedContext.value.sourceSubcategory,
-      query: selectedContext.value.query,
-      sourceRegionDest: defaultRegionDest,
-      sort: defaultSort,
-      topN: String(selectedTopN.value),
-      section
-    }
-  });
-
-  activeSection.value = section;
-  await refresh();
-}
-
-async function applyTopNSelection(): Promise<void> {
-  await router.replace({
-    query: {
-      ...route.query,
-      topN: String(selectedTopN.value),
-      section: activeSection.value
-    }
-  });
-
-  await refresh();
-}
-
-function selectSection(section: SectionKey): void {
-  activeSection.value = section;
+function applySubcategorySelection(): void {
   void router.replace({
     query: {
       ...route.query,
-      section
+      sourceSubcategory: selectedSubcategory.value
     }
+  });
+  void refresh();
+}
+
+function scrollToCurrentHash(): void {
+  const hash = route.hash;
+  if (!hash) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    const target = document.querySelector<HTMLElement>(hash);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 }
 
-function selectSectionValue(section: string): void {
-  selectSection(normalizeSection(section));
+function buildChartPoints(source: PriceQualityPoint[]): ChartPoint[] {
+  const prices = range(source.map((point) => point.price));
+  const minPrice = prices.min ?? 0;
+  const maxPrice = prices.max ?? 1;
+  const priceSpan = Math.max(1, maxPrice - minPrice);
+
+  return source.map((point) => {
+    const hasRating = point.rating !== null && point.rating > 0;
+    const normalizedPrice = point.price === null ? 0 : (point.price - minPrice) / priceSpan;
+    const clampedRating = hasRating ? Math.min(5, Math.max(0, point.rating ?? 0)) : 0;
+
+    return {
+      ...point,
+      x: plot.left + normalizedPrice * (plot.right - plot.left),
+      y: hasRating
+        ? plot.bottom - (clampedRating / 5) * (plot.bottom - plot.top)
+        : plot.noRatingY,
+      radius: pointRadius(),
+      hasRating
+    };
+  });
 }
 
-function selectEventGroup(key: string): void {
-  activeEventGroupKey.value = key;
+function buildCorridorProductDots(source: PriceQualityPoint[]): CorridorProductDot[] {
+  const pricedPoints = source.filter((point) => typeof point.price === 'number');
+  const maxDots = 900;
+  const step = Math.max(1, Math.ceil(pricedPoints.length / maxDots));
+  const dots: CorridorProductDot[] = [];
+
+  for (let index = 0; index < pricedPoints.length; index += step) {
+    const point = pricedPoints[index];
+    dots.push({
+      key: `${point.wbProductId}-${index}`,
+      left: corridorPosition(point.price)
+    });
+  }
+
+  return dots;
 }
 
-function ensureActiveEventGroup(): void {
-  if (eventGroups.value.length === 0) {
-    activeEventGroupKey.value = null;
+function buildCorridorDistributionPoints(source: PriceQualityPoint[]): CorridorDistributionPoint[] {
+  const prices = source
+    .map((point) => point.price)
+    .filter((price): price is number => typeof price === 'number');
+
+  if (prices.length === 0) {
+    return [];
+  }
+
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const span = Math.max(1, max - min);
+  const bucketCount = 28;
+  const counts = Array.from({ length: bucketCount }, () => 0);
+
+  for (const price of prices) {
+    const index = Math.min(bucketCount - 1, Math.max(0, Math.floor(((price - min) / span) * bucketCount)));
+    counts[index] += 1;
+  }
+
+  const smoothed = counts.map((count, index) => {
+    const previous = counts[index - 1] ?? count;
+    const next = counts[index + 1] ?? count;
+    return previous * 0.25 + count * 0.5 + next * 0.25;
+  });
+  const maxCount = Math.max(...smoothed, 1);
+
+  return smoothed.map((count, index) => ({
+    x: (index / (bucketCount - 1)) * 100,
+    y: 88 - (count / maxCount) * 72
+  }));
+}
+
+function buildSmoothDistributionPath(points: CorridorDistributionPoint[]): string {
+  if (points.length === 0) {
+    return '';
+  }
+
+  const [first, ...rest] = points;
+  let path = `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`;
+
+  for (let index = 0; index < rest.length; index += 1) {
+    const current = rest[index];
+    const next = rest[index + 1];
+
+    if (!next) {
+      path += ` L ${current.x.toFixed(2)} ${current.y.toFixed(2)}`;
+      continue;
+    }
+
+    const midX = (current.x + next.x) / 2;
+    const midY = (current.y + next.y) / 2;
+    path += ` Q ${current.x.toFixed(2)} ${current.y.toFixed(2)} ${midX.toFixed(2)} ${midY.toFixed(2)}`;
+  }
+
+  return path;
+}
+
+function pointRadius(): number {
+  return 2.35;
+}
+
+function openProduct(point: PriceQualityPoint): void {
+  if (!point.productRowId) {
     return;
   }
 
-  if (eventGroups.value.some((group) => group.key === activeEventGroupKey.value)) {
-    return;
-  }
-
-  activeEventGroupKey.value =
-    eventGroups.value.find((group) => group.key === 'sharp_position_move')?.key ?? eventGroups.value[0]?.key ?? null;
-}
-
-function eventGroupButtonLabel(group: EventGroup): string {
-  const labels: Record<string, string> = {
-    sharp_position_move: 'Изменения позиций',
-    entered_checked_range: 'Вошли в топ',
-    left_checked_range: 'Вышли из топа'
-  };
-
-  return labels[group.key] ?? group.title;
-}
-
-function toggleEventGroup(key: string): void {
-  expandedEventGroups.value = isEventGroupExpanded(key)
-    ? expandedEventGroups.value.filter((item) => item !== key)
-    : [...expandedEventGroups.value, key];
-}
-
-function isEventGroupExpanded(key: string): boolean {
-  return expandedEventGroups.value.includes(key);
-}
-
-function visibleGroupEvents(group: EventGroup): MarketEvent[] {
-  return isEventGroupExpanded(group.key)
-    ? group.events
-    : group.events.slice(0, visibleCollapsedCount(group));
-}
-
-function hasMoreEvents(group: EventGroup): boolean {
-  return group.events.length > visibleCollapsedCount(group);
-}
-
-function visibleCollapsedCount(group: EventGroup): number {
-  return collapsedEventCount;
-}
-
-function openProduct(item: ProductLike): void {
-  if (!item.productRowId) {
-    return;
-  }
-
-  selectedProduct.value = toParserProductListItem(item);
+  selectedProduct.value = toParserProductListItem(point);
 }
 
 function closeProduct(): void {
   selectedProduct.value = null;
 }
 
-function toParserProductListItem(item: ProductLike): ParserProductListItem {
+function clearActivePoint(): void {
+  activePoint.value = null;
+}
+
+function openActiveProduct(): void {
+  if (activePoint.value) {
+    openProduct(activePoint.value);
+  }
+}
+
+function handleChartPointerMove(event: MouseEvent): void {
+  const canvas = chartCanvas.value;
+  if (!canvas) {
+    return;
+  }
+
+  if (pointerFrame !== null) {
+    window.cancelAnimationFrame(pointerFrame);
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const pointerX = ((event.clientX - rect.left) / rect.width) * chartWidth;
+  const pointerY = ((event.clientY - rect.top) / rect.height) * chartHeight;
+
+  pointerFrame = window.requestAnimationFrame(() => {
+    pointerFrame = null;
+    activePoint.value = findNearestPoint(pointerX, pointerY);
+  });
+}
+
+function findNearestPoint(pointerX: number, pointerY: number): ChartPoint | null {
+  const hitRadius = 8;
+  const hitRadiusSquared = hitRadius * hitRadius;
+  let nearest: ChartPoint | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (const point of chartPoints.value) {
+    const distance = (point.x - pointerX) ** 2 + (point.y - pointerY) ** 2;
+    if (distance <= hitRadiusSquared && distance < nearestDistance) {
+      nearest = point;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}
+
+function drawChart(): void {
+  const canvas = chartCanvas.value;
+  if (!canvas) {
+    return;
+  }
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return;
+  }
+
+  const pixelRatio = window.devicePixelRatio || 1;
+  const containerWidth = canvas.parentElement?.clientWidth ?? chartWidth;
+  const cssWidth = Math.max(720, Math.round(containerWidth));
+  const cssHeight = Math.round((cssWidth / chartWidth) * chartHeight);
+  canvas.width = cssWidth * pixelRatio;
+  canvas.height = cssHeight * pixelRatio;
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+
+  context.setTransform(
+    pixelRatio * (cssWidth / chartWidth),
+    0,
+    0,
+    pixelRatio * (cssHeight / chartHeight),
+    0,
+    0
+  );
+  context.clearRect(0, 0, chartWidth, chartHeight);
+  drawChartFrame(context);
+
+  for (const point of chartPoints.value) {
+    drawChartPoint(context, point, activePoint.value?.wbProductId === point.wbProductId);
+  }
+}
+
+function drawChartFrame(context: CanvasRenderingContext2D): void {
+  const ratingTicks = [0, 1, 2, 3, 4, 5];
+  const priceTicks = [0, 0.25, 0.5, 0.75, 1];
+  const minPrice = priceRange.value.min ?? 0;
+  const maxPrice = priceRange.value.max ?? minPrice;
+  const priceSpan = maxPrice - minPrice;
+
+  context.fillStyle = '#f8fafc';
+  context.strokeStyle = '#d7dee8';
+  context.lineWidth = 1;
+  context.fillRect(plot.left, plot.top, plot.right - plot.left, plot.bottom - plot.top);
+  context.strokeRect(plot.left, plot.top, plot.right - plot.left, plot.bottom - plot.top);
+
+  context.save();
+  context.globalAlpha = 0.72;
+  context.fillStyle = '#f1f5f9';
+  roundedRect(context, plot.left, 424, plot.right - plot.left, 66, 8);
+  context.fill();
+  context.restore();
+
+  context.strokeStyle = '#d7dee8';
+  context.lineWidth = 1;
+  for (const rating of ratingTicks.slice(1)) {
+    const y = plot.bottom - (rating / 5) * (plot.bottom - plot.top);
+    line(context, plot.left, y, plot.right, y);
+  }
+  for (const step of priceTicks) {
+    const x = plot.left + step * (plot.right - plot.left);
+    line(context, x, plot.top, x, 490);
+  }
+
+  context.strokeStyle = '#64748b';
+  context.lineWidth = 1.25;
+  line(context, plot.left, plot.bottom, plot.right, plot.bottom);
+  line(context, plot.left, plot.top, plot.left, 490);
+
+  context.fillStyle = '#475569';
+  context.font = '700 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.textBaseline = 'middle';
+  context.textAlign = 'right';
+  for (const rating of ratingTicks) {
+    const y = plot.bottom - (rating / 5) * (plot.bottom - plot.top);
+    context.fillText(rating === 0 ? '0' : formatRating(rating), plot.left - 12, y);
+  }
+  context.textAlign = 'left';
+  context.fillText('Нет рейтинга', plot.left - 58, 466);
+
+  context.textAlign = 'center';
+  for (const step of priceTicks) {
+    const x = plot.left + step * (plot.right - plot.left);
+    const price = minPrice + priceSpan * step;
+    context.fillText(formatMoney(price), x, 502);
+  }
+
+  context.font = '800 11px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  context.textAlign = 'center';
+  context.fillText('Цена', (plot.left + plot.right) / 2, 526);
+  context.save();
+  context.translate(24, (plot.top + plot.bottom) / 2);
+  context.rotate(-Math.PI / 2);
+  context.fillText('Рейтинг WB', 0, 0);
+  context.restore();
+}
+
+function drawChartPoint(context: CanvasRenderingContext2D, point: ChartPoint, active: boolean): void {
+  context.beginPath();
+  context.arc(point.x, point.y, active ? point.radius + 1.8 : point.radius, 0, Math.PI * 2);
+  context.fillStyle = colorWithAlpha(pointColor(point.qualityBucket), active ? 0.82 : 0.46);
+  context.fill();
+  context.strokeStyle = active ? 'rgba(15, 23, 42, 0.55)' : 'rgba(255, 255, 255, 0.72)';
+  context.lineWidth = active ? 1.4 : 0.6;
+  context.stroke();
+}
+
+function line(context: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number): void {
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+}
+
+function roundedRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
+}
+
+function colorWithAlpha(hex: string, alpha: number): string {
+  const normalized = hex.replace('#', '');
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function toParserProductListItem(point: PriceQualityPoint): ParserProductListItem {
   const current = intelligence.value;
-  const position = positionFromItem(item);
+  const observedAt = current?.observationWindow.latestObservedAtUtc ?? new Date().toISOString();
 
   return {
-    id: item.productRowId!,
+    id: point.productRowId!,
     parserRunId: current?.observationWindow.latestProductRunId ?? '',
-    parsedAtUtc: current?.observationWindow.latestObservedAtUtc ?? new Date().toISOString(),
-    wbProductId: item.wbProductId,
-    wbRootId: item.wbRootId ?? null,
-    name: productTitle(item),
-    brandName: item.brandName,
-    sellerName: item.sellerName,
+    parsedAtUtc: observedAt,
+    wbProductId: point.wbProductId,
+    wbRootId: point.wbRootId,
+    name: productTitle(point),
+    brandName: point.brandName,
+    sellerName: point.sellerName,
     priceRegular: null,
-    priceDiscounted: item.currentPrice ?? null,
+    priceDiscounted: point.price,
     priceWbWallet: null,
     discountPercent: null,
-    totalQuantity: stockValueFromItem(item),
+    totalQuantity: point.stock,
     ratingRounded: null,
-    reviewRating: null,
-    feedbackCount: null,
+    reviewRating: point.rating,
+    feedbackCount: point.feedbackCount,
     sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
     sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
     sourceQuery: current?.context.query ?? selectedContext.value.query,
-    thumbnailUrl: item.thumbnailUrl,
-    rank: position.absolutePosition === null
-      ? null
-      : {
-          absolutePosition: position.absolutePosition,
-          page: Math.max(1, Math.ceil(position.absolutePosition / 100)),
-          positionOnPage: ((position.absolutePosition - 1) % 100) + 1,
-          query: position.query ?? selectedContext.value.query,
-          sourceCategory: position.sourceCategory,
-          sourceSubcategory: position.sourceSubcategory,
-          sourceRegionDest: current?.context.sourceRegionDest ?? defaultRegionDest,
-          sort: current?.context.sort ?? defaultSort,
-          observedAtUtc: position.observedAtUtc ?? current?.observationWindow.latestObservedAtUtc ?? new Date().toISOString(),
-          parserRunId: current?.observationWindow.latestRankRunId ?? '',
-          rankContextId: '',
-          contextsCount: 1
+    thumbnailUrl: point.thumbnailUrl,
+    rank: point.position === null ? null : {
+      absolutePosition: point.position,
+      page: Math.max(1, Math.ceil(point.position / 100)),
+      positionOnPage: ((point.position - 1) % 100) + 1,
+      query: current?.context.query ?? selectedContext.value.query,
+      sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
+      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
+      sourceRegionDest: current?.context.sourceRegionDest ?? defaultRegionDest,
+      sort: current?.context.sort ?? defaultSort,
+      observedAtUtc: observedAt,
+      parserRunId: current?.observationWindow.latestRankRunId ?? '',
+      rankContextId: current?.observationWindow.latestRankRunId ?? '',
+      contextsCount: 1
     },
-    position
+    position: {
+      state: point.position === null ? 'unknown' : 'observed',
+      absolutePosition: point.position,
+      observedRangeLimit: current?.context.topN ?? legacyTopN,
+      query: current?.context.query ?? selectedContext.value.query,
+      sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
+      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
+      observedAtUtc: point.position === null ? null : observedAt
+    }
   };
-}
-
-function positionFromItem(item: ProductLike): ParserProductPosition {
-  const current = intelligence.value;
-  const rawPosition = item.position ?? parseNumber(item.afterValue);
-  const absolutePosition = Number.isFinite(rawPosition) ? Number(rawPosition) : null;
-
-  return {
-    state: absolutePosition === null ? 'unknown' : 'observed',
-    absolutePosition,
-    observedRangeLimit: current?.context.topN ?? selectedTopN.value,
-    query: current?.context.query ?? selectedContext.value.query,
-    sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-    sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
-    observedAtUtc: current?.observationWindow.latestObservedAtUtc ?? null
-  };
-}
-
-function stockValueFromItem(item: ProductLike): number | null {
-  if (item.stock && item.stock.status !== 'unknown') {
-    return item.stock.value;
-  }
-
-  return null;
 }
 
 function readInitialSubcategory(): string {
-  const value = readStringQuery('sourceSubcategory');
-
-  return demoContexts.some((context) => context.sourceSubcategory === value)
-    ? value!
+  const raw = readStringQuery('sourceSubcategory');
+  return demoContexts.some((context) => context.sourceSubcategory === raw)
+    ? raw!
     : demoContexts[0].sourceSubcategory;
 }
 
-function readInitialTopN(): number {
-  const raw = readStringQuery('topN');
-  const parsed = raw ? Number(raw) : 100;
-
-  return topNOptions.includes(parsed) ? parsed : 100;
-}
-
-function readInitialSection(): SectionKey {
-  return normalizeSection(route.query.section);
-}
-
-function normalizeSection(value: unknown): SectionKey {
-  const raw = Array.isArray(value) ? value[0] : value;
-  return typeof raw === 'string' && sectionKeys.includes(raw as SectionKey)
-    ? raw as SectionKey
-    : 'events';
-}
-
-function defaultSectionForSubcategory(sourceSubcategory: string): SectionKey {
-  const sectionsBySubcategory: Record<string, SectionKey> = {
-    'Светильники бра': 'events',
-    'Коврики для ванной': 'weaknesses',
-    'Органайзеры для хранения вещей': 'prices'
-  };
-
-  return sectionsBySubcategory[sourceSubcategory] ?? 'events';
-}
-
-function readStringQuery(key: string): string | undefined {
+function readStringQuery(key: string): string | null {
   const value = route.query[key];
-
   if (Array.isArray(value)) {
-    return value[0] ?? undefined;
+    return value[0] ?? null;
   }
 
-  return typeof value === 'string' && value.trim() ? value : undefined;
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
-function eventGroupCopy(type: string): { title: string; description: string } {
-  const top = topLabel.value;
-  const copy: Record<string, { title: string; description: string }> = {
-    entered_checked_range: {
-      title: 'Вошли в топ',
-      description: `Появились в выбранном ${top} по этой нише.`
-    },
-    left_checked_range: {
-      title: 'Вышли из топа',
-      description: `Были в выбранном ${top}, но сейчас не попали в него.`
-    },
-    sharp_position_move: {
-      title: 'Изменения позиций',
-      description: 'Карточки с сильным изменением видимости за период сравнения.'
-    },
-    visible_price_change: {
-      title: 'Цена изменилась',
-      description: 'У этих карточек изменилась видимая текущая цена.'
-    },
-    visible_discount_change: {
-      title: 'Скидка изменилась',
-      description: 'Изменился факт видимого снижения цены относительно регулярной цены.'
-    }
-  };
-
-  return copy[type] ?? {
-    title: 'Другие изменения',
-    description: 'Дополнительные изменения, найденные в выбранной нише.'
-  };
-}
-
-function eventGroupOrder(type: string): number {
-  const order: Record<string, number> = {
-    sharp_position_move: 0,
-    entered_checked_range: 1,
-    left_checked_range: 2,
-    visible_price_change: 3,
-    visible_discount_change: 4
-  };
-
-  return order[type] ?? 10;
-}
-
-function eventCurrentLabel(event: MarketEvent): string {
-  if (event.type === 'left_checked_range') {
-    return 'вне топа';
+function range(values: Array<number | null | undefined>): { min: number | null; max: number | null } {
+  const numeric = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (numeric.length === 0) {
+    return { min: null, max: null };
   }
-
-  if (event.type === 'entered_checked_range' || event.type === 'sharp_position_move') {
-    return positionText(event.afterValue);
-  }
-
-  return sanitizeText(event.afterValue) || '—';
-}
-
-function eventPreviousLabel(event: MarketEvent): string {
-  if (event.type === 'entered_checked_range') {
-    return 'раньше вне топа';
-  }
-
-  if (event.type === 'left_checked_range' || event.type === 'sharp_position_move') {
-    return event.beforeValue ? `было ${shortPositionText(event.beforeValue)}` : '';
-  }
-
-  return event.beforeValue ? `было ${sanitizeText(event.beforeValue)}` : '';
-}
-
-function shortPositionText(value: string | number | null | undefined): string {
-  const position = parseNumber(value);
-  return position === null ? '—' : `#${formatNumber(position)}`;
-}
-
-function eventDelta(event: MarketEvent): DeltaView | null {
-  const before = parseNumber(event.beforeValue);
-  const after = parseNumber(event.afterValue);
-
-  if (event.type === 'sharp_position_move' && before !== null && after !== null) {
-    return positionDeltaView(before, after);
-  }
-
-  if (event.type === 'visible_price_change' && before !== null && after !== null) {
-    return deltaView(after - before, '₽');
-  }
-
-  if (event.type === 'visible_discount_change') {
-    if (event.beforeValue === event.afterValue) {
-      return deltaView(0, '');
-    }
-
-    return {
-      label: event.afterValue === 'есть' ? '+ снижение цены' : '- снижение цены',
-      tone: event.afterValue === 'есть' ? 'positive' : 'negative'
-    };
-  }
-
-  return null;
-}
-
-function weaknessTitle(weakness: CompetitorWeakness): string {
-  const titles: Record<string, string> = {
-    weak_trust_strong_visibility: 'Видимость сильная, доверие слабее ниши',
-    high_position_low_reviews: 'Отзывов меньше медианы',
-    high_position_low_rating: 'Рейтинг ниже медианы',
-    high_position_low_stock: 'Низкий остаток',
-    high_price_vs_median: 'Цена выше медианы'
-  };
-
-  return titles[weakness.type] ?? sanitizeText(weakness.title);
-}
-
-function weaknessDelta(weakness: CompetitorWeakness): DeltaView | null {
-  const metric = parseNumber(weakness.metricValue);
-  const reference = parseNumber(weakness.referenceValue);
-
-  if (metric === null || reference === null || reference === 0) {
-    return null;
-  }
-
-  return deltaView(((metric - reference) / reference) * 100, '% от медианы');
-}
-
-function weaknessMetricValue(weakness: CompetitorWeakness): string {
-  const metric = parseNumber(weakness.metricValue);
-
-  if (metric === null) {
-    return weakness.metricValue ?? '—';
-  }
-
-  if (weakness.type === 'high_price_vs_median') {
-    return formatMoney(metric);
-  }
-
-  if (weakness.type === 'high_position_low_reviews' || weakness.type === 'weak_trust_strong_visibility') {
-    return `${formatNumber(metric)} отзывов`;
-  }
-
-  if (weakness.type === 'high_position_low_stock') {
-    return `${formatNumber(metric)} ${stockWord(metric)} осталось`;
-  }
-
-  if (weakness.type === 'high_position_low_rating') {
-    return `${formatNumber(metric)} рейтинг`;
-  }
-
-  return `${formatNumber(metric)} значение`;
-}
-
-function weaknessReferenceValue(weakness: CompetitorWeakness): string {
-  const reference = parseNumber(weakness.referenceValue);
-
-  if (reference === null) {
-    return weakness.referenceValue ? `медиана: ${weakness.referenceValue}` : 'медиана: —';
-  }
-
-  if (weakness.type === 'high_price_vs_median') {
-    return `медиана цены: ${formatMoney(reference)}`;
-  }
-
-  if (weakness.type === 'high_position_low_reviews' || weakness.type === 'weak_trust_strong_visibility') {
-    return `медиана отзывов: ${formatNumber(reference)}`;
-  }
-
-  if (weakness.type === 'high_position_low_stock') {
-    return `медиана остатка: ${formatNumber(reference)} ${stockWord(reference)}`;
-  }
-
-  if (weakness.type === 'high_position_low_rating') {
-    return `медиана рейтинга: ${formatNumber(reference)}`;
-  }
-
-  return `медиана: ${formatNumber(reference)}`;
-}
-
-function refreshButtonLabel(): string {
-  return loading.value ? 'Обновляем' : 'Обновить';
-}
-
-function highPriceDelta(product: HighPriceVisibleProduct): DeltaView | null {
-  if (product.currentPrice === null || product.referencePrice === null || product.referencePrice === 0) {
-    return null;
-  }
-
-  return deltaView(((product.currentPrice - product.referencePrice) / product.referencePrice) * 100, '% от медианы');
-}
-
-function positionText(value: string | number | null | undefined): string {
-  if (value === null || value === undefined || value === '') {
-    return 'Позиция —';
-  }
-
-  return `Позиция #${value}`;
-}
-
-function productTitle(item: { productName: string | null; wbProductId: string }): string {
-  return item.productName?.trim() || `Карточка WB ${item.wbProductId}`;
-}
-
-function brandSeller(item: { brandName: string | null; sellerName: string | null }): string {
-  return [item.brandName, item.sellerName].filter(Boolean).join(' · ') || 'Бренд и продавец не указаны';
-}
-
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) {
-    return '—';
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return '—';
-  }
-
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date);
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value);
-}
-
-function stockWord(value: number): string {
-  const rounded = Math.abs(Math.trunc(value));
-  const lastTwo = rounded % 100;
-  const last = rounded % 10;
-
-  if (lastTwo >= 11 && lastTwo <= 14) {
-    return 'товаров';
-  }
-
-  if (last === 1) {
-    return 'товар';
-  }
-
-  if (last >= 2 && last <= 4) {
-    return 'товара';
-  }
-
-  return 'товаров';
-}
-
-function formatMoney(value: number | null): string {
-  return value === null
-    ? '—'
-    : `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value)} ₽`;
-}
-
-function formatSummaryValue(value: number | null, unit: string): string {
-  if (value === null) {
-    return '—';
-  }
-
-  const safeUnit = normalizeUnit(unit);
-  return `${formatNumber(value)}${safeUnit ? ` ${safeUnit}` : ''}`;
-}
-
-function formatSignedNumber(value: number | null, unit: string): string {
-  if (value === null) {
-    return '—';
-  }
-
-  const safeUnit = normalizeUnit(unit);
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${formatNumber(value)}${safeUnit ? ` ${safeUnit}` : ''}`;
-}
-
-function deltaView(value: number, unit: string): DeltaView {
-  const rounded = Math.abs(value) >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-  const separator = unit.startsWith('%') ? '' : ' ';
-  const label = `${rounded > 0 ? '+' : ''}${formatNumber(rounded)}${unit ? `${separator}${unit}` : ''}`;
 
   return {
-    label,
-    tone: rounded > 0 ? 'positive' : rounded < 0 ? 'negative' : 'neutral'
+    min: Math.min(...numeric),
+    max: Math.max(...numeric)
   };
 }
 
-function positionDeltaView(before: number, after: number): DeltaView {
-  const delta = Math.round(Math.abs(after - before));
+function productTitle(point: PriceQualityPoint): string {
+  return point.productName?.trim() || `WB ${point.wbProductId}`;
+}
 
-  if (delta === 0) {
-    return {
-      label: 'без изменений',
-      tone: 'neutral'
-    };
-  }
+function brandSeller(point: PriceQualityPoint): string {
+  return [point.brandName || 'Бренд не указан', point.sellerName || 'Продавец не указан'].join(' · ');
+}
 
-  const movedUp = after < before;
-
+function qualityLabel(bucket: QualityBucket): string {
   return {
-    label: `${movedUp ? '↑' : '↓'} ${formatNumber(delta)} мест`,
-    tone: movedUp ? 'positive' : 'negative'
-  };
+    strong: 'Сильная',
+    medium: 'Средняя',
+    weak: 'Слабая',
+    unknown: 'Недостаточно данных'
+  }[bucket];
 }
 
-function parseNumber(value: string | null | undefined): number | null {
-  if (!value) {
-    return null;
+function deliveryLabel(bucket: DeliveryBucket): string {
+  return {
+    fast: 'быстрая доставка',
+    medium: 'средняя доставка',
+    slow: 'долгая доставка',
+    unknown: 'доставка не рассчитана'
+  }[bucket];
+}
+
+function pointColor(bucket: QualityBucket): string {
+  return {
+    strong: '#008060',
+    medium: '#CC8B08',
+    weak: '#AC0E28',
+    unknown: '#64748B'
+  }[bucket];
+}
+
+function formatMoney(value: number | null | undefined): string {
+  return typeof value === 'number'
+    ? `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value)} ₽`
+    : '—';
+}
+
+function formatNumber(value: number | null | undefined): string {
+  return typeof value === 'number'
+    ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value)
+    : '—';
+}
+
+function formatRating(value: number | null | undefined): string {
+  return typeof value === 'number'
+    ? new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
+    : '—';
+}
+
+function formatPercent(value: number | null | undefined): string {
+  return typeof value === 'number'
+    ? `${new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(value)}%`
+    : '—';
+}
+
+function formatConcentrationIndex(value: number | null | undefined): string {
+  return typeof value === 'number'
+    ? new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(value)
+    : '—';
+}
+
+function concentrationBarStyle(value: number | null | undefined): string {
+  const width = typeof value === 'number' ? Math.min(100, Math.max(0, value)) : 0;
+  return `width: ${width}%`;
+}
+
+function corridorPosition(value: number | null | undefined): number {
+  const data = priceCorridors.value;
+  if (!data || typeof value !== 'number' || typeof data.min !== 'number' || typeof data.max !== 'number') {
+    return 0;
   }
 
-  const normalized = value
-    .replace(/\s/g, '')
-    .replace(',', '.')
-    .match(/-?\d+(\.\d+)?/);
-
-  if (!normalized) {
-    return null;
+  const span = data.max - data.min;
+  if (span <= 0) {
+    return 0;
   }
 
-  const number = Number(normalized[0]);
-  return Number.isFinite(number) ? number : null;
+  return Math.min(100, Math.max(0, ((value - data.min) / span) * 100));
 }
 
-function normalizeUnit(unit: string): string {
-  const safeUnit = sanitizeText(unit).toLowerCase();
+function corridorMarkerLayoutStyle(marker: CorridorMarkerLayout): string {
+  return `left: ${marker.left}%`;
+}
 
-  if (safeUnit.includes('руб')) {
-    return '₽';
+function buildCorridorMarkerLayouts(): CorridorMarkerLayout[] {
+  const data = priceCorridors.value;
+  if (!data) {
+    return [];
   }
 
-  if (safeUnit.includes('шт')) {
-    return 'шт.';
+  const markers: CorridorMarkerLayout[] = [
+    {
+      key: 'p25',
+      label: 'P25',
+      value: data.p25,
+      left: corridorPosition(data.p25),
+      level: 0,
+      tone: 'boundary'
+    },
+    {
+      key: 'median',
+      label: 'Медиана',
+      value: data.median,
+      left: corridorPosition(data.median),
+      level: 0,
+      tone: 'median'
+    },
+    {
+      key: 'p75',
+      label: 'P75',
+      value: data.p75,
+      left: corridorPosition(data.p75),
+      level: 0,
+      tone: 'boundary'
+    }
+  ];
+
+  const [p25, median, p75] = markers;
+  const labelGapPercent = 20;
+  const narrowMassSegment = Math.abs(p75.left - p25.left) < labelGapPercent * 1.6;
+  const p25NearMedian = Math.abs(median.left - p25.left) < labelGapPercent;
+  const p75NearMedian = Math.abs(p75.left - median.left) < labelGapPercent;
+
+  if (p25NearMedian || narrowMassSegment) {
+    p25.level = 1;
   }
 
-  return sanitizeText(unit);
-}
-
-function displayPressureTitle(summary: PressureSummary): string {
-  const titles: Record<string, string> = {
-    visible_discount_share: 'Карточки со снижением цены',
-    median_current_price: 'Медианная текущая цена',
-    median_regular_price: 'Медианная регулярная цена',
-    leader_price_drops: 'Снижения цены среди заметных карточек'
-  };
-
-  return titles[summary.type] ?? sanitizeText(summary.title);
-}
-
-function displayPressureDescription(summary: PressureSummary): string {
-  const descriptions: Record<string, string> = {
-    visible_discount_share: 'Доля карточек, у которых текущая цена ниже регулярной.',
-    median_current_price: 'Ориентир по текущим видимым ценам в выбранном топе.',
-    median_regular_price: 'Ориентир по регулярным ценам, где они доступны.',
-    leader_price_drops: 'Карточки, у которых цена стала ниже за период сравнения.'
-  };
-
-  return descriptions[summary.type] ?? sanitizeText(summary.description);
-}
-
-function isWalletSummary(summary: PressureSummary): boolean {
-  const text = `${summary.type} ${summary.title} ${summary.description}`.toLowerCase();
-  return text.includes('wallet') || text.includes('wb-') || text.includes('wb ') || text.includes('кошел');
-}
-
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    exact: 'точное значение',
-    capped: 'с верхней границей',
-    unknown: 'нет данных'
-  };
-
-  return labels[status] ?? 'нет данных';
-}
-
-function severityTone(severity: string): 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'ember' {
-  return severity === 'low' ? 'neutral' : 'ember';
-}
-
-function concentrationWidth(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0%';
+  if (p75NearMedian || narrowMassSegment) {
+    p75.level = narrowMassSegment && p25.level === 1 ? 2 : 1;
   }
 
-  return `${Math.min(100, Math.max(1, value))}%`;
+  return markers;
 }
 
-function clusterSummary(cluster: RootCluster): string {
-  return `${cluster.productCount} карточек · лучшая позиция ${positionText(cluster.bestPosition)}`;
+function corridorDotStyle(dot: CorridorProductDot): string {
+  return `left: ${dot.left}%`;
 }
 
-function sanitizeText(value: string | null | undefined): string {
-  if (!value) {
-    return '';
+function corridorBoxStyle(): string {
+  const left = corridorPosition(priceCorridors.value?.p25);
+  const right = corridorPosition(priceCorridors.value?.p75);
+  const width = Math.max(0, right - left);
+  return `left: ${left}%; width: ${width}%; --corridor-box-center: ${left + width / 2}%`;
+}
+
+function corridorSegmentRange(fromPrice: number | null, toPrice: number | null): string {
+  if (fromPrice === null && toPrice === null) {
+    return '—';
   }
 
-  return value
-    .replace(/публичн[а-я\s-]*наблюдени[а-я]*/gi, 'текущих данных')
-    .replace(/сопоставим[а-я\s-]*наблюдени[а-я]*/gi, 'данные для сравнения')
-    .replace(/наблюдени[а-я]*/gi, 'данные')
-    .replace(/сопоставлени[а-я]*/gi, 'сравнение')
-    .replace(/сопоставим[а-я]*/gi, 'сравнимые')
-    .replace(/проверенн[а-я\s-]*диапазон[а-я]*/gi, 'выбранном топе')
-    .replace(/промо-признак[а-я-]*/gi, 'скидки и цены')
-    .replace(/parser|parsed|parsing|staged|staging|root-scoped|payload|attribution/gi, '')
-    .replace(/парсер|парсинг|спаршенный/gi, '')
-    .replace(/campaign|рекламная кампания|бюджет|ставка|CPC|CTR|DRR/gi, '')
-    .replace(/прибыль|маржа|спрос|рост спроса|гарантия|hot product|рекомендаци[а-я]*/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  if (fromPrice === null) {
+    return `до ${formatMoney(toPrice)}`;
+  }
+
+  if (toPrice === null) {
+    return `от ${formatMoney(fromPrice)}`;
+  }
+
+  return `${formatMoney(fromPrice)} – ${formatMoney(toPrice)}`;
+}
+
+function pointStyle(point: ChartPoint): string {
+  return [
+    `left: ${(point.x / chartWidth) * 100}%`,
+    `top: ${(point.y / chartHeight) * 100}%`
+  ].join(';');
 }
 </script>
 
@@ -853,7 +799,7 @@ function sanitizeText(value: string | null | undefined): string {
   <div class="market-intelligence">
     <PageHeader
       title="Маркетинговая разведка"
-      subtitle="Следите за изменениями в нише: видимость, цены, остатки и зоны для проверки."
+      subtitle="Карта ниши показывает, как актуальные товары распределены по цене, рейтингу и качеству карточки."
     />
 
     <section class="mi-controls app-surface">
@@ -867,413 +813,350 @@ function sanitizeText(value: string | null | undefined): string {
           </select>
         </label>
 
-        <label class="mi-field mi-field--short app-select-field">
-          <span>{{ topLabel }}</span>
-          <select v-model.number="selectedTopN" class="app-select" @change="applyTopNSelection">
-            <option v-for="option in topNOptions" :key="option" :value="option">Топ-{{ option }}</option>
-          </select>
-          <small>Количество позиций выдачи, которые сравниваются в этой нише.</small>
-        </label>
-
-        <Button class="mi-refresh" variant="primary" :loading="loading" @click="refresh">{{ refreshButtonLabel() }}</Button>
+        <Button class="mi-refresh" variant="primary" :loading="loading" @click="refresh">Обновить карту</Button>
       </div>
-
     </section>
 
-    <LoadingState v-if="loading && !intelligence" label="Загружаем данные по нише..." />
+    <LoadingState v-if="loading && !intelligence" label="Строим карту ниши..." />
 
-    <EmptyState v-else-if="error" title="Данные не загружены" :description="error" />
+    <EmptyState v-else-if="error" title="Карта не загружена" :description="error" />
 
     <template v-else-if="intelligence">
-      <section class="mi-summary-grid">
-        <article v-for="card in summaryCards" :key="card.label" class="mi-summary app-surface">
-          <span>{{ card.label }}</span>
-          <strong>{{ card.value }}</strong>
-          <p>{{ card.detail }}</p>
-        </article>
-      </section>
+      <section
+        id="price-corridors"
+        class="price-corridors app-surface app-operator-panel"
+        :class="{ 'price-corridors--loading': loading }"
+      >
+        <div v-if="loading" class="price-corridors__loading" aria-live="polite">
+          <span class="quality-map__loader" />
+          <strong>Обновляем ценовые коридоры...</strong>
+        </div>
 
-      <SectionSelector
-        :items="sections"
-        :model-value="activeSection"
-        aria-label="Разделы маркетинговой разведки"
-        @update:model-value="selectSectionValue"
-      />
-
-      <section v-if="activeSection === 'events'" class="mi-section app-surface app-operator-panel">
-        <header class="mi-section__header">
+        <header class="price-corridors__header">
           <div>
             <h2>
-              <span>Изменения в выбранном топе</span>
-              <HelpTooltip text="Группы карточек, где изменились позиции, цена или скидка." />
+              <span>Ценовые коридоры</span>
+              <HelpTooltip text="Коридоры показывают структуру цен всей выбранной ниши: нижний сегмент, массовый рынок, премиум и положение топа выдачи." />
             </h2>
+            <p>
+              {{
+                priceCorridors?.insight
+                  ?? 'Показываем структуру цен выбранной ниши, когда расчет доступен в ответе аналитики.'
+              }}
+            </p>
+          </div>
+          <div v-if="priceCorridors" class="price-corridors__stats">
+            <span>Выборка: <b>{{ formatNumber(priceCorridors.sampleSize) }}</b></span>
           </div>
         </header>
 
         <EmptyState
-          v-if="eventGroups.length === 0"
-          title="Пока нет событий для выбранной ниши"
-          description="Когда появятся данные для сравнения, здесь будут изменения по карточкам."
+          v-if="!priceCorridors"
+          title="Ценовые коридоры пока недоступны"
+          description="Обновите backend API до версии с расчетом ценовых коридоров или дождитесь ответа аналитики с этим блоком."
         />
-
-        <div v-else class="event-groups">
-          <div class="event-switcher" aria-label="Группы событий">
-            <button
-              v-for="group in eventGroups"
-              :key="group.key"
-              type="button"
-              class="event-switcher__button"
-              :class="{ 'event-switcher__button--active': selectedEventGroup?.key === group.key }"
-              @click="selectEventGroup(group.key)"
-            >
-              <span>{{ eventGroupButtonLabel(group) }}</span>
-              <strong>{{ formatNumber(group.events.length) }}</strong>
-            </button>
-          </div>
-
-          <article v-if="selectedEventGroup" class="event-group app-operator-card">
-            <header class="event-group__header">
-              <div>
-                <h3>
-                  <span>{{ eventGroupButtonLabel(selectedEventGroup) }}</span>
-                  <HelpTooltip :text="selectedEventGroup.description" />
-                </h3>
-              </div>
-              <Badge tone="info">Карточек: {{ formatNumber(selectedEventGroup.events.length) }}</Badge>
-            </header>
-
-            <div v-if="visibleGroupEvents(selectedEventGroup).length" class="product-card-grid">
-              <article
-                v-for="event in visibleGroupEvents(selectedEventGroup)"
-                :key="`${event.type}-${event.wbProductId}-${event.beforeValue}-${event.afterValue}`"
-                class="product-card app-operator-card"
-                :class="{ 'product-card--clickable app-operator-card--interactive': event.productRowId }"
-                :tabindex="event.productRowId ? 0 : undefined"
-                :role="event.productRowId ? 'button' : undefined"
-                @click="openProduct(event)"
-                @keydown.enter.prevent="openProduct(event)"
-                @keydown.space.prevent="openProduct(event)"
-              >
-                <div class="product-card__image">
-                  <MarketProductImage :src="event.thumbnailUrl" :alt="productTitle(event)" />
-                </div>
-                <div class="product-card__body">
-                  <span class="product-card__sku">WB {{ event.wbProductId }}</span>
-                  <h4>{{ productTitle(event) }}</h4>
-                  <p>{{ brandSeller(event) }}</p>
-                  <div class="value-line product-card__wide app-operator-metric">
-                    <strong>{{ eventCurrentLabel(event) }}</strong>
-                    <div v-if="eventPreviousLabel(event) || eventDelta(event)" class="value-line__meta">
-                      <span v-if="eventPreviousLabel(event)">{{ eventPreviousLabel(event) }}</span>
-                      <span
-                        v-if="eventDelta(event)"
-                        class="delta-chip"
-                        :class="`delta-chip--${eventDelta(event)?.tone}`"
-                      >
-                        {{ eventDelta(event)?.label }}
-                      </span>
-                    </div>
-                  </div>
-                  <p v-if="event.limitations.length" class="product-card__note">
-                    {{ sanitizeText(event.limitations[0]) }}
-                  </p>
-                  <Button
-                    v-if="event.productRowId"
-                    class="product-card__action app-operator-link"
-                    variant="ghost"
-                    @click.stop="openProduct(event)"
-                  >
-                    Подробнее
-                  </Button>
-                  <span v-else class="product-card__disabled">Описание недоступно для этой карточки</span>
-                </div>
-              </article>
-            </div>
-
-            <Button
-              v-if="hasMoreEvents(selectedEventGroup)"
-              class="event-group__toggle"
-              variant="ghost"
-              @click="toggleEventGroup(selectedEventGroup.key)"
-            >
-              {{ isEventGroupExpanded(selectedEventGroup.key) ? 'Свернуть' : 'Показать больше карточек' }}
-            </Button>
-          </article>
-        </div>
-      </section>
-
-      <section v-else-if="activeSection === 'weaknesses'" class="mi-section app-surface app-operator-panel">
-        <header class="mi-section__header">
-          <div>
-            <h2>
-              <span>Зоны для проверки</span>
-              <HelpTooltip text="Карточки, у которых высокая видимость сочетается с заметными слабыми признаками." />
-            </h2>
-          </div>
-        </header>
 
         <EmptyState
-          v-if="intelligence.competitorWeaknesses.length === 0"
-          title="Зоны для проверки не найдены"
-          description="Для выбранной ниши нет данных этого типа."
+          v-else-if="priceCorridors.sampleSize === 0"
+          title="Ценовые коридоры не рассчитаны"
+          :description="priceCorridors.limitations[0] ?? 'В выбранной нише нет товаров с валидной текущей ценой.'"
         />
 
-        <div v-else class="product-card-grid product-card-grid--checks">
-          <article
-            v-for="weakness in intelligence.competitorWeaknesses.slice(0, 12)"
-            :key="`${weakness.type}-${weakness.wbProductId}-${weakness.position}`"
-            class="product-card product-card--check app-operator-card"
-            :class="{ 'product-card--clickable app-operator-card--interactive': weakness.productRowId }"
-            :tabindex="weakness.productRowId ? 0 : undefined"
-            :role="weakness.productRowId ? 'button' : undefined"
-            @click="openProduct(weakness)"
-            @keydown.enter.prevent="openProduct(weakness)"
-            @keydown.space.prevent="openProduct(weakness)"
-          >
-            <div class="product-card__image">
-              <MarketProductImage :src="weakness.thumbnailUrl" :alt="productTitle(weakness)" />
-            </div>
-            <div class="product-card__body">
-              <div class="product-card__top">
-                <Badge :tone="severityTone(weakness.severity)">{{ weaknessTitle(weakness) }}</Badge>
-                <span class="numeric">{{ positionText(weakness.position) }}</span>
-              </div>
-              <span class="product-card__sku">WB {{ weakness.wbProductId }}</span>
-              <h4>{{ productTitle(weakness) }}</h4>
-              <p>{{ brandSeller(weakness) }}</p>
-              <div class="metric-compare product-card__wide app-operator-metric">
-                <div class="metric-compare__current">
-                  <strong>{{ weaknessMetricValue(weakness) }}</strong>
-                  <span
-                    v-if="weaknessDelta(weakness)"
-                    class="delta-chip"
-                    :class="`delta-chip--${weaknessDelta(weakness)?.tone}`"
-                  >
-                    {{ weaknessDelta(weakness)?.label }}
-                  </span>
-                </div>
-                <span class="metric-compare__reference">{{ weaknessReferenceValue(weakness) }}</span>
-              </div>
-              <p class="product-card__note product-card__wide">{{ sanitizeText(weakness.explanation) }}</p>
-              <Button
-                v-if="weakness.productRowId"
-                class="product-card__action app-operator-link"
-                variant="ghost"
-                @click.stop="openProduct(weakness)"
+        <div v-else class="price-corridors__body">
+          <div class="price-corridors__plot" aria-label="Ценовой коридор ниши">
+            <div class="corridor-axis">
+              <svg
+                v-if="corridorDistributionPath"
+                class="corridor-distribution"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                aria-hidden="true"
               >
-                Подробнее
-              </Button>
-              <span v-else class="product-card__disabled">Описание недоступно для этой карточки</span>
+                <path :d="corridorDistributionPath" />
+              </svg>
+              <span class="corridor-rug" aria-hidden="true">
+                <span
+                  v-for="dot in corridorProductDots"
+                  :key="dot.key"
+                  class="corridor-rug__dot"
+                  :style="corridorDotStyle(dot)"
+                />
+              </span>
+              <span class="corridor-axis__line" />
+              <span class="corridor-axis__box" :style="corridorBoxStyle()">
+                <span>Массовый сегмент</span>
+              </span>
+              <span
+                v-for="marker in corridorMarkerLayouts"
+                :key="marker.key"
+                class="corridor-marker"
+                :class="[
+                  marker.tone === 'median' ? 'corridor-marker--median' : 'corridor-marker--boundary',
+                  `corridor-marker--level-${marker.level}`
+                ]"
+                :style="corridorMarkerLayoutStyle(marker)"
+              >
+                <b>{{ marker.label }}</b>
+                <em>{{ formatMoney(marker.value) }}</em>
+              </span>
             </div>
-          </article>
+            <div class="corridor-scale">
+              <span>{{ formatMoney(priceCorridors.min) }}</span>
+              <span />
+              <span />
+              <span>{{ formatMoney(priceCorridors.max) }}</span>
+            </div>
+            <div class="corridor-top-row" aria-label="Положение топа выдачи">
+              <span v-for="marker in corridorTopMarkers" :key="marker.key">
+                <b>{{ marker.label }}</b>
+                {{ formatMoney(marker.value) }}
+              </span>
+            </div>
+          </div>
+
+          <table class="price-corridors__table">
+            <thead>
+              <tr>
+                <th>Сегмент</th>
+                <th>Диапазон цены</th>
+                <th>Товаров</th>
+                <th>Медианный рейтинг</th>
+                <th>Доля</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="segment in priceCorridors.segments" :key="segment.key">
+                <td>{{ segment.title }}</td>
+                <td>{{ corridorSegmentRange(segment.fromPrice, segment.toPrice) }}</td>
+                <td>{{ formatNumber(segment.productsCount) }}</td>
+                <td>{{ formatRating(segment.medianRating) }}</td>
+                <td>{{ formatPercent(segment.sharePercent) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
-      <section v-else-if="activeSection === 'prices'" class="mi-section app-surface app-operator-panel">
-        <header class="mi-section__header">
+      <section id="price-quality" class="quality-map app-surface app-operator-panel" :class="{ 'quality-map--loading': loading }">
+        <div v-if="loading" class="quality-map__loading" aria-live="polite">
+          <span class="quality-map__loader" />
+          <strong>Обновляем карту ниши...</strong>
+        </div>
+
+        <header class="quality-map__header">
           <div>
             <h2>
-              <span>Скидки и ценовое давление</span>
-              <HelpTooltip text="Цены, скидки и отклонения от медианы." />
+              <span>Карта цены и качества</span>
+              <HelpTooltip text="X — цена товара, Y — рейтинг WB. Все точки одинакового размера, цвет показывает качество карточки." />
             </h2>
+            <p>{{ intelligence.priceQualityMap.summary.insight }}</p>
           </div>
-        </header>
-
-        <div class="mi-small-grid">
-          <div
-            v-for="summary in [...promoSummaries, ...priceSummaries]"
-            :key="`${summary.type}-${summary.title}`"
-            class="mi-metric app-operator-card"
-          >
-            <span>{{ displayPressureTitle(summary) }}</span>
-            <strong>{{ formatSummaryValue(summary.currentValue, summary.unit) }}</strong>
+          <div class="quality-map__legend" aria-label="Легенда качества">
             <span
-              v-if="summary.delta !== null"
-              class="delta-chip"
-              :class="`delta-chip--${deltaView(summary.delta, normalizeUnit(summary.unit)).tone}`"
+              v-for="item in chartLegend"
+              :key="item.bucket"
+              class="legend-item"
+              :class="`legend-item--${item.bucket}`"
             >
-              {{ deltaView(summary.delta, normalizeUnit(summary.unit)).label }}
+              {{ item.label }} · {{ formatNumber(item.count) }}
             </span>
-            <p>{{ displayPressureDescription(summary) }}</p>
           </div>
+        </header>
+
+        <EmptyState
+          v-if="chartPoints.length === 0"
+          title="Нет точек для карты"
+          description="Для выбранной ниши пока нет подходящих товаров в проверенной выдаче."
+        />
+
+        <div v-else class="chart-shell">
+          <canvas
+            ref="chartCanvas"
+            class="quality-chart-canvas"
+            :width="chartWidth"
+            :height="chartHeight"
+            role="img"
+            aria-label="Карта цены и качества"
+            @mousemove="handleChartPointerMove"
+            @mouseleave="clearActivePoint"
+            @click="openActiveProduct"
+          />
+
+          <article v-if="activePoint" class="chart-tooltip app-operator-card" :style="pointStyle(activePoint)">
+            <div class="chart-tooltip__media">
+              <MarketProductImage :src="activePoint.thumbnailUrl" :alt="productTitle(activePoint)" />
+            </div>
+            <div class="chart-tooltip__body">
+              <span>WB {{ activePoint.wbProductId }} · {{ activePoint.position !== null ? `#${activePoint.position}` : 'позиция не указана' }}</span>
+              <strong>{{ productTitle(activePoint) }}</strong>
+              <p>{{ brandSeller(activePoint) }}</p>
+              <div class="chart-tooltip__metrics">
+                <span>Цена: <b>{{ formatMoney(activePoint.price) }}</b></span>
+                <span>Рейтинг: <b>{{ formatRating(activePoint.rating) }}</b></span>
+                <span>Отзывы: <b>{{ formatNumber(activePoint.feedbackCount) }}</b></span>
+                <span>Остаток: <b>{{ formatNumber(activePoint.stock) }}</b></span>
+              </div>
+              <div class="chart-tooltip__badges">
+                <Badge :tone="activePoint.qualityBucket === 'strong' ? 'success' : activePoint.qualityBucket === 'weak' ? 'danger' : 'info'">
+                  {{ qualityLabel(activePoint.qualityBucket) }}
+                </Badge>
+                <Badge tone="neutral">{{ deliveryLabel(activePoint.deliveryBucket) }}</Badge>
+              </div>
+              <ul v-if="activePoint.qualityReasons.length">
+                <li v-for="reason in activePoint.qualityReasons.slice(0, 3)" :key="reason">{{ reason }}</li>
+              </ul>
+            </div>
+          </article>
         </div>
 
-        <div v-if="intelligence.pricePressure.highPriceVisibleProducts.length" class="mi-subsection">
-          <h3>Высокая цена и видимость</h3>
-          <div class="compact-product-grid">
-            <article
-              v-for="product in intelligence.pricePressure.highPriceVisibleProducts.slice(0, 8)"
-              :key="product.wbProductId"
-              class="compact-product app-operator-card"
-              :class="{ 'compact-product--clickable app-operator-card--interactive': product.productRowId }"
-              :tabindex="product.productRowId ? 0 : undefined"
-              :role="product.productRowId ? 'button' : undefined"
-              @click="openProduct(product)"
-              @keydown.enter.prevent="openProduct(product)"
-              @keydown.space.prevent="openProduct(product)"
-            >
-              <div class="compact-product__image">
-                <MarketProductImage :src="product.thumbnailUrl" :alt="productTitle(product)" />
-              </div>
-              <div class="compact-product__main">
-                <span class="product-card__sku">WB {{ product.wbProductId }}</span>
-                <strong>{{ productTitle(product) }}</strong>
-                <span>{{ brandSeller(product) }}</span>
-              </div>
-              <div class="compact-product__values">
-                <span>{{ positionText(product.position) }}</span>
-                <div class="compact-product__current">
-                  <strong>{{ formatMoney(product.currentPrice) }}</strong>
-                  <span
-                    v-if="highPriceDelta(product)"
-                    class="delta-chip"
-                    :class="`delta-chip--${highPriceDelta(product)?.tone}`"
-                  >
-                    {{ highPriceDelta(product)?.label }}
-                  </span>
+        <div class="quality-map__notes">
+          <p v-if="intelligence.priceQualityMap.limitations.length">
+            {{ intelligence.priceQualityMap.limitations[0] }}
+          </p>
+          <p>
+            Дорогие сильные точки показывают верхний ориентир ниши. Дешевые слабые точки помогают увидеть сегмент, где конкуренты выигрывают ценой, но проигрывают карточкой.
+          </p>
+        </div>
+      </section>
+
+      <section
+        id="market-concentration"
+        class="market-concentration app-surface app-operator-panel"
+        :class="{ 'market-concentration--loading': loading }"
+      >
+        <div v-if="loading" class="market-concentration__loading" aria-live="polite">
+          <span class="quality-map__loader" />
+          <strong>Обновляем концентрацию рынка...</strong>
+        </div>
+
+        <header class="market-concentration__header">
+          <div>
+            <h2>
+              <span>Концентрация рынка</span>
+              <HelpTooltip text="Показывает, насколько topN выбранной ниши занят крупными продавцами, брендами и повторяющимися root-группами." />
+            </h2>
+            <p>
+              {{
+                marketConcentration?.insight
+                  ?? 'Показываем, фрагментирована ли ниша или значительная часть топа занята несколькими игроками.'
+              }}
+            </p>
+          </div>
+          <div v-if="marketConcentration" class="market-concentration__stats">
+            <span>Выборка: <b>{{ formatNumber(marketConcentration.sampleSize) }}</b></span>
+            <span>HHI: <b>{{ formatConcentrationIndex(marketConcentration.hhi) }}</b></span>
+          </div>
+        </header>
+
+        <EmptyState
+          v-if="!marketConcentration"
+          title="Концентрация рынка пока недоступна"
+          description="Обновите backend API до версии с расчетом концентрации рынка."
+        />
+
+        <EmptyState
+          v-else-if="marketConcentration.sampleSize === 0"
+          title="Концентрация рынка не рассчитана"
+          :description="marketConcentration.limitations[0] ?? 'В выбранном topN нет товаров для расчета концентрации.'"
+        />
+
+        <div v-else class="market-concentration__body">
+          <div class="market-concentration__metrics">
+            <article v-for="metric in concentrationMetrics" :key="metric.label" class="market-concentration__metric">
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.value }}</strong>
+              <p>{{ metric.detail }}</p>
+            </article>
+          </div>
+
+          <div class="market-concentration__grid">
+            <section class="market-concentration__chart" aria-label="Доля топ продавцов">
+              <h3>Топ продавцов</h3>
+              <div v-if="marketConcentration.sellerLeaders.length" class="concentration-bars">
+                <div
+                  v-for="seller in marketConcentration.sellerLeaders.slice(0, 8)"
+                  :key="seller.name"
+                  class="concentration-bar"
+                >
+                  <div class="concentration-bar__label">
+                    <strong>{{ seller.name }}</strong>
+                    <span>{{ formatPercent(seller.sharePercent) }} · #{{ seller.bestPosition }}</span>
+                  </div>
+                  <div class="concentration-bar__track">
+                    <span :style="concentrationBarStyle(seller.sharePercent)" />
+                  </div>
                 </div>
-                <span v-if="product.referencePrice !== null">медиана {{ formatMoney(product.referencePrice) }}</span>
               </div>
-              <Button
-                v-if="product.productRowId"
-                class="compact-product__action app-operator-link"
-                variant="ghost"
-                @click.stop="openProduct(product)"
-              >
-                Подробнее
-              </Button>
-            </article>
+              <EmptyState
+                v-else
+                title="Нет данных о продавцах"
+                description="В выбранной выдаче нет seller-данных для диаграммы."
+              />
+            </section>
+
+            <section class="market-concentration__tables">
+              <table class="market-concentration__table">
+                <caption>Топ продавцов</caption>
+                <thead>
+                  <tr>
+                    <th>Продавец</th>
+                    <th>Мест</th>
+                    <th>Доля</th>
+                    <th>Лучшая позиция</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="seller in marketConcentration.sellerLeaders" :key="seller.name">
+                    <td>{{ seller.name }}</td>
+                    <td>{{ formatNumber(seller.slotsCount) }}</td>
+                    <td>{{ formatPercent(seller.sharePercent) }}</td>
+                    <td>#{{ seller.bestPosition }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <table class="market-concentration__table">
+                <caption>Топ брендов</caption>
+                <thead>
+                  <tr>
+                    <th>Бренд</th>
+                    <th>Мест</th>
+                    <th>Доля</th>
+                    <th>Лучшая позиция</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="brand in marketConcentration.brandLeaders" :key="brand.name">
+                    <td>{{ brand.name }}</td>
+                    <td>{{ formatNumber(brand.slotsCount) }}</td>
+                    <td>{{ formatPercent(brand.sharePercent) }}</td>
+                    <td>#{{ brand.bestPosition }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <table class="market-concentration__table">
+                <caption>Повторяющиеся root-группы</caption>
+                <thead>
+                  <tr>
+                    <th>WB root</th>
+                    <th>Карточек</th>
+                    <th>Доля</th>
+                    <th>Лучшая позиция</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="cluster in marketConcentration.rootClusters" :key="cluster.wbRootId">
+                    <td>{{ cluster.wbRootId }}</td>
+                    <td>{{ formatNumber(cluster.productCount) }}</td>
+                    <td>{{ formatPercent(cluster.sharePercent) }}</td>
+                    <td>#{{ cluster.bestPosition }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
           </div>
         </div>
-      </section>
-
-      <section v-else-if="activeSection === 'stock'" class="mi-section app-surface app-operator-panel">
-        <header class="mi-section__header">
-          <div>
-            <h2>
-              <span>Остатки</span>
-              <HelpTooltip text="Только явные значения из текущих данных." />
-            </h2>
-          </div>
-        </header>
-
-        <div class="mi-small-grid">
-          <div v-if="intelligence.stockPressure.exactZeroCount > 0" class="mi-metric">
-            <span>Точный ноль</span>
-            <strong>{{ formatNumber(intelligence.stockPressure.exactZeroCount) }}</strong>
-            <p>показано только при явном значении 0</p>
-          </div>
-          <div class="mi-metric">
-            <span>Низкий остаток</span>
-            <strong>{{ formatNumber(intelligence.stockPressure.exactLowStockCount) }}</strong>
-            <p>точно указанный низкий остаток</p>
-          </div>
-          <div class="mi-metric">
-            <span>С верхней границей</span>
-            <strong>{{ formatNumber(intelligence.stockPressure.cappedCount) }}</strong>
-            <p>количество ограничено источником</p>
-          </div>
-          <div class="mi-metric">
-            <span>Остаток не указан</span>
-            <strong>{{ formatNumber(intelligence.stockPressure.unknownCount) }}</strong>
-            <p>нет точного значения</p>
-          </div>
-        </div>
-
-        <div v-if="intelligence.stockPressure.highRankLowStockProducts.length" class="mi-subsection">
-          <h3>Видимые карточки с низким остатком</h3>
-          <div class="compact-product-grid">
-            <article
-              v-for="product in intelligence.stockPressure.highRankLowStockProducts"
-              :key="product.wbProductId"
-              class="compact-product app-operator-card"
-              :class="{ 'compact-product--clickable app-operator-card--interactive': product.productRowId }"
-              :tabindex="product.productRowId ? 0 : undefined"
-              :role="product.productRowId ? 'button' : undefined"
-              @click="openProduct(product)"
-              @keydown.enter.prevent="openProduct(product)"
-              @keydown.space.prevent="openProduct(product)"
-            >
-              <div class="compact-product__image">
-                <MarketProductImage :src="product.thumbnailUrl" :alt="productTitle(product)" />
-              </div>
-              <div class="compact-product__main">
-                <span class="product-card__sku">WB {{ product.wbProductId }}</span>
-                <strong>{{ productTitle(product) }}</strong>
-                <span>{{ brandSeller(product) }}</span>
-              </div>
-              <div class="compact-product__values">
-                <span>{{ positionText(product.position) }}</span>
-                <strong>Остаток: {{ product.stock.displayValue }}</strong>
-                <span>{{ statusLabel(product.stock.status) }}</span>
-              </div>
-              <Button
-                v-if="product.productRowId"
-                class="compact-product__action app-operator-link"
-                variant="ghost"
-                @click.stop="openProduct(product)"
-              >
-                Подробнее
-              </Button>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section v-else class="mi-section app-surface app-operator-panel">
-        <header class="mi-section__header">
-          <div>
-            <h2>
-              <span>Повторы и концентрация</span>
-              <HelpTooltip text="Кто занимает заметную часть выбранного топа." />
-            </h2>
-          </div>
-        </header>
-
-        <div class="histogram-grid">
-          <div class="histogram-panel">
-            <h3>Продавцы</h3>
-            <article v-for="leader in intelligence.concentration.sellerLeaders" :key="leader.name" class="bar-row">
-              <div class="bar-row__head">
-                <span>{{ leader.name }}</span>
-                <strong>{{ leader.slotsCount }} · {{ formatNumber(leader.sharePercent) }}%</strong>
-              </div>
-              <div class="bar-row__track">
-                <span :style="{ width: concentrationWidth(leader.sharePercent) }" />
-              </div>
-              <p>{{ sanitizeText(leader.description) }}</p>
-            </article>
-          </div>
-
-          <div class="histogram-panel">
-            <h3>Бренды</h3>
-            <article v-for="leader in intelligence.concentration.brandLeaders" :key="leader.name" class="bar-row">
-              <div class="bar-row__head">
-                <span>{{ leader.name }}</span>
-                <strong>{{ leader.slotsCount }} · {{ formatNumber(leader.sharePercent) }}%</strong>
-              </div>
-              <div class="bar-row__track">
-                <span :style="{ width: concentrationWidth(leader.sharePercent) }" />
-              </div>
-              <p>{{ sanitizeText(leader.description) }}</p>
-            </article>
-          </div>
-
-          <div class="histogram-panel">
-            <h3>Похожие варианты</h3>
-            <article v-for="cluster in intelligence.concentration.rootClusters" :key="cluster.wbRootId" class="bar-row">
-              <div class="bar-row__head">
-                <span>Группа похожих вариантов</span>
-                <strong>{{ cluster.productCount }} · {{ positionText(cluster.bestPosition) }}</strong>
-              </div>
-              <div class="bar-row__track">
-                <span :style="{ width: concentrationWidth((cluster.productCount / intelligence.context.topN) * 100) }" />
-              </div>
-              <p>{{ clusterSummary(cluster) }}</p>
-            </article>
-          </div>
-        </div>
-
       </section>
     </template>
 
@@ -1292,625 +1175,782 @@ function sanitizeText(value: string | null | undefined): string {
 }
 
 .mi-controls,
-.mi-summary,
-.mi-section {
+.quality-map,
+.market-concentration {
   border-color: var(--accent-ember-border);
 }
 
 .mi-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-4);
   padding: var(--space-4);
 }
 
 .mi-controls__fields {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(16rem, 1fr) auto;
   gap: var(--space-3);
+  align-items: start;
 }
 
 .mi-field {
   display: grid;
-  min-width: min(100%, 18rem);
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
-.mi-field--short {
-  min-width: 9rem;
-}
-
-.mi-field span,
-.mi-summary span,
-.mi-metric span {
-  display: block;
-  color: var(--color-text-muted);
-  font-size: var(--operator-meta-size);
-  font-weight: 700;
-}
-
-.mi-field small {
-  max-width: 16rem;
-  color: var(--color-text-subtle);
-  font-size: var(--operator-label-size);
-  line-height: 1.35;
-}
-
-.mi-summary,
-.mi-metric,
-.product-card,
-.compact-product,
-.bar-row {
-  min-width: 0;
-}
-
-.mi-summary strong,
-.mi-metric strong {
-  display: block;
-  overflow-wrap: anywhere;
+.mi-field small,
+.quality-map__header p,
+.quality-map__notes,
+.chart-tooltip__body p,
+.chart-tooltip__body span,
+.chart-tooltip__body li {
+  color: var(--text-muted);
 }
 
 .mi-refresh {
-  align-self: start;
-  margin-top: 1.6rem;
-  min-height: 2.35rem;
+  align-self: end;
 }
 
-.mi-summary-grid {
+.price-corridors {
+  position: relative;
+  display: grid;
+  gap: var(--space-4);
+  border-color: var(--accent-ember-border);
+  scroll-margin-top: var(--space-4);
+  padding: var(--space-4);
+  overflow: hidden;
+}
+
+.price-corridors--loading .price-corridors__body,
+.price-corridors--loading .price-corridors__header {
+  pointer-events: none;
+  opacity: 0.28;
+}
+
+.price-corridors__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  gap: var(--space-2);
+  place-items: center;
+  align-content: center;
+  background: color-mix(in srgb, var(--surface-panel) 78%, transparent);
+  backdrop-filter: blur(1px);
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.price-corridors__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.price-corridors__header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+  font-size: 1.1rem;
+}
+
+.price-corridors__header p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.price-corridors__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.price-corridors__stats span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  background: var(--surface-raised);
+}
+
+.price-corridors__body {
+  display: grid;
+  grid-template-columns: minmax(23rem, 0.78fr) minmax(27rem, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.price-corridors__plot {
+  display: grid;
+  gap: var(--space-2);
+  min-height: 17rem;
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel) 88%, var(--surface-raised));
+}
+
+.corridor-axis {
+  position: relative;
+  height: 12.25rem;
+  margin: 1rem 1.5rem 0;
+}
+
+.corridor-distribution {
+  position: absolute;
+  top: 0.35rem;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  width: 100%;
+  height: 3.25rem;
+  overflow: visible;
+}
+
+.corridor-distribution path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent-ember) 74%, var(--text-muted));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.78;
+}
+
+.corridor-rug {
+  position: absolute;
+  top: 4.15rem;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  height: 0.35rem;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.corridor-rug__dot {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--text-muted) 82%, transparent);
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.corridor-axis__line {
+  position: absolute;
+  top: 4.15rem;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: var(--border-subtle);
+}
+
+.corridor-axis__box {
+  position: absolute;
+  top: 3.4rem;
+  z-index: 3;
+  height: 1.85rem;
+  border: 1px solid color-mix(in srgb, var(--accent-ember) 45%, var(--border-subtle));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-ember) 16%, var(--surface-raised));
+  display: grid;
+  place-items: center;
+  color: var(--accent-ember);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.corridor-axis__box span {
+  position: absolute;
+  top: -1.15rem;
+  left: 50%;
+  color: var(--accent-ember);
+  transform: translateX(-50%);
+}
+
+.corridor-marker {
+  position: absolute;
+  top: 6.05rem;
+  display: grid;
+  gap: 0.1rem;
+  min-width: 4.75rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-align: center;
+  transform: translateX(-50%);
+}
+
+.corridor-marker::after {
+  content: '';
+  position: absolute;
+  top: -0.75rem;
+  left: 50%;
+  width: 2px;
+  height: 0.7rem;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+
+.corridor-marker--level-0 {
+  top: 6.05rem;
+}
+
+.corridor-marker--level-1 {
+  top: 8.45rem;
+}
+
+.corridor-marker--level-2 {
+  top: 10.85rem;
+}
+
+.corridor-marker--level-1::after {
+  top: -4.25rem;
+  height: 4.2rem;
+}
+
+.corridor-marker--level-2::after {
+  top: -6.65rem;
+  height: 6.6rem;
+}
+
+.corridor-marker em {
+  color: var(--text-primary);
+  font-style: normal;
+}
+
+.corridor-marker--median {
+  color: var(--accent-ember);
+}
+
+.corridor-marker--boundary {
+  color: var(--text-muted);
+}
+
+.corridor-marker--boundary em {
+  color: var(--text-muted);
+}
+
+.corridor-scale {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.corridor-scale span:nth-child(2) {
+  text-align: center;
+}
+
+.corridor-scale span:nth-child(3) {
+  text-align: center;
+}
+
+.corridor-scale span:last-child {
+  text-align: right;
+}
+
+.corridor-top-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.corridor-top-row span {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, #008060 25%, var(--border-subtle));
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+  background: color-mix(in srgb, #008060 7%, var(--surface-panel));
+}
+
+.corridor-top-row b {
+  color: #008060;
+}
+
+.price-corridors__table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  font-size: 0.84rem;
+}
+
+.price-corridors__table th,
+.price-corridors__table td {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.68rem 0.72rem;
+  text-align: left;
+}
+
+.price-corridors__table th {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.price-corridors__table td {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.price-corridors__table tr:last-child td {
+  border-bottom: 0;
+}
+
+.quality-map {
+  position: relative;
+  display: grid;
+  gap: var(--space-4);
+  scroll-margin-top: var(--space-4);
+  padding: var(--space-4);
+}
+
+.quality-map--loading .chart-shell {
+  pointer-events: none;
+}
+
+.quality-map__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  gap: var(--space-2);
+  place-items: center;
+  align-content: start;
+  border-radius: 8px;
+  box-sizing: border-box;
+  padding-top: min(9rem, 22vh);
+  background: color-mix(in srgb, var(--surface-panel) 78%, transparent);
+  backdrop-filter: blur(1px);
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.quality-map__loader {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid color-mix(in srgb, var(--accent-ember) 24%, transparent);
+  border-top-color: var(--accent-ember);
+  border-radius: 999px;
+  animation: quality-map-spin 0.75s linear infinite;
+}
+
+@keyframes quality-map-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.quality-map__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.quality-map__header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+  font-size: 1.1rem;
+}
+
+.quality-map__header p,
+.quality-map__notes p {
+  margin: 0;
+}
+
+.quality-map__legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  background: var(--surface-raised);
+}
+
+.legend-item::before {
+  content: '';
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 999px;
+  background: var(--text-muted);
+}
+
+.legend-item--strong::before {
+  background: #008060;
+}
+
+.legend-item--medium::before {
+  background: #cc8b08;
+}
+
+.legend-item--weak::before {
+  background: #ac0e28;
+}
+
+.legend-item--unknown::before {
+  background: #64748b;
+}
+
+.chart-shell {
+  position: relative;
+  min-height: 28rem;
+  overflow: visible;
+}
+
+.quality-chart-canvas {
+  display: block;
+  width: 100%;
+  min-height: 28rem;
+  border-radius: 8px;
+  outline: none;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: 5rem minmax(12rem, 1fr);
+  gap: var(--space-3);
+  width: min(26rem, calc(100vw - 4rem));
+  padding: var(--space-3);
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 0.75rem));
+  box-shadow: var(--shadow-lg);
+}
+
+.chart-tooltip__media {
+  width: 5rem;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+
+.chart-tooltip__body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.chart-tooltip__body strong {
+  color: var(--text-primary);
+}
+
+.chart-tooltip__body p,
+.chart-tooltip__body ul {
+  margin: 0;
+}
+
+.chart-tooltip__body ul {
+  padding-left: 1rem;
+}
+
+.chart-tooltip__metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.75rem;
+}
+
+.chart-tooltip__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.quality-map__notes {
+  display: grid;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
+.market-concentration {
+  position: relative;
+  display: grid;
+  gap: var(--space-4);
+  scroll-margin-top: var(--space-4);
+  padding: var(--space-4);
+  overflow: hidden;
+}
+
+.market-concentration--loading .market-concentration__body,
+.market-concentration--loading .market-concentration__header {
+  pointer-events: none;
+  opacity: 0.28;
+}
+
+.market-concentration__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  gap: var(--space-2);
+  place-items: center;
+  align-content: center;
+  background: color-mix(in srgb, var(--surface-panel) 78%, transparent);
+  backdrop-filter: blur(1px);
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.market-concentration__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+
+.market-concentration__header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+  font-size: 1.1rem;
+}
+
+.market-concentration__header p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.market-concentration__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.market-concentration__stats span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.35rem 0.55rem;
+  background: var(--surface-raised);
+}
+
+.market-concentration__body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.market-concentration__metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-3);
 }
 
-.mi-summary {
-  position: relative;
-  overflow: hidden;
-  padding: var(--space-4);
-  border-color: var(--accent-ember-border);
-  background:
-    linear-gradient(135deg, var(--accent-ember-soft), transparent 42%),
-    var(--color-surface);
+.market-concentration__metric {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  padding: var(--space-3);
 }
 
-.mi-summary::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--accent-ember);
+.market-concentration__metric span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
-.mi-summary strong {
-  margin-top: var(--space-2);
-  color: var(--color-text);
-  font-size: 1.55rem;
-  line-height: 1.05;
-  font-variant-numeric: tabular-nums;
+.market-concentration__metric strong {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-primary);
+  font-size: 1.25rem;
 }
 
-.mi-summary p,
-.mi-metric p,
-.bar-row p,
-.product-card p,
-.product-card__note {
-  margin: var(--space-2) 0 0;
-  color: var(--color-text-muted);
-  font-size: var(--operator-body-size);
-  line-height: 1.4;
+.market-concentration__metric p {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
 }
 
-.mi-section {
+.market-concentration__grid {
+  display: grid;
+  grid-template-columns: minmax(22rem, 0.65fr) minmax(30rem, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.market-concentration__chart,
+.market-concentration__tables {
   display: grid;
   gap: var(--space-3);
+}
+
+.market-concentration__chart {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
   padding: var(--space-4);
 }
 
-.mi-section__header,
-.event-group__header,
-.product-card__top,
-.bar-row__head,
-.compact-product {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.mi-section__header h2,
-.event-group__header h3,
-.mi-subsection h3,
-.histogram-panel h3,
-.product-card h4 {
+.market-concentration__chart h3 {
   margin: 0;
   font-size: 1rem;
-  font-weight: 750;
 }
 
-.mi-section__header h2,
-.event-group__header h3 {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.mi-section__header p,
-.event-group__header p {
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-muted);
-  font-size: var(--operator-body-size);
-}
-
-.event-groups,
-.mi-subsection,
-.histogram-panel {
+.concentration-bars {
   display: grid;
   gap: var(--space-3);
 }
 
-.event-switcher {
+.concentration-bar {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.concentration-bar__label {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: space-between;
   gap: var(--space-2);
-}
-
-.event-switcher__button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 2.15rem;
-  border: 1px solid var(--operator-border-muted);
-  border-radius: var(--radius-md);
-  background: var(--surface-control-raised);
-  color: var(--color-text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--operator-body-size);
-  font-weight: 740;
-  padding: 0 var(--space-3);
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
-}
-
-.event-switcher__button strong {
-  color: var(--operator-link);
-  font-size: var(--operator-body-size);
-  font-variant-numeric: tabular-nums;
-}
-
-.event-switcher__button:hover,
-.event-switcher__button:focus-visible {
-  border-color: var(--accent-primary-hover-border);
-  background: var(--accent-ember-hover-bg);
-  color: var(--accent-ember-text-strong);
-  outline: none;
-}
-
-.event-switcher__button--active {
-  border-color: var(--accent-primary-hover-border);
-  background: var(--button-primary-bg);
-  color: var(--text-on-fire);
-  box-shadow: inset 0 0 0 1px var(--accent-primary-border);
-}
-
-.event-switcher__button--active:hover,
-.event-switcher__button--active:focus-visible {
-  border-color: var(--accent-primary-hover-border);
-  background:
-    linear-gradient(180deg, rgb(251 146 60 / 0.94), rgb(185 28 28 / 0.86)),
-    var(--accent-ember);
-  color: var(--text-on-fire);
-  box-shadow:
-    inset 0 0 0 1px var(--accent-primary-border),
-    0 0 0 3px var(--accent-ember-soft);
-}
-
-.event-switcher__button--active strong {
-  color: var(--text-on-fire);
-}
-
-.event-group,
-.product-card,
-.compact-product,
-.mi-metric,
-.histogram-panel,
-.bar-row {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--operator-card-bg);
-}
-
-.event-group {
-  display: grid;
-  gap: var(--space-4);
-  padding: var(--space-4);
-}
-
-.product-card-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-
-.product-card {
-  display: grid;
-  grid-template-columns: 5.75rem minmax(0, 1fr);
-  align-items: start;
-  overflow: hidden;
-  min-height: 7.75rem;
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
-}
-
-.product-card--clickable,
-.compact-product--clickable {
-  cursor: pointer;
-}
-
-.product-card--clickable:hover,
-.product-card--clickable:focus-visible,
-.compact-product--clickable:hover,
-.compact-product--clickable:focus-visible {
-  border-color: var(--accent-primary-border);
-  background: var(--operator-card-hover-bg);
-  box-shadow: inset 2px 0 0 var(--operator-border), var(--shadow-panel);
-  outline: none;
-}
-
-.product-card__image,
-.compact-product__image {
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  background: var(--surface-control);
-  color: var(--color-text-muted);
-  font-size: var(--operator-meta-size);
+  color: var(--text-muted);
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
-.product-card__image {
-  width: 5.75rem;
-  height: 7.25rem;
-  border-right: 1px solid var(--color-border);
-}
-
-.product-card__image :deep(.market-image),
-.compact-product__image :deep(.market-image) {
-  height: 100%;
-  width: 100%;
-}
-
-.product-card__image :deep(.market-image__asset),
-.product-card__image :deep(.market-image__preview),
-.compact-product__image :deep(.market-image__asset),
-.compact-product__image :deep(.market-image__preview) {
-  object-fit: contain;
-}
-
-.product-card__body {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.product-card--check .product-card__body {
-  min-height: 100%;
-}
-
-.product-card h4 {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: 0.95rem;
-  line-height: 1.25;
-}
-
-.product-card__wide {
-  grid-column: 1 / -1;
-  margin-left: 0;
-  margin-top: var(--space-2);
-}
-
-.product-card__sku {
-  color: var(--color-text-subtle);
-  font-size: var(--operator-meta-size);
-  font-weight: 700;
-}
-
-.numeric,
-.value-line,
-.metric-compare {
-  font-variant-numeric: tabular-nums;
-}
-
-.value-line,
-.metric-compare {
-  display: grid;
-  gap: var(--space-2);
-  align-self: stretch;
-  border-radius: var(--radius-sm);
-  background: var(--operator-metric-bg);
-  padding: var(--space-3);
-}
-
-.value-line span,
-.metric-compare span {
-  color: var(--color-text-muted);
-}
-
-.value-line {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.value-line__meta,
-.metric-compare__current {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.metric-compare__current strong {
-  font-size: 1rem;
-}
-
-.metric-compare__reference {
-  font-size: var(--operator-meta-size);
-}
-
-.delta-chip {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 0.18rem 0.42rem;
-  font-size: var(--operator-meta-size);
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.delta-chip--positive {
-  border-color: var(--state-success-border);
-  background: var(--state-success-soft);
-  color: var(--state-success-text);
-  box-shadow: inset 0 0 0 1px var(--state-success-border);
-}
-
-.delta-chip--negative {
-  border-color: var(--state-danger-border);
-  background: var(--state-danger-soft);
-  color: var(--state-danger);
-}
-
-.delta-chip--neutral {
-  border-color: var(--heat-dormant-border);
-  background: var(--heat-dormant-soft);
-  color: var(--heat-dormant-text);
-}
-
-.product-card__action,
-.compact-product__action {
-  justify-self: start;
-}
-
-.product-card__action {
-  grid-column: 1 / -1;
-  margin-left: 0;
-  margin-top: var(--space-1);
-}
-
-.product-card__disabled {
-  align-self: end;
-  color: var(--color-text-subtle);
-  font-size: var(--operator-meta-size);
-}
-
-:deep(.product-card__action.app-operator-link.button),
-:deep(.compact-product__action.app-operator-link.button) {
-  min-height: 0;
-  border: 0;
-  background: transparent;
-  color: var(--operator-link);
-  box-shadow: none;
-  padding: 0;
-}
-
-:deep(.product-card__action.app-operator-link.button:hover),
-:deep(.product-card__action.app-operator-link.button:focus-visible),
-:deep(.compact-product__action.app-operator-link.button:hover),
-:deep(.compact-product__action.app-operator-link.button:focus-visible) {
-  border: 0;
-  background: transparent;
-  color: var(--operator-link-hover);
-  text-decoration: underline;
-  outline: none;
-}
-
-.event-group__toggle {
-  justify-self: start;
-}
-
-.mi-small-grid,
-.histogram-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-
-.mi-metric {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-}
-
-.mi-metric strong {
-  font-size: 1.15rem;
-}
-
-.mi-subsection {
-  margin-top: var(--space-4);
-}
-
-.compact-product {
-  display: grid;
-  grid-template-columns: 4.75rem minmax(0, 1fr);
-  grid-template-areas:
-    'image main'
-    'values values'
-    'action action';
-  align-items: start;
-  padding: var(--space-3);
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
-}
-
-.compact-product__image {
-  grid-area: image;
-  aspect-ratio: 1;
-  border-radius: var(--radius-md);
-}
-
-.compact-product__main,
-.compact-product__values {
-  display: grid;
-  gap: var(--space-1);
+.concentration-bar__label strong {
   min-width: 0;
-}
-
-.compact-product__main {
-  grid-area: main;
-}
-
-.compact-product strong,
-.compact-product span,
-.bar-row span,
-.bar-row strong {
   overflow: hidden;
+  color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.compact-product span,
-.bar-row p {
-  color: var(--color-text-muted);
-  font-size: var(--operator-body-size);
-}
-
-.compact-product__values {
-  grid-area: values;
-  justify-items: start;
-  font-variant-numeric: tabular-nums;
-  margin-top: var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--operator-metric-bg);
-  padding: var(--space-2);
-}
-
-.compact-product__action {
-  grid-area: action;
-  margin-top: var(--space-2);
-}
-
-.compact-product-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-.compact-product__current {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.histogram-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.histogram-panel {
-  align-content: start;
-  padding: var(--space-3);
-}
-
-.bar-row {
-  display: grid;
-  gap: var(--space-2);
-  padding: var(--space-3);
-}
-
-.bar-row__track {
-  height: 0.8rem;
+.concentration-bar__track {
+  height: 0.7rem;
   overflow: hidden;
-  border: 1px solid var(--accent-ember-border);
   border-radius: 999px;
-  background: rgb(15 23 42 / 0.72);
+  background: color-mix(in srgb, var(--border-subtle) 70%, transparent);
 }
 
-.bar-row__track span {
+.concentration-bar__track span {
   display: block;
-  min-width: 0.75rem;
   height: 100%;
+  min-width: 0.2rem;
   border-radius: inherit;
   background: var(--accent-ember);
-  box-shadow: 0 0 18px var(--accent-ember-border);
 }
 
-@media (max-width: 1180px) {
-  .mi-summary-grid,
-  .histogram-grid {
+.market-concentration__table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+  font-size: 0.84rem;
+}
+
+.market-concentration__table caption {
+  padding: 0 0 var(--space-2);
+  color: var(--text-primary);
+  font-weight: 900;
+  text-align: left;
+}
+
+.market-concentration__table th,
+.market-concentration__table td {
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.68rem 0.72rem;
+  text-align: left;
+}
+
+.market-concentration__table th {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.market-concentration__table td {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.market-concentration__table tr:last-child td {
+  border-bottom: 0;
+}
+
+@media (max-width: 960px) {
+  .mi-controls__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-map__header {
+    display: grid;
+  }
+
+  .price-corridors__header,
+  .price-corridors__body,
+  .market-concentration__header,
+  .market-concentration__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .price-corridors__stats,
+  .market-concentration__stats {
+    justify-content: flex-start;
+  }
+
+  .market-concentration__metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
 
-@media (max-width: 860px) {
-  .mi-controls {
+  .quality-map__legend {
+    justify-content: flex-start;
+  }
+
+  .chart-tooltip {
     grid-template-columns: 1fr;
-  }
-
-  .mi-summary-grid,
-  .mi-small-grid,
-  .histogram-grid,
-  .compact-product-grid,
-  .product-card-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .compact-product {
-    grid-template-columns: 4.5rem minmax(0, 1fr);
-  }
-
-  .compact-product__values,
-  .compact-product__action {
-    justify-items: start;
+    width: min(20rem, calc(100vw - 2rem));
   }
 }
 
-@media (max-width: 720px) {
-  .mi-field,
-  .mi-refresh {
-    width: 100%;
-  }
-
-  .mi-refresh {
-    margin-top: 0;
-  }
-
-  .product-card {
-    grid-template-columns: 5.25rem minmax(0, 1fr);
-  }
-
-  .product-card__image {
-    width: 5.25rem;
-    height: 6.75rem;
-  }
-
-  .product-card__wide,
-  .product-card__action {
-    margin-left: 0;
+@media (max-width: 640px) {
+  .market-concentration__metrics {
+    grid-template-columns: 1fr;
   }
 }
 </style>

@@ -22,7 +22,6 @@ defineEmits<{
   close: [];
 }>();
 
-type MarketIntelligenceSection = 'events' | 'weaknesses' | 'prices' | 'stock' | 'repeats';
 type OrdersSection = 'assumed-orders' | 'new-products' | 'restocks' | 'availability';
 
 const route = useRoute();
@@ -30,16 +29,11 @@ const workspaceMarketProductsPath = '/workspace/market-products';
 const workspaceMarketProductCreatePath = '/workspace/market-products/create';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
 const marketIntelligencePath = '/market/intelligence';
+const marketIntelligencePriceQualityHash = '#price-quality';
+const marketIntelligencePriceCorridorsHash = '#price-corridors';
+const marketIntelligenceConcentrationHash = '#market-concentration';
 const ordersPath = '/orders';
 const ordersAvailabilityPath = '/orders/availability';
-const marketIntelligenceSections: Array<{ key: MarketIntelligenceSection; label: string }> = [
-  { key: 'events', label: 'События' },
-  { key: 'weaknesses', label: 'Зоны для проверки' },
-  { key: 'prices', label: 'Скидки и цены' },
-  { key: 'stock', label: 'Остатки' },
-  { key: 'repeats', label: 'Повторы' }
-];
-const marketIntelligenceSectionKeys = marketIntelligenceSections.map((section) => section.key);
 const ordersSections: Array<{ key: OrdersSection; label: string }> = [
   { key: 'assumed-orders', label: 'Уменьшения остатков' },
   { key: 'new-products', label: 'Новые карточки' },
@@ -64,13 +58,19 @@ const secondaryNavItems = [
 ];
 
 const isMarketIntelligenceRoute = computed(() => route.path === marketIntelligencePath);
+const activeMarketIntelligenceSection = computed(() =>
+  isMarketIntelligenceRoute.value
+    ? route.hash === marketIntelligencePriceCorridorsHash
+      ? 'price-corridors'
+      : route.hash === marketIntelligenceConcentrationHash
+        ? 'market-concentration'
+      : 'price-quality'
+    : null
+);
 const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(workspaceMarketProductsPath));
 const isWorkspaceMarketProductCreateRoute = computed(() => route.path === workspaceMarketProductCreatePath);
 const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
 const isOrdersRoute = computed(() => route.path === ordersPath || route.path === ordersAvailabilityPath);
-const activeMarketIntelligenceSection = computed(() =>
-  isMarketIntelligenceRoute.value ? normalizeMarketIntelligenceSection(route.query.section) : null
-);
 const activeOrdersSection = computed(() =>
   route.path === ordersAvailabilityPath
     ? 'availability'
@@ -78,22 +78,6 @@ const activeOrdersSection = computed(() =>
       ? normalizeOrdersSection(route.query.tab)
       : null
 );
-
-function normalizeMarketIntelligenceSection(value: unknown): MarketIntelligenceSection {
-  const raw = Array.isArray(value) ? value[0] : value;
-  return typeof raw === 'string' && marketIntelligenceSectionKeys.includes(raw as MarketIntelligenceSection)
-    ? raw as MarketIntelligenceSection
-    : 'events';
-}
-
-function marketIntelligenceSectionTo(section: MarketIntelligenceSection) {
-  return {
-    path: marketIntelligencePath,
-    query: isMarketIntelligenceRoute.value
-      ? { ...route.query, section }
-      : { section }
-  };
-}
 
 function normalizeOrdersSection(value: unknown): OrdersSection {
   const rawValue = Array.isArray(value) ? value[0] : value;
@@ -218,7 +202,7 @@ function ordersSectionTo(section: OrdersSection) {
         <RouterLink
           class="sidebar__link"
           :class="{ 'sidebar__link--active': isMarketIntelligenceRoute }"
-          :to="{ path: marketIntelligencePath, query: { section: 'events' } }"
+          :to="{ path: marketIntelligencePath }"
           @click="$emit('close')"
         >
           <Radar :size="17" />
@@ -227,14 +211,28 @@ function ordersSectionTo(section: OrdersSection) {
 
         <div class="sidebar__subnav" aria-label="Разделы маркетинговой разведки">
           <RouterLink
-            v-for="section in marketIntelligenceSections"
-            :key="section.key"
             class="sidebar__sublink"
-            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === section.key }"
-            :to="marketIntelligenceSectionTo(section.key)"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'price-quality' }"
+            :to="{ path: marketIntelligencePath, hash: marketIntelligencePriceQualityHash }"
             @click="$emit('close')"
           >
-            {{ section.label }}
+            Карта цены и качества
+          </RouterLink>
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'price-corridors' }"
+            :to="{ path: marketIntelligencePath, hash: marketIntelligencePriceCorridorsHash }"
+            @click="$emit('close')"
+          >
+            Ценовые коридоры
+          </RouterLink>
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'market-concentration' }"
+            :to="{ path: marketIntelligencePath, hash: marketIntelligenceConcentrationHash }"
+            @click="$emit('close')"
+          >
+            Концентрация рынка
           </RouterLink>
         </div>
       </div>

@@ -86,6 +86,13 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
 
         var latestProducts = await LoadProductsAsync(latestProductRunId, context, latestRankRows.Select(x => x.WbProductId), cancellationToken);
         var baselineProducts = await LoadProductsAsync(baselineProductRunId, context, baselineRankRows.Select(x => x.WbProductId), cancellationToken);
+        var mapProducts = await LoadLatestProductsForMapAsync(context, cancellationToken);
+        var mapProductIds = mapProducts.Select(x => x.WbProductId).ToList();
+        var latestDetails = await LoadProductDetailsAsync(mapProductIds, null, cancellationToken);
+        var deliveryBuckets = await LoadDeliveryBucketsAsync(context, mapProductIds, cancellationToken);
+        var latestRankPositions = latestRankRows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Min(row => row.AbsolutePosition), StringComparer.Ordinal);
 
         if (latestRankRows.Any(x => !latestProducts.ContainsKey(x.WbProductId)))
             limitations.Add("Для части товаров нет данных карточек в выбранном наблюдении.");
@@ -105,6 +112,19 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
         var pricePressure = BuildPricePressure(latestItems, baselineItems, isComparable);
         var stockPressure = BuildStockPressure(latestItems);
         var concentration = BuildConcentration(latestItems);
+        var marketConcentration = MarketIntelligenceConcentrationCalculator.Build(latestItems
+            .Select(x => new MarketConcentrationInput(
+                x.Rank.WbProductId,
+                x.Product?.WbRootId ?? x.Rank.WbRootId,
+                x.Product?.SellerName,
+                x.Product?.BrandName,
+                x.Rank.AbsolutePosition))
+            .ToList());
+        var priceQualityMap = BuildPriceQualityMap(mapProducts, latestDetails, deliveryBuckets, latestRankPositions);
+        var priceCorridors = MarketIntelligencePriceCorridorCalculator.Build(
+            priceQualityMap.Points
+                .Select(x => new PriceCorridorInput(x.Price, x.Position, x.Rating))
+                .ToList());
 
         var dto = new PublicMarketIntelligenceDto(
             new PublicMarketContextDto(
@@ -131,6 +151,9 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
             pricePressure,
             stockPressure,
             concentration,
+            marketConcentration,
+            priceQualityMap,
+            priceCorridors,
             Deduplicate(limitations));
 
         return ServiceResult<PublicMarketIntelligenceDto>.Success(dto);
@@ -396,13 +419,18 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        if (parserRunId is null || ids.Count == 0)
+        if (ids.Count == 0)
             return new Dictionary<string, ProductRow>(StringComparer.Ordinal);
+
+        var successfulProductRuns = _dbContext.ParserRuns
+            .AsNoTracking()
+            .Where(x => x.Kind == ProductKind && x.ManifestStatus == SucceededStatus)
+            .Select(x => x.ParserRunId);
 
         var rawRows = await _dbContext.ParserProductRows
             .AsNoTracking()
             .Where(x =>
-                x.ParserRunId == parserRunId
+                successfulProductRuns.Contains(x.ParserRunId)
                 && ids.Contains(x.WbProductId)
                 && x.SourceCategory == context.SourceCategory
                 && x.SourceSubcategory == context.SourceSubcategory)
@@ -422,6 +450,7 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
                 x.ReviewRating,
                 x.FeedbackCount,
                 x.ImageUrls,
+                x.ImageCount,
                 x.ParsedAtUtc
             })
             .ToListAsync(cancellationToken);
@@ -442,6 +471,7 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
                 x.TotalQuantity,
                 x.ReviewRating,
                 x.FeedbackCount,
+                x.ImageCount,
                 x.ParsedAtUtc))
             .ToList();
 
@@ -449,8 +479,247 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
             .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
             .ToDictionary(
                 x => x.Key,
-                x => x.OrderByDescending(row => row.ParsedAtUtc).First(),
+                x => x
+                    .OrderByDescending(row => parserRunId != null && row.ParserRunId == parserRunId)
+                    .ThenByDescending(row => row.ParsedAtUtc)
+                    .First(),
                 StringComparer.Ordinal);
+    }
+
+    private async Task<IReadOnlyList<ProductRow>> LoadLatestProductsForMapAsync(
+        MarketContext context,
+        CancellationToken cancellationToken)
+    {
+        var rawRows = await _dbContext.ParserProductRows
+            .AsNoTracking()
+            .Where(x =>
+                x.SourceCategory == context.SourceCategory
+                && x.SourceSubcategory == context.SourceSubcategory
+                && x.SourceRegionDest == context.SourceRegionDest)
+            .Select(x => new
+            {
+                x.Id,
+                x.ParserRunId,
+                x.WbProductId,
+                x.WbRootId,
+                x.Name,
+                x.BrandName,
+                x.SellerName,
+                x.PriceRegular,
+                x.PriceDiscounted,
+                x.PriceWbWallet,
+                x.TotalQuantity,
+                x.ReviewRating,
+                x.FeedbackCount,
+                x.ImageUrls,
+                x.ImageCount,
+                x.ParsedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return rawRows
+            .Select(x => new ProductRow(
+                x.Id,
+                x.ParserRunId,
+                x.WbProductId,
+                x.WbRootId,
+                x.Name,
+                x.BrandName,
+                x.SellerName,
+                FirstImageUrl(x.ImageUrls),
+                x.PriceRegular,
+                x.PriceDiscounted,
+                x.PriceWbWallet,
+                x.TotalQuantity,
+                x.ReviewRating,
+                x.FeedbackCount,
+                x.ImageCount,
+                x.ParsedAtUtc))
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .Select(x => x
+                .OrderByDescending(row => row.ParsedAtUtc)
+                .ThenByDescending(row => row.Id)
+                .First())
+            .OrderByDescending(x => x.ParsedAtUtc)
+            .ToList();
+    }
+
+    private async Task<IReadOnlyDictionary<string, ProductDetailSignal>> LoadProductDetailsAsync(
+        IEnumerable<string> productIds,
+        string? productRunId,
+        CancellationToken cancellationToken)
+    {
+        var ids = productIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ids.Count == 0)
+            return new Dictionary<string, ProductDetailSignal>(StringComparer.Ordinal);
+
+        var rows = await _dbContext.ParserProductDetailRows
+            .AsNoTracking()
+            .Where(x => ids.Contains(x.WbProductId) && x.Status == SucceededStatus)
+            .OrderByDescending(x => productRunId != null && x.InputProductsParserRunId == productRunId)
+            .ThenByDescending(x => x.ParsedAtUtc)
+            .ThenByDescending(x => x.SourceLineNumber)
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x =>
+                {
+                    var row = x.First();
+                    return new ProductDetailSignal(
+                        row.Description,
+                        MarketIntelligenceBucketEvaluator.CountCharacteristics(UsableJsonElement(row.Characteristics) ?? UsableJsonElement(row.GroupedOptions)),
+                        row.MediaCount);
+                },
+                StringComparer.Ordinal);
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> LoadDeliveryBucketsAsync(
+        MarketContext context,
+        IEnumerable<string> productIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = productIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ids.Count == 0)
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+
+        var rows = await _dbContext.ParserLogisticsSnapshotRows
+            .AsNoTracking()
+            .Where(x =>
+                ids.Contains(x.WbProductId)
+                && x.Marketplace == context.Marketplace
+                && x.SourceCategory == context.SourceCategory
+                && x.SourceSubcategory == context.SourceSubcategory
+                && x.SourceRegionDest == context.SourceRegionDest)
+            .Select(x => new
+            {
+                x.WbProductId,
+                x.VisibleDeliveryDate,
+                ObservedAtUtc = x.VisibleDeliveryObservedAtUtc ?? x.ObservedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x =>
+                {
+                    var row = x.OrderByDescending(value => value.ObservedAtUtc).First();
+                    return MarketIntelligenceBucketEvaluator.EvaluateDelivery(row.VisibleDeliveryDate, row.ObservedAtUtc);
+                },
+                StringComparer.Ordinal);
+    }
+
+    private static PriceQualityMapDto BuildPriceQualityMap(
+        IReadOnlyList<ProductRow> products,
+        IReadOnlyDictionary<string, ProductDetailSignal> details,
+        IReadOnlyDictionary<string, string> deliveryBuckets,
+        IReadOnlyDictionary<string, int> rankPositions)
+    {
+        var points = products
+            .Select(product =>
+            {
+                details.TryGetValue(product.WbProductId, out var detail);
+                deliveryBuckets.TryGetValue(product.WbProductId, out var deliveryBucket);
+                rankPositions.TryGetValue(product.WbProductId, out var position);
+                var imageCount = detail?.MediaCount ?? product.ImageCount;
+                var quality = MarketIntelligenceBucketEvaluator.EvaluateQuality(
+                    product.ReviewRating,
+                    product.FeedbackCount,
+                    imageCount,
+                    detail?.Description,
+                    detail?.CharacteristicsCount,
+                    hasProduct: true,
+                    detail is not null);
+
+                return new PriceQualityPointDto(
+                    product.WbProductId,
+                    product.WbRootId,
+                    product.Id.ToString(),
+                    product.Name,
+                    product.ThumbnailUrl,
+                    CurrentPrice(product),
+                    product.ReviewRating,
+                    product.FeedbackCount,
+                    product.TotalQuantity,
+                    position == 0 ? (int?)null : position,
+                    product.SellerName,
+                    product.BrandName,
+                    quality.Bucket,
+                    quality.Reasons,
+                    deliveryBucket ?? "unknown");
+            })
+            .ToList();
+
+        var summary = BuildPriceQualitySummary(points);
+        var limitations = new List<string>();
+        if (points.Any(x => x.ProductRowId is null))
+            limitations.Add("Для части точек нет данных карточек, они показаны без перехода в карточку.");
+        if (points.Any(x => x.QualityBucket == "unknown"))
+            limitations.Add("Для части товаров недостаточно данных для оценки качества.");
+
+        return new PriceQualityMapDto(points, summary, Deduplicate(limitations));
+    }
+
+    private static PriceQualityMapSummaryDto BuildPriceQualitySummary(IReadOnlyList<PriceQualityPointDto> points)
+    {
+        var strong = points.Count(x => x.QualityBucket == "strong");
+        var medium = points.Count(x => x.QualityBucket == "medium");
+        var weak = points.Count(x => x.QualityBucket == "weak");
+        var unknown = points.Count(x => x.QualityBucket == "unknown");
+        var withoutRating = points.Count(x => !x.Rating.HasValue || x.Rating.Value <= 0);
+        var medianPrice = Median(points.Select(x => x.Price));
+        var medianRating = Median(points.Select(x => x.Rating).Where(x => x.HasValue && x.Value > 0));
+
+        return new PriceQualityMapSummaryDto(
+            points.Count,
+            withoutRating,
+            strong,
+            medium,
+            weak,
+            unknown,
+            medianPrice,
+            medianRating,
+            BuildPriceQualityInsight(points, medianPrice));
+    }
+
+    private static string BuildPriceQualityInsight(IReadOnlyList<PriceQualityPointDto> points, decimal? medianPrice)
+    {
+        if (points.Count == 0)
+            return "Недостаточно данных для карты цены и качества.";
+
+        var strongExpensive = points.Count(x =>
+            x.QualityBucket == "strong"
+            && x.Price.HasValue
+            && medianPrice.HasValue
+            && x.Price.Value > medianPrice.Value);
+        var weakCheap = points.Count(x =>
+            x.QualityBucket == "weak"
+            && x.Price.HasValue
+            && medianPrice.HasValue
+            && x.Price.Value <= medianPrice.Value);
+        var withoutRating = points.Count(x => !x.Rating.HasValue || x.Rating.Value <= 0);
+
+        var parts = new List<string>();
+        if (strongExpensive > 0)
+            parts.Add($"дорогих сильных товаров: {strongExpensive}");
+        if (weakCheap > 0)
+            parts.Add($"дешевых слабых товаров: {weakCheap}");
+        if (withoutRating > 0)
+            parts.Add($"без рейтинга: {withoutRating}");
+
+        return parts.Count == 0
+            ? "Карта показывает распределение видимых товаров по цене и рейтингу."
+            : $"На карте выделены {string.Join(", ", parts)}.";
     }
 
     private static IReadOnlyList<MarketEventDto> BuildEvents(
@@ -1084,6 +1353,16 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
             : null;
     }
 
+    private static JsonElement? UsableJsonElement(JsonDocument? document)
+    {
+        if (document is null)
+            return null;
+
+        return document.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array
+            ? document.RootElement
+            : null;
+    }
+
     private static int CountLeaderPriceDrops(
         IReadOnlyList<RankedProduct> latestItems,
         IReadOnlyList<RankedProduct> baselineItems)
@@ -1187,9 +1466,12 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
         int? TotalQuantity,
         decimal? ReviewRating,
         int? FeedbackCount,
+        int? ImageCount,
         DateTime ParsedAtUtc);
 
     private sealed record RankedProduct(RankRow Rank, ProductRow? Product);
+
+    private sealed record ProductDetailSignal(string? Description, int CharacteristicsCount, int? MediaCount);
 
     private sealed record Coverage(bool IsFull, string Status, string? RequestFingerprint)
     {

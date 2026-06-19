@@ -19,6 +19,17 @@ import OverviewPage from '@/pages/OverviewPage.vue';
 
 export const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior(to) {
+    if (to.hash) {
+      return {
+        el: to.hash,
+        top: 16,
+        behavior: 'smooth'
+      };
+    }
+
+    return { top: 0 };
+  },
   routes: [
     {
       path: '/login',
