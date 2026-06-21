@@ -65,6 +65,7 @@ export interface ExpenseListParams {
   pageSize: number;
   sort?: string;
   search?: string;
+  idWorkspace?: string;
   idCategory?: string;
   categoryId?: string;
   idResponsible?: string;

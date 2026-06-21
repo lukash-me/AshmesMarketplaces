@@ -112,13 +112,14 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
         var pricePressure = BuildPricePressure(latestItems, baselineItems, isComparable);
         var stockPressure = BuildStockPressure(latestItems);
         var concentration = BuildConcentration(latestItems);
-        var marketConcentration = MarketIntelligenceConcentrationCalculator.Build(latestItems
+        var marketConcentration = MarketIntelligenceConcentrationCalculator.Build(mapProducts
             .Select(x => new MarketConcentrationInput(
-                x.Rank.WbProductId,
-                x.Product?.WbRootId ?? x.Rank.WbRootId,
-                x.Product?.SellerName,
-                x.Product?.BrandName,
-                x.Rank.AbsolutePosition))
+                x.WbProductId,
+                x.WbRootId,
+                x.SellerName,
+                x.BrandName,
+                latestRankPositions.TryGetValue(x.WbProductId, out var position) ? position : null,
+                x.FeedbackCount))
             .ToList());
         var priceQualityMap = BuildPriceQualityMap(mapProducts, latestDetails, deliveryBuckets, latestRankPositions);
         var priceCorridors = MarketIntelligencePriceCorridorCalculator.Build(

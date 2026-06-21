@@ -26,6 +26,18 @@ export interface PublicMarketIntelligence {
   limitations: string[];
 }
 
+export interface PublicMarketConcentrationSnapshot {
+  context: PublicMarketContext;
+  observationWindow: ObservationWindow;
+  marketConcentration: MarketConcentration;
+  priceQualityMap: PriceQualityMap;
+  sampleSize: number;
+  calculatedAtUtc: string | null;
+  latestObservedAtUtc: string | null;
+  status: string;
+  limitations: string[];
+}
+
 export interface PublicMarketContext {
   marketplace: string;
   sourceCategory: string | null;
@@ -194,22 +206,47 @@ export interface MarketConcentration {
   sellerLeaders: MarketConcentrationLeader[];
   brandLeaders: MarketConcentrationLeader[];
   rootClusters: MarketConcentrationRootCluster[];
+  rankings: MarketConcentrationRanking[];
   insight: string;
   limitations: string[];
+}
+
+export type MarketConcentrationRankingKey = 'count' | 'position' | 'reviews' | string;
+
+export interface MarketConcentrationRanking {
+  key: MarketConcentrationRankingKey;
+  title: string;
+  sampleSize: number;
+  top3SellersSharePercent: number;
+  top5SellersSharePercent: number;
+  hhi: number;
+  normalizedConcentrationScore: number;
+  sellerLeaders: MarketConcentrationLeader[];
+  brandLeaders: MarketConcentrationLeader[];
+  rootClusters: MarketConcentrationRootCluster[];
+  insight: string;
 }
 
 export interface MarketConcentrationLeader {
   name: string;
   slotsCount: number;
   sharePercent: number;
-  bestPosition: number;
+  bestPosition: number | null;
+  feedbackCount: number;
+  rankedSlotsCount: number;
+  top100SharePercent: number;
+  feedbackSharePercent: number;
 }
 
 export interface MarketConcentrationRootCluster {
   wbRootId: string;
   productCount: number;
-  bestPosition: number;
+  bestPosition: number | null;
   sharePercent: number;
+  feedbackCount: number;
+  rankedSlotsCount: number;
+  top100SharePercent: number;
+  feedbackSharePercent: number;
 }
 
 export interface PriceQualityMap {
@@ -231,7 +268,7 @@ export interface PriceQualityPoint {
   rating: number | null;
   feedbackCount: number | null;
   stock: number | null;
-  position: number;
+  position: number | null;
   sellerName: string | null;
   brandName: string | null;
   qualityBucket: QualityBucket;

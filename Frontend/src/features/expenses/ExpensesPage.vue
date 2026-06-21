@@ -19,8 +19,6 @@ import {
   getExpenseCategories,
   getExpenses,
   getExpenseSummary,
-  getExpenseUsers,
-  getExpenseWorkspaces,
   updateExpense
 } from './expenses.api';
 import { formatAmount, formatDateShort, getExpenseStatusNumber } from './expenseDisplay';
@@ -43,7 +41,6 @@ import type {
   ExpenseStatusKey,
   ExpenseSummary,
   ExpenseUserListItem,
-  ExpenseWorkspaceListItem,
   SaveExpenseRequest
 } from './expenses.types';
 
@@ -62,7 +59,6 @@ const summaryError = ref('');
 const selectedExpense = ref<ExpenseListItem | null>(null);
 const categories = ref<ExpenseCategoryListItem[]>([]);
 const users = ref<ExpenseUserListItem[]>([]);
-const workspaces = ref<ExpenseWorkspaceListItem[]>([]);
 const lookupError = ref('');
 const formOpen = ref(false);
 const formMode = ref<'create' | 'edit'>('create');
@@ -87,9 +83,7 @@ const usersById = computed(() =>
   }, {})
 );
 
-const currentWorkspaceId = computed(
-  () => auth.user?.workspaces[0]?.idWorkspace ?? workspaces.value[0]?.id ?? ''
-);
+const currentWorkspaceId = computed(() => auth.user?.workspaces[0]?.idWorkspace ?? '');
 const currentUserId = computed(() => auth.user?.id ?? '');
 const isGuest = computed(() => !auth.isAuthenticated);
 
@@ -175,6 +169,17 @@ async function loadExpensesAndSummary() {
     return;
   }
 
+  if (!currentWorkspaceId.value) {
+    expenses.value = [];
+    totalCount.value = 0;
+    summary.value = null;
+    error.value = 'Нет доступной рабочей области для учета расходов.';
+    summaryError.value = '';
+    loading.value = false;
+    summaryLoading.value = false;
+    return;
+  }
+
   loading.value = true;
   summaryLoading.value = true;
   error.value = '';
@@ -182,8 +187,8 @@ async function loadExpensesAndSummary() {
 
   try {
     const [expenseResponse, summaryResponse] = await Promise.all([
-      getExpenses(toExpensesApiParams(queryState.value)),
-      getExpenseSummary(toExpensesSummaryParams(queryState.value))
+      getExpenses(toExpensesApiParams(queryState.value, currentWorkspaceId.value)),
+      getExpenseSummary(toExpensesSummaryParams(queryState.value, currentWorkspaceId.value))
     ]);
 
     expenses.value = expenseResponse.items;
@@ -206,7 +211,6 @@ async function loadLookups() {
   if (isGuest.value) {
     categories.value = [];
     users.value = [];
-    workspaces.value = [];
     lookupError.value = '';
     return;
   }
@@ -214,15 +218,16 @@ async function loadLookups() {
   lookupError.value = '';
 
   try {
-    const [categoryResponse, userResponse, workspaceResponse] = await Promise.all([
-      getExpenseCategories({ page: 1, pageSize: 200, sort: 'name' }),
-      getExpenseUsers({ page: 1, pageSize: 200, sort: 'login' }),
-      getExpenseWorkspaces({ page: 1, pageSize: 50, sort: 'name' })
-    ]);
+    const categoryResponse = await getExpenseCategories({ page: 1, pageSize: 200, sort: 'name' });
 
     categories.value = categoryResponse.items;
-    users.value = userResponse.items;
-    workspaces.value = workspaceResponse.items;
+    users.value = auth.user
+      ? [{
+          id: auth.user.id,
+          login: auth.user.login,
+          email: auth.user.email
+        }]
+      : [];
   } catch (err) {
     lookupError.value = getProblemMessage(err, 'Не удалось загрузить справочники расходов.');
   }

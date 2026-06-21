@@ -12,10 +12,14 @@ namespace AshmesMarketplaces.API.Controllers.V1;
 public sealed class MarketIntelligenceController : ControllerBase
 {
     private readonly IPublicMarketIntelligenceReadService _readService;
+    private readonly IPublicMarketConcentrationReadService _concentrationReadService;
 
-    public MarketIntelligenceController(IPublicMarketIntelligenceReadService readService)
+    public MarketIntelligenceController(
+        IPublicMarketIntelligenceReadService readService,
+        IPublicMarketConcentrationReadService concentrationReadService)
     {
         _readService = readService;
+        _concentrationReadService = concentrationReadService;
     }
 
     [HttpGet("public")]
@@ -28,6 +32,35 @@ public sealed class MarketIntelligenceController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _readService.GetAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("public/concentration")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(PublicMarketConcentrationSnapshotDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PublicMarketConcentrationSnapshotDto>> GetPublicConcentration(
+        [FromQuery] PublicMarketIntelligenceQuery request,
+        [FromQuery] bool includePoints,
+        CancellationToken cancellationToken)
+    {
+        var result = await _concentrationReadService.GetAsync(request, includePoints, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("public/concentration/products")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(PublicMarketConcentrationProductsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PublicMarketConcentrationProductsDto>> GetPublicConcentrationProducts(
+        [FromQuery] PublicMarketIntelligenceQuery request,
+        [FromQuery] string kind,
+        [FromQuery] string key,
+        CancellationToken cancellationToken)
+    {
+        var result = await _concentrationReadService.GetProductsAsync(request, kind, key, cancellationToken);
         return ToActionResult(result);
     }
 

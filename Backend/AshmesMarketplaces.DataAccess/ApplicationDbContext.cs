@@ -67,6 +67,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<BrandMarketplace> BrandMarketplaces => Set<BrandMarketplace>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+    public DbSet<PublicMarketConcentrationSnapshot> PublicMarketConcentrationSnapshots => Set<PublicMarketConcentrationSnapshot>();
 
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();

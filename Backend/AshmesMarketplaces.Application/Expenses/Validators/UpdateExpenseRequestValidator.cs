@@ -11,7 +11,6 @@ public sealed class UpdateExpenseRequestValidator : AbstractValidator<UpdateExpe
     {
         RuleFor(x => x.IdWorkspace).NotEmpty();
         RuleFor(x => x.IdCategory).NotEqual(Guid.Empty).When(x => x.IdCategory.HasValue);
-        RuleFor(x => x.IdCreator).NotEmpty();
         RuleFor(x => x.IdResponsible).NotEqual(Guid.Empty).When(x => x.IdResponsible.HasValue);
         RuleFor(x => x.Name).NotEmpty().MaximumLength(NameMaxLength);
         RuleFor(x => x.Cost).GreaterThanOrEqualTo(0).When(x => x.Cost.HasValue);

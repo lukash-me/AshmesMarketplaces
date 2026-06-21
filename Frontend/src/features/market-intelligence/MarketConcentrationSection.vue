@@ -1,27 +1,152 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
-import type { MarketConcentration } from './marketIntelligence.types';
+import type { MarketConcentration, MarketConcentrationRanking } from './marketIntelligence.types';
 
 const props = defineProps<{
   concentration: MarketConcentration | null;
   loading: boolean;
+  topN?: number | null;
+  calculatedAtUtc?: string | null;
+  limitations?: string[];
 }>();
 
-const concentrationMetrics = computed(() => {
+type ConcentrationTableMode = 'sellers' | 'brands' | 'roots';
+type ConcentrationRankingMode = 'count' | 'position' | 'reviews';
+type ChartItem = {
+  key: string;
+  name: string;
+  sharePercent: number;
+  top100SharePercent?: number | null;
+  feedbackSharePercent?: number | null;
+  bestPosition: number | null;
+};
+type OpenProductsPayload = {
+  kind: 'seller' | 'brand' | 'root';
+  key: string;
+  title: string;
+};
+
+const emit = defineEmits<{
+  (event: 'open-products', payload: OpenProductsPayload): void;
+}>();
+
+const tableMode = ref<ConcentrationTableMode>('sellers');
+const rankingMode = ref<ConcentrationRankingMode>('count');
+
+const fallbackRanking = computed<MarketConcentrationRanking | null>(() => {
   const data = props.concentration;
   if (!data) {
+    return null;
+  }
+
+  return {
+    key: 'count',
+    title: 'Топ по количеству',
+    sampleSize: data.sampleSize,
+    top3SellersSharePercent: data.top3SellersSharePercent,
+    top5SellersSharePercent: data.top5SellersSharePercent,
+    hhi: data.hhi,
+    normalizedConcentrationScore: data.normalizedConcentrationScore,
+    sellerLeaders: data.sellerLeaders,
+    brandLeaders: data.brandLeaders,
+    rootClusters: data.rootClusters,
+    insight: data.insight
+  };
+});
+
+const activeRanking = computed<MarketConcentrationRanking | null>(() => {
+  const data = props.concentration;
+  if (!data) {
+    return null;
+  }
+
+  return data.rankings?.find((ranking) => ranking.key === rankingMode.value)
+    ?? fallbackRanking.value;
+});
+
+const chartItems = computed<ChartItem[]>(() => {
+  const ranking = activeRanking.value;
+  if (!ranking) {
     return [];
   }
 
-  return [
-    { label: 'Продавцов', value: formatNumber(data.uniqueSellersCount), detail: 'уникальных в topN' },
-    { label: 'Брендов', value: formatNumber(data.uniqueBrandsCount), detail: 'уникальных в topN' },
-    { label: 'Доля top-5', value: formatPercent(data.top5SellersSharePercent), detail: 'пять крупнейших продавцов' },
-    { label: 'Индекс', value: formatPercent(data.normalizedConcentrationScore), detail: '0% фрагментирован, 100% занят лидерами' }
-  ];
+  if (tableMode.value === 'brands') {
+    return ranking.brandLeaders.map((brand) => ({
+      key: brand.name,
+      name: brand.name,
+      sharePercent: brand.sharePercent,
+      top100SharePercent: brand.top100SharePercent,
+      feedbackSharePercent: brand.feedbackSharePercent,
+      bestPosition: brand.bestPosition
+    }));
+  }
+
+  if (tableMode.value === 'roots') {
+    return ranking.rootClusters.map((cluster) => ({
+      key: cluster.wbRootId,
+      name: cluster.wbRootId,
+      sharePercent: cluster.sharePercent,
+      top100SharePercent: cluster.top100SharePercent,
+      feedbackSharePercent: cluster.feedbackSharePercent,
+      bestPosition: cluster.bestPosition
+    }));
+  }
+
+  return ranking.sellerLeaders.map((seller) => ({
+    key: seller.name,
+    name: seller.name,
+    sharePercent: seller.sharePercent,
+    top100SharePercent: seller.top100SharePercent,
+    feedbackSharePercent: seller.feedbackSharePercent,
+    bestPosition: seller.bestPosition
+  }));
+});
+
+const chartTitle = computed(() => {
+  const rankingTitle = activeRanking.value?.title ?? 'Топ по количеству';
+  const entityTitle = tableMode.value === 'brands'
+    ? 'брендов'
+    : tableMode.value === 'roots'
+      ? 'root-групп'
+      : 'продавцов';
+
+  return `${rankingTitle} ${entityTitle}`;
+});
+
+const chartEmptyTitle = computed(() => {
+  if (tableMode.value === 'brands') {
+    return 'Нет данных о брендах';
+  }
+
+  if (tableMode.value === 'roots') {
+    return 'Нет повторяющихся root-групп';
+  }
+
+  return 'Нет данных о продавцах';
+});
+
+const chartEmptyDescription = computed(() => {
+  if (tableMode.value === 'brands') {
+    return 'В выбранной нише нет brand-данных для диаграммы.';
+  }
+
+  if (tableMode.value === 'roots') {
+    return 'В выбранной нише нет повторяющихся root-групп для диаграммы.';
+  }
+
+  return 'В выбранной нише нет seller-данных для диаграммы.';
+});
+
+const isSnapshotStale = computed(() => {
+  if (!props.calculatedAtUtc) {
+    return false;
+  }
+
+  const calculatedAt = new Date(props.calculatedAtUtc).getTime();
+  return !Number.isNaN(calculatedAt) && Date.now() - calculatedAt > 36 * 60 * 60 * 1000;
 });
 
 function formatNumber(value: number | null | undefined): string {
@@ -36,15 +161,61 @@ function formatPercent(value: number | null | undefined): string {
     : '—';
 }
 
-function formatConcentrationIndex(value: number | null | undefined): string {
-  return typeof value === 'number'
-    ? new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(value)
+function formatPosition(value: number | null | undefined): string {
+  if (typeof value === 'number') {
+    return `#${formatNumber(value)}`;
+  }
+
+  return typeof props.topN === 'number' && props.topN > 0
+    ? `>${formatNumber(props.topN)}`
     : '—';
+}
+
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(new Date(value));
 }
 
 function concentrationBarStyle(value: number | null | undefined): string {
   const width = typeof value === 'number' ? Math.min(100, Math.max(0, value)) : 0;
   return `width: ${width}%`;
+}
+
+function chartSharePercent(item: ChartItem): number {
+  if (rankingMode.value === 'position') {
+    return item.top100SharePercent ?? 0;
+  }
+
+  if (rankingMode.value === 'reviews') {
+    return item.feedbackSharePercent ?? 0;
+  }
+
+  return item.sharePercent;
+}
+
+function chartShareLabel(): string {
+  if (rankingMode.value === 'position') {
+    return 'доля в топе';
+  }
+
+  if (rankingMode.value === 'reviews') {
+    return 'доля отзывов';
+  }
+
+  return 'доля карточек';
+}
+
+function openProducts(payload: OpenProductsPayload): void {
+  emit('open-products', payload);
 }
 </script>
 
@@ -62,20 +233,17 @@ function concentrationBarStyle(value: number | null | undefined): string {
       <div>
         <h2>
           <span>Концентрация рынка</span>
-          <HelpTooltip text="Показывает, насколько topN выбранной ниши занят крупными продавцами, брендами и повторяющимися root-группами." />
+          <HelpTooltip text="Показывает, насколько выбранная ниша занята крупными продавцами, брендами и повторяющимися root-группами." />
         </h2>
-        <p>
-          {{
-            concentration?.insight
-              ?? 'Показываем, фрагментирована ли ниша или значительная часть топа занята несколькими игроками.'
-          }}
-        </p>
       </div>
       <div v-if="concentration" class="market-concentration__stats">
         <span>Выборка: <b>{{ formatNumber(concentration.sampleSize) }}</b></span>
-        <span>HHI: <b>{{ formatConcentrationIndex(concentration.hhi) }}</b></span>
+        <span v-if="calculatedAtUtc">Рассчитано: <b>{{ formatDateTime(calculatedAtUtc) }}</b></span>
       </div>
     </header>
+
+    <p v-if="isSnapshotStale" class="market-concentration__warning">Данные ожидают обновления.</p>
+    <p v-else-if="limitations?.length" class="market-concentration__warning">{{ limitations[0] }}</p>
 
     <EmptyState
       v-if="!concentration"
@@ -86,104 +254,185 @@ function concentrationBarStyle(value: number | null | undefined): string {
     <EmptyState
       v-else-if="concentration.sampleSize === 0"
       title="Концентрация рынка не рассчитана"
-      :description="concentration.limitations[0] ?? 'В выбранном topN нет товаров для расчета концентрации.'"
+      :description="concentration.limitations[0] ?? 'В выбранной нише нет товаров для расчета концентрации.'"
     />
 
     <div v-else class="market-concentration__body">
-      <div v-if="concentration.limitations.length" class="market-concentration__limitations">
-        <p v-for="limitation in concentration.limitations" :key="limitation">{{ limitation }}</p>
-      </div>
-
-      <div class="market-concentration__metrics">
-        <article v-for="metric in concentrationMetrics" :key="metric.label" class="market-concentration__metric">
-          <span>{{ metric.label }}</span>
-          <strong>{{ metric.value }}</strong>
-          <p>{{ metric.detail }}</p>
-        </article>
-      </div>
-
       <div class="market-concentration__grid">
-        <section class="market-concentration__chart" aria-label="Доля топ продавцов">
-          <h3>Топ продавцов</h3>
-          <div v-if="concentration.sellerLeaders.length" class="concentration-bars">
+        <section class="market-concentration__chart" aria-label="Диаграмма концентрации">
+          <h3>{{ chartTitle }}</h3>
+          <div v-if="chartItems.length" class="concentration-bars">
             <div
-              v-for="seller in concentration.sellerLeaders.slice(0, 8)"
-              :key="seller.name"
+              v-for="item in chartItems.slice(0, 8)"
+              :key="item.key"
               class="concentration-bar"
             >
               <div class="concentration-bar__label">
-                <strong>{{ seller.name }}</strong>
-                <span>{{ formatPercent(seller.sharePercent) }} · #{{ seller.bestPosition }}</span>
+                <strong>{{ item.name }}</strong>
+                <span>{{ chartShareLabel() }} {{ formatPercent(chartSharePercent(item)) }} · {{ formatPosition(item.bestPosition) }}</span>
               </div>
               <div class="concentration-bar__track">
-                <span :style="concentrationBarStyle(seller.sharePercent)" />
+                <span :style="concentrationBarStyle(chartSharePercent(item))" />
               </div>
             </div>
           </div>
           <EmptyState
             v-else
-            title="Нет данных о продавцах"
-            description="В выбранной выдаче нет seller-данных для диаграммы."
+            :title="chartEmptyTitle"
+            :description="chartEmptyDescription"
           />
         </section>
 
         <section class="market-concentration__tables">
-          <table class="market-concentration__table">
-            <caption>Топ продавцов</caption>
+          <div class="market-concentration__selector" role="group" aria-label="Режим ранжирования">
+            <button
+              type="button"
+              :class="{ 'market-concentration__selector-button--active': rankingMode === 'count' }"
+              class="market-concentration__selector-button"
+              @click="rankingMode = 'count'"
+            >
+              Топ по количеству
+            </button>
+            <button
+              type="button"
+              :class="{ 'market-concentration__selector-button--active': rankingMode === 'position' }"
+              class="market-concentration__selector-button"
+              @click="rankingMode = 'position'"
+            >
+              Топ по позиции
+            </button>
+            <button
+              type="button"
+              :class="{ 'market-concentration__selector-button--active': rankingMode === 'reviews' }"
+              class="market-concentration__selector-button"
+              @click="rankingMode = 'reviews'"
+            >
+              Топ по отзывам
+            </button>
+          </div>
+
+          <div class="market-concentration__selector" role="group" aria-label="Разрез концентрации рынка">
+            <button
+              type="button"
+              :class="{ 'market-concentration__selector-button--active': tableMode === 'sellers' }"
+              class="market-concentration__selector-button"
+              @click="tableMode = 'sellers'"
+            >
+              Топ продавцов
+            </button>
+            <button
+              type="button"
+              :class="{ 'market-concentration__selector-button--active': tableMode === 'brands' }"
+              class="market-concentration__selector-button"
+              @click="tableMode = 'brands'"
+            >
+              Топ брендов
+            </button>
+            <button
+              type="button"
+              :class="{ 'market-concentration__selector-button--active': tableMode === 'roots' }"
+              class="market-concentration__selector-button"
+              @click="tableMode = 'roots'"
+            >
+              Повторяющиеся root-группы
+            </button>
+          </div>
+
+          <table v-if="tableMode === 'sellers'" class="market-concentration__table">
+            <caption class="sr-only">Топ продавцов</caption>
             <thead>
               <tr>
                 <th>Продавец</th>
                 <th>Мест</th>
-                <th>Доля</th>
+                <th>Доля карточек</th>
+                <th>Доля в топе</th>
+                <th>Отзывы</th>
                 <th>Лучшая позиция</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="seller in concentration.sellerLeaders" :key="seller.name">
+              <tr
+                v-for="seller in activeRanking?.sellerLeaders ?? []"
+                :key="seller.name"
+                class="market-concentration__table-row--interactive"
+                role="button"
+                tabindex="0"
+                @click="openProducts({ kind: 'seller', key: seller.name, title: `Карточки продавца ${seller.name}` })"
+                @keydown.enter.prevent="openProducts({ kind: 'seller', key: seller.name, title: `Карточки продавца ${seller.name}` })"
+                @keydown.space.prevent="openProducts({ kind: 'seller', key: seller.name, title: `Карточки продавца ${seller.name}` })"
+              >
                 <td>{{ seller.name }}</td>
                 <td>{{ formatNumber(seller.slotsCount) }}</td>
                 <td>{{ formatPercent(seller.sharePercent) }}</td>
-                <td>#{{ seller.bestPosition }}</td>
+                <td>{{ formatPercent(seller.top100SharePercent ?? 0) }}</td>
+                <td>{{ formatNumber(seller.feedbackCount) }}</td>
+                <td>{{ formatPosition(seller.bestPosition) }}</td>
               </tr>
             </tbody>
           </table>
 
-          <table class="market-concentration__table">
-            <caption>Топ брендов</caption>
+          <table v-else-if="tableMode === 'brands'" class="market-concentration__table">
+            <caption class="sr-only">Топ брендов</caption>
             <thead>
               <tr>
                 <th>Бренд</th>
                 <th>Мест</th>
-                <th>Доля</th>
+                <th>Доля карточек</th>
+                <th>Доля в топе</th>
+                <th>Отзывы</th>
                 <th>Лучшая позиция</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="brand in concentration.brandLeaders" :key="brand.name">
+              <tr
+                v-for="brand in activeRanking?.brandLeaders ?? []"
+                :key="brand.name"
+                class="market-concentration__table-row--interactive"
+                role="button"
+                tabindex="0"
+                @click="openProducts({ kind: 'brand', key: brand.name, title: `Карточки бренда ${brand.name}` })"
+                @keydown.enter.prevent="openProducts({ kind: 'brand', key: brand.name, title: `Карточки бренда ${brand.name}` })"
+                @keydown.space.prevent="openProducts({ kind: 'brand', key: brand.name, title: `Карточки бренда ${brand.name}` })"
+              >
                 <td>{{ brand.name }}</td>
                 <td>{{ formatNumber(brand.slotsCount) }}</td>
                 <td>{{ formatPercent(brand.sharePercent) }}</td>
-                <td>#{{ brand.bestPosition }}</td>
+                <td>{{ formatPercent(brand.top100SharePercent ?? 0) }}</td>
+                <td>{{ formatNumber(brand.feedbackCount) }}</td>
+                <td>{{ formatPosition(brand.bestPosition) }}</td>
               </tr>
             </tbody>
           </table>
 
-          <table class="market-concentration__table">
-            <caption>Повторяющиеся root-группы</caption>
+          <table v-else class="market-concentration__table">
+            <caption class="sr-only">Повторяющиеся root-группы</caption>
             <thead>
               <tr>
                 <th>WB root</th>
                 <th>Карточек</th>
-                <th>Доля</th>
+                <th>Доля карточек</th>
+                <th>Доля в топе</th>
+                <th>Отзывы</th>
                 <th>Лучшая позиция</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="cluster in concentration.rootClusters" :key="cluster.wbRootId">
+              <tr
+                v-for="cluster in activeRanking?.rootClusters ?? []"
+                :key="cluster.wbRootId"
+                class="market-concentration__table-row--interactive"
+                role="button"
+                tabindex="0"
+                @click="openProducts({ kind: 'root', key: cluster.wbRootId, title: `Карточки root ${cluster.wbRootId}` })"
+                @keydown.enter.prevent="openProducts({ kind: 'root', key: cluster.wbRootId, title: `Карточки root ${cluster.wbRootId}` })"
+                @keydown.space.prevent="openProducts({ kind: 'root', key: cluster.wbRootId, title: `Карточки root ${cluster.wbRootId}` })"
+              >
                 <td>{{ cluster.wbRootId }}</td>
                 <td>{{ formatNumber(cluster.productCount) }}</td>
                 <td>{{ formatPercent(cluster.sharePercent) }}</td>
-                <td>#{{ cluster.bestPosition }}</td>
+                <td>{{ formatPercent(cluster.top100SharePercent ?? 0) }}</td>
+                <td>{{ formatNumber(cluster.feedbackCount) }}</td>
+                <td>{{ formatPosition(cluster.bestPosition) }}</td>
               </tr>
             </tbody>
           </table>
@@ -247,9 +496,9 @@ function concentrationBarStyle(value: number | null | undefined): string {
   font-size: 1.1rem;
 }
 
-.market-concentration__header p {
-  margin: 0;
-  color: var(--text-muted);
+.market-concentration__body {
+  display: grid;
+  gap: var(--space-4);
 }
 
 .market-concentration__stats {
@@ -269,55 +518,14 @@ function concentrationBarStyle(value: number | null | undefined): string {
   background: var(--surface-raised);
 }
 
-.market-concentration__body {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.market-concentration__limitations {
-  display: grid;
-  gap: var(--space-2);
-  border: 1px solid var(--accent-warning-border);
-  border-radius: 8px;
-  background: var(--accent-warning-bg);
-  padding: var(--space-3);
-  color: var(--text-primary);
-}
-
-.market-concentration__limitations p {
+.market-concentration__warning {
   margin: 0;
-}
-
-.market-concentration__metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-
-.market-concentration__metric {
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-panel);
-  padding: var(--space-3);
-}
-
-.market-concentration__metric span {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 900;
-  text-transform: uppercase;
-}
-
-.market-concentration__metric strong {
-  display: block;
-  margin-top: var(--space-1);
+  border: 1px solid var(--accent-primary-border);
+  border-radius: 6px;
+  background: var(--accent-primary-soft);
   color: var(--text-primary);
-  font-size: 1.25rem;
-}
-
-.market-concentration__metric p {
-  margin: var(--space-1) 0 0;
-  color: var(--text-muted);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.86rem;
 }
 
 .market-concentration__grid {
@@ -387,6 +595,30 @@ function concentrationBarStyle(value: number | null | undefined): string {
   background: var(--accent-ember);
 }
 
+.market-concentration__selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.market-concentration__selector-button {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 800;
+  padding: 0.5rem 0.75rem;
+}
+
+.market-concentration__selector-button--active {
+  border-color: var(--accent-primary-border);
+  background: var(--accent-ember-soft);
+  color: var(--accent-ember-text-strong);
+}
+
 .market-concentration__table {
   width: 100%;
   border-collapse: collapse;
@@ -427,6 +659,30 @@ function concentrationBarStyle(value: number | null | undefined): string {
   border-bottom: 0;
 }
 
+.market-concentration__table-row--interactive {
+  cursor: pointer;
+}
+
+.market-concentration__table-row--interactive:hover td,
+.market-concentration__table-row--interactive:focus-visible td {
+  background: var(--accent-ember-soft);
+  color: var(--accent-ember-text-strong);
+}
+
+.market-concentration__table-row--interactive:focus-visible {
+  outline: 2px solid var(--accent-primary-border);
+  outline-offset: -2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 @keyframes concentration-spin {
   to {
     transform: rotate(360deg);
@@ -442,16 +698,6 @@ function concentrationBarStyle(value: number | null | undefined): string {
 
   .market-concentration__stats {
     justify-content: flex-start;
-  }
-
-  .market-concentration__metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 640px) {
-  .market-concentration__metrics {
-    grid-template-columns: 1fr;
   }
 }
 </style>

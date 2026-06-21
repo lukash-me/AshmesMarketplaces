@@ -61,6 +61,8 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IParserReviewReadService, ParserReviewReadService>();
         services.AddScoped<IParserRunReadService, ParserRunReadService>();
         services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
+        services.AddScoped<IPublicMarketConcentrationRefreshService, PublicMarketConcentrationRefreshService>();
+        services.AddScoped<IPublicMarketConcentrationReadService, PublicMarketConcentrationReadService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IReviewReplyService, ReviewReplyService>();

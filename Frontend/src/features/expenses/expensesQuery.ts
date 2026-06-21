@@ -47,17 +47,21 @@ export function parseExpensesQuery(query: LocationQuery): ExpenseQueryState {
   };
 }
 
-export function toExpensesApiParams(state: ExpenseQueryState): ExpenseListParams {
+export function toExpensesApiParams(state: ExpenseQueryState, idWorkspace: string): ExpenseListParams {
   return {
     page: state.page,
     pageSize: state.pageSize,
+    idWorkspace,
     ...(state.sort ? { sort: state.sort } : {}),
     ...toExpenseFilterParams(state)
   };
 }
 
-export function toExpensesSummaryParams(state: ExpenseQueryState): ExpenseSummaryParams {
-  return toExpenseFilterParams(state);
+export function toExpensesSummaryParams(state: ExpenseQueryState, idWorkspace: string): ExpenseSummaryParams {
+  return {
+    idWorkspace,
+    ...toExpenseFilterParams(state)
+  };
 }
 
 export function toExpensesRouteQuery(state: ExpenseQueryState): LocationQueryRaw {

@@ -102,6 +102,9 @@ public sealed class ExpensesController : ControllerBase
             ServiceErrorType.BadRequest => StatusCodes.Status400BadRequest,
             ServiceErrorType.NotFound => StatusCodes.Status404NotFound,
             ServiceErrorType.Conflict => StatusCodes.Status409Conflict,
+            ServiceErrorType.Forbidden => StatusCodes.Status403Forbidden,
+            ServiceErrorType.Unauthorized => StatusCodes.Status401Unauthorized,
+            ServiceErrorType.Unavailable => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError
         };
 
@@ -115,6 +118,9 @@ public sealed class ExpensesController : ControllerBase
             ServiceErrorType.BadRequest => "Invalid request",
             ServiceErrorType.NotFound => "Resource not found",
             ServiceErrorType.Conflict => "Conflict",
+            ServiceErrorType.Forbidden => "Forbidden",
+            ServiceErrorType.Unauthorized => "Unauthorized",
+            ServiceErrorType.Unavailable => "Service unavailable",
             _ => "Unexpected error"
         };
     }

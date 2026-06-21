@@ -247,49 +247,7 @@ const selectedGroup = computed(() =>
     : null
 );
 
-const hotProductsScheduleText = computed(() => {
-  const schedule = response.value?.schedule;
-  if (!schedule) {
-    return 'Перспективные товары обновляются автоматически один раз в сутки.';
-  }
-
-  return `Обновляется ежедневно в ${schedule.localTime}. Следующий запуск: ${formatScheduleDate(schedule.nextRunAtUtc)}.`;
-});
-
-const numberFormatter = new Intl.NumberFormat('ru-RU');
-
-const hotProductsRunStats = computed(() => {
-  const run = response.value?.run;
-  if (!run) {
-    return [];
-  }
-
-  return [
-    { label: 'Рассчитано товаров', value: numberFormatter.format(run.productsSent || 0) },
-    { label: 'Подборок', value: numberFormatter.format(response.value?.totalCount ?? run.itemsTotal ?? 0) },
-    { label: 'Эвристик найдено', value: numberFormatter.format(run.factorCodeCount || 0) }
-  ];
-});
-
 const hotProductsRunWarnings = computed(() => response.value?.run?.warnings ?? []);
-
-function formatScheduleDate(value: string | null | undefined): string {
-  if (!value) {
-    return 'ожидает назначения';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return 'ожидает назначения';
-  }
-
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date);
-}
 
 const factorSourceItems = computed(() => {
   if (!selectedGroup.value) {
@@ -458,7 +416,7 @@ function removeFilter(key: string): void {
   } else if (key === 'sourceSubcategory') {
     filters.sourceSubcategory = '';
   } else if (key.startsWith('factor:')) {
-    toggleFactor(key.slice('factor:'.length));
+    removeFactorFilter(key.slice('factor:'.length));
     return;
   }
 
@@ -482,6 +440,17 @@ function toggleFactor(key: string): void {
     filters.groupKey = '';
   }
   resetPagination();
+}
+
+function removeFactorFilter(key: string): void {
+  if (filters.factorKeys[0] === key) {
+    filters.factorKeys = [];
+    filters.groupKey = '';
+    resetPagination();
+    return;
+  }
+
+  toggleFactor(key);
 }
 
 function setFactorMode(mode: FactorMode): void {
@@ -1072,13 +1041,6 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 <template>
   <div ref="pageTop" class="market-opportunities">
     <PageHeader title="Перспективные товары" :description="hotProductsHeuristicsHelpText" />
-    <p class="analysis-schedule-note">{{ hotProductsScheduleText }}</p>
-    <dl v-if="hotProductsRunStats.length" class="analysis-run-stats" aria-label="Сводка расчета перспективных товаров">
-      <div v-for="item in hotProductsRunStats" :key="item.label" class="analysis-run-stat">
-        <dt>{{ item.label }}</dt>
-        <dd>{{ item.value }}</dd>
-      </div>
-    </dl>
     <p v-if="hotProductsRunWarnings.length" class="analysis-run-warning">
       Выдача требует диагностики: {{ hotProductsRunWarnings[0] }}
     </p>
@@ -1154,6 +1116,12 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
             <span>{{ groupVisibleCount(group) }}</span>
           </button>
         </div>
+
+        <EmptyState
+          v-if="!selectedGroup"
+          title="Выберите подборку"
+          description="И мы соберем для Вас карточки вместе с экспертными признаками"
+        />
 
         <div v-if="selectedGroup" class="opportunities-group">
           <div v-if="availableFactors.length" class="factor-filter">
@@ -1410,37 +1378,6 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 .market-opportunities {
   display: grid;
   gap: var(--space-4);
-}
-
-.analysis-schedule-note {
-  margin: calc(var(--space-2) * -1) 0 0;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.analysis-run-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: calc(var(--space-3) * -1) 0 0;
-}
-
-.analysis-run-stat {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-
-.analysis-run-stat dt {
-  margin: 0;
-}
-
-.analysis-run-stat dd {
-  margin: 0;
-  color: var(--text-strong);
-  font-weight: 800;
 }
 
 .analysis-run-warning {

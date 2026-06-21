@@ -1,6 +1,8 @@
 import { publicHttp } from '@/shared/api/http';
 
 import type {
+  PublicMarketConcentrationSnapshot,
+  PriceQualityPoint,
   PublicMarketIntelligence,
   PublicMarketIntelligenceParams
 } from './marketIntelligence.types';
@@ -10,4 +12,26 @@ export async function getPublicMarketIntelligence(
 ): Promise<PublicMarketIntelligence> {
   const response = await publicHttp.get<PublicMarketIntelligence>('/market-intelligence/public', { params });
   return response.data;
+}
+
+export async function getPublicMarketConcentration(
+  params: PublicMarketIntelligenceParams
+): Promise<PublicMarketConcentrationSnapshot> {
+  const response = await publicHttp.get<PublicMarketConcentrationSnapshot>('/market-intelligence/public/concentration', { params });
+  return response.data;
+}
+
+export async function getPublicMarketConcentrationProducts(
+  params: PublicMarketIntelligenceParams,
+  kind: 'seller' | 'brand' | 'root',
+  key: string
+): Promise<PriceQualityPoint[]> {
+  const response = await publicHttp.get<{ products: PriceQualityPoint[] }>('/market-intelligence/public/concentration/products', {
+    params: {
+      ...params,
+      kind,
+      key
+    }
+  });
+  return response.data.products;
 }

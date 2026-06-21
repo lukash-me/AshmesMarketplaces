@@ -50,6 +50,7 @@ onBeforeUnmount(() => {
 
 async function openMenu() {
   cancelClose();
+  search.value = '';
   open.value = true;
   await nextTick();
   searchInput.value?.focus();

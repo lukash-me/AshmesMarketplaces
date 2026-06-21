@@ -21,6 +21,7 @@ import { getWildberriesProductUrl } from './wildberriesLinks';
 const props = defineProps<{
   open: boolean;
   product: ParserProductListItem | null;
+  layer?: 'default' | 'modal';
 }>();
 
 const emit = defineEmits<{
@@ -487,7 +488,12 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="drawer-shell" role="presentation">
+    <div
+      v-if="open"
+      class="drawer-shell"
+      :class="{ 'drawer-shell--modal-layer': layer === 'modal' }"
+      role="presentation"
+    >
       <button class="drawer-shell__backdrop" type="button" aria-label="Закрыть карточку товара" @click="close" />
       <aside class="drawer app-surface" role="dialog" aria-modal="true" aria-labelledby="market-product-title">
         <header class="drawer__header">
@@ -798,6 +804,10 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
   position: fixed;
   inset: 0;
   z-index: 50;
+}
+
+.drawer-shell--modal-layer {
+  z-index: 90;
 }
 
 .drawer-shell__backdrop {

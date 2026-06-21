@@ -1,5 +1,6 @@
 using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
+using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Expenses.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Finance;
@@ -15,10 +16,12 @@ public sealed class ExpenseService : IExpenseService
     private const int CancelledStatus = 3;
 
     private readonly ApplicationDbContext _dbContext;
+    private readonly ICurrentUser _currentUser;
 
-    public ExpenseService(ApplicationDbContext dbContext)
+    public ExpenseService(ApplicationDbContext dbContext, ICurrentUser currentUser)
     {
         _dbContext = dbContext;
+        _currentUser = currentUser;
     }
 
     public async Task<ServiceResult<PagedResponse<ExpenseListItemResponse>>> GetListAsync(ExpenseListQuery query, CancellationToken cancellationToken)
@@ -26,6 +29,10 @@ public sealed class ExpenseService : IExpenseService
         var statusCheck = TryMapStatusKey(query.StatusKey, out var mappedStatus);
         if (!statusCheck)
             return ServiceResult<PagedResponse<ExpenseListItemResponse>>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
+
+        var access = await EnsureWorkspaceAccessAsync(query.IdWorkspace, cancellationToken);
+        if (!access.IsSuccess)
+            return ToResult<PagedResponse<ExpenseListItemResponse>>(access);
 
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
@@ -99,6 +106,10 @@ public sealed class ExpenseService : IExpenseService
         var statusCheck = TryMapStatusKey(query.StatusKey, out var mappedStatus);
         if (!statusCheck)
             return ServiceResult<ExpenseSummaryResponse>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
+
+        var access = await EnsureWorkspaceAccessAsync(query.IdWorkspace, cancellationToken);
+        if (!access.IsSuccess)
+            return ToResult<ExpenseSummaryResponse>(access);
 
         var expenses = ApplyFilters(_dbContext.Expenses.AsNoTracking(), query, mappedStatus);
         var rows = await expenses
@@ -175,6 +186,13 @@ public sealed class ExpenseService : IExpenseService
             return ServiceResult<ExpenseResponse>.BadRequest("Expense id is required.");
 
         var row = await GetProjectionByIdAsync(id, cancellationToken);
+        if (row is not null)
+        {
+            var access = await EnsureWorkspaceAccessAsync(row.IdWorkspace, cancellationToken);
+            if (!access.IsSuccess)
+                return ToResult<ExpenseResponse>(access);
+        }
+
         return row is null
             ? ServiceResult<ExpenseResponse>.NotFound("Expense was not found.")
             : ServiceResult<ExpenseResponse>.Success(MapToResponse(row));
@@ -186,16 +204,22 @@ public sealed class ExpenseService : IExpenseService
         if (!statusCheck)
             return ServiceResult<ExpenseResponse>.BadRequest("StatusKey must be one of: planned, pending_payment, paid, cancelled.");
 
-        var referenceCheck = await ValidateReferencesAsync(request.IdWorkspace, request.IdCategory, request.IdCreator, request.IdResponsible, cancellationToken);
+        var access = await EnsureWorkspaceAccessAsync(request.IdWorkspace, cancellationToken);
+        if (!access.IsSuccess)
+            return ToResult<ExpenseResponse>(access);
+
+        var referenceCheck = await ValidateReferencesAsync(request.IdWorkspace, request.IdCategory, request.IdResponsible, cancellationToken);
         if (referenceCheck is not null)
             return ServiceResult<ExpenseResponse>.Conflict(referenceCheck);
+
+        var creatorId = _currentUser.UserId!.Value;
 
         try
         {
             var expense = new Expense(
                 request.IdWorkspace,
                 request.IdCategory,
-                request.IdCreator,
+                creatorId,
                 request.IdResponsible,
                 request.Name,
                 request.Description,
@@ -238,7 +262,14 @@ public sealed class ExpenseService : IExpenseService
         if (expense is null)
             return ServiceResult<ExpenseResponse>.NotFound("Expense was not found.");
 
-        var referenceCheck = await ValidateReferencesAsync(request.IdWorkspace, request.IdCategory, request.IdCreator, request.IdResponsible, cancellationToken);
+        var access = await EnsureWorkspaceAccessAsync(expense.IdWorkspace, cancellationToken);
+        if (!access.IsSuccess)
+            return ToResult<ExpenseResponse>(access);
+
+        if (request.IdWorkspace != expense.IdWorkspace)
+            return ServiceResult<ExpenseResponse>.Forbidden("Expense cannot be moved to another workspace.");
+
+        var referenceCheck = await ValidateReferencesAsync(expense.IdWorkspace, request.IdCategory, request.IdResponsible, cancellationToken);
         if (referenceCheck is not null)
             return ServiceResult<ExpenseResponse>.Conflict(referenceCheck);
 
@@ -247,9 +278,9 @@ public sealed class ExpenseService : IExpenseService
         try
         {
             _ = new Expense(
-                request.IdWorkspace,
+                expense.IdWorkspace,
                 request.IdCategory,
-                request.IdCreator,
+                expense.IdCreator,
                 request.IdResponsible,
                 request.Name,
                 request.Description,
@@ -260,9 +291,7 @@ public sealed class ExpenseService : IExpenseService
                 request.DateUpdate);
 
             var entry = _dbContext.Entry(expense);
-            entry.Property(x => x.IdWorkspace).CurrentValue = request.IdWorkspace;
             entry.Property(x => x.IdCategory).CurrentValue = request.IdCategory;
-            entry.Property(x => x.IdCreator).CurrentValue = request.IdCreator;
             entry.Property(x => x.IdResponsible).CurrentValue = request.IdResponsible;
             entry.Property(x => x.Name).CurrentValue = request.Name;
             entry.Property(x => x.Description).CurrentValue = request.Description;
@@ -299,6 +328,10 @@ public sealed class ExpenseService : IExpenseService
         var expense = await _dbContext.Expenses.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (expense is null)
             return ServiceResult.NotFound("Expense was not found.");
+
+        var access = await EnsureWorkspaceAccessAsync(expense.IdWorkspace, cancellationToken);
+        if (!access.IsSuccess)
+            return access;
 
         _dbContext.Expenses.Remove(expense);
 
@@ -413,17 +446,35 @@ public sealed class ExpenseService : IExpenseService
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    private async Task<ServiceResult> EnsureWorkspaceAccessAsync(Guid? workspaceId, CancellationToken cancellationToken)
+    {
+        if (!workspaceId.HasValue || workspaceId.Value == Guid.Empty)
+            return ServiceResult.BadRequest("Workspace id is required.");
+
+        if (!_currentUser.IsAuthenticated || !_currentUser.UserId.HasValue)
+            return ServiceResult.Unauthorized("Authentication is required.");
+
+        var exists = await _dbContext.Workspaces
+            .AsNoTracking()
+            .AnyAsync(x => x.Id == workspaceId.Value, cancellationToken);
+        if (!exists)
+            return ServiceResult.NotFound("Workspace was not found.");
+
+        var hasAccess = await _dbContext.UserWorkspaces
+            .AsNoTracking()
+            .AnyAsync(x => x.IdWorkspace == workspaceId.Value && x.IdUser == _currentUser.UserId.Value, cancellationToken);
+
+        return hasAccess
+            ? ServiceResult.Success()
+            : ServiceResult.Forbidden("User does not have access to this workspace.");
+    }
+
     private async Task<string?> ValidateReferencesAsync(
         Guid idWorkspace,
         Guid? idCategory,
-        Guid idCreator,
         Guid? idResponsible,
         CancellationToken cancellationToken)
     {
-        var workspaceExists = await _dbContext.Workspaces.AsNoTracking().AnyAsync(x => x.Id == idWorkspace, cancellationToken);
-        if (!workspaceExists)
-            return "Workspace was not found.";
-
         if (idCategory.HasValue)
         {
             var categoryExists = await _dbContext.ExpenseCategories.AsNoTracking().AnyAsync(x => x.Id == idCategory.Value, cancellationToken);
@@ -431,18 +482,31 @@ public sealed class ExpenseService : IExpenseService
                 return "Expense category was not found.";
         }
 
-        var creatorExists = await _dbContext.Users.AsNoTracking().AnyAsync(x => x.Id == idCreator, cancellationToken);
-        if (!creatorExists)
-            return "Creator user was not found.";
-
         if (idResponsible.HasValue)
         {
-            var responsibleExists = await _dbContext.Users.AsNoTracking().AnyAsync(x => x.Id == idResponsible.Value, cancellationToken);
+            var responsibleExists = await _dbContext.UserWorkspaces
+                .AsNoTracking()
+                .AnyAsync(x => x.IdWorkspace == idWorkspace && x.IdUser == idResponsible.Value, cancellationToken);
             if (!responsibleExists)
-                return "Responsible user was not found.";
+                return "Responsible user must belong to the workspace.";
         }
 
         return null;
+    }
+
+    private static ServiceResult<T> ToResult<T>(ServiceResult result)
+    {
+        var error = result.Error!;
+        return error.Type switch
+        {
+            ServiceErrorType.BadRequest => ServiceResult<T>.BadRequest(error.Message),
+            ServiceErrorType.NotFound => ServiceResult<T>.NotFound(error.Message),
+            ServiceErrorType.Conflict => ServiceResult<T>.Conflict(error.Message),
+            ServiceErrorType.Forbidden => ServiceResult<T>.Forbidden(error.Message),
+            ServiceErrorType.Unauthorized => ServiceResult<T>.Unauthorized(error.Message),
+            ServiceErrorType.Unavailable => ServiceResult<T>.Unavailable(error.Message),
+            _ => ServiceResult<T>.Conflict(error.Message)
+        };
     }
 
     private static ExpenseListItemResponse MapToListItemResponse(ExpenseProjection expense)

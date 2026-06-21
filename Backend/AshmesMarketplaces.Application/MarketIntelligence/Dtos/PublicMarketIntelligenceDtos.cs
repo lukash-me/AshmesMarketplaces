@@ -28,6 +28,23 @@ public sealed record PublicMarketIntelligenceDto(
     PriceCorridorsDto PriceCorridors,
     IReadOnlyList<string> Limitations);
 
+public sealed record PublicMarketConcentrationSnapshotDto(
+    PublicMarketContextDto Context,
+    ObservationWindowDto ObservationWindow,
+    MarketConcentrationDto MarketConcentration,
+    PriceQualityMapDto PriceQualityMap,
+    int SampleSize,
+    DateTime? CalculatedAtUtc,
+    DateTime? LatestObservedAtUtc,
+    string Status,
+    IReadOnlyList<string> Limitations);
+
+public sealed record PublicMarketConcentrationProductsDto(
+    PublicMarketContextDto Context,
+    string Kind,
+    string Key,
+    IReadOnlyList<PriceQualityPointDto> Products);
+
 public sealed record PublicMarketContextDto(
     string Marketplace,
     string? SourceCategory,
@@ -179,20 +196,42 @@ public sealed record MarketConcentrationDto(
     IReadOnlyList<MarketConcentrationLeaderDto> SellerLeaders,
     IReadOnlyList<MarketConcentrationLeaderDto> BrandLeaders,
     IReadOnlyList<MarketConcentrationRootClusterDto> RootClusters,
+    IReadOnlyList<MarketConcentrationRankingDto> Rankings,
     string Insight,
     IReadOnlyList<string> Limitations);
+
+public sealed record MarketConcentrationRankingDto(
+    string Key,
+    string Title,
+    int SampleSize,
+    decimal Top3SellersSharePercent,
+    decimal Top5SellersSharePercent,
+    decimal Hhi,
+    decimal NormalizedConcentrationScore,
+    IReadOnlyList<MarketConcentrationLeaderDto> SellerLeaders,
+    IReadOnlyList<MarketConcentrationLeaderDto> BrandLeaders,
+    IReadOnlyList<MarketConcentrationRootClusterDto> RootClusters,
+    string Insight);
 
 public sealed record MarketConcentrationLeaderDto(
     string Name,
     int SlotsCount,
     decimal SharePercent,
-    int BestPosition);
+    int? BestPosition,
+    int FeedbackCount,
+    int RankedSlotsCount,
+    decimal Top100SharePercent,
+    decimal FeedbackSharePercent);
 
 public sealed record MarketConcentrationRootClusterDto(
     string WbRootId,
     int ProductCount,
-    int BestPosition,
-    decimal SharePercent);
+    int? BestPosition,
+    decimal SharePercent,
+    int FeedbackCount,
+    int RankedSlotsCount,
+    decimal Top100SharePercent,
+    decimal FeedbackSharePercent);
 
 public sealed record PriceQualityMapDto(
     IReadOnlyList<PriceQualityPointDto> Points,
