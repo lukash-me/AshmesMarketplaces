@@ -7,7 +7,6 @@ import { getProblemMessage } from '@/shared/api/problemDetails';
 import Button from '@/shared/ui/Button.vue';
 import Input from '@/shared/ui/Input.vue';
 
-import { createAccessRequest } from './auth.api';
 import { useAuthPromptStore } from './authPrompt.store';
 import { useAuthStore } from './auth.store';
 
@@ -18,14 +17,20 @@ const router = useRouter();
 
 const login = ref('');
 const password = ref('');
-const contact = ref('');
-const comment = ref('');
+const registerEmail = ref('');
+const registerPassword = ref('');
+const registerPasswordRepeat = ref('');
 const error = ref('');
 const status = ref('');
 const loading = ref(false);
 
 const canLogin = computed(() => login.value.trim().length > 0 && password.value.length > 0);
-const canRequestAccess = computed(() => contact.value.trim().length > 0);
+const canRegister = computed(
+  () =>
+    registerEmail.value.trim().length > 0 &&
+    registerPassword.value.length >= 8 &&
+    registerPassword.value === registerPasswordRepeat.value
+);
 
 watch(
   () => [prompt.open, prompt.mode] as const,
@@ -58,8 +63,23 @@ async function submitLogin(): Promise<void> {
   }
 }
 
-async function submitAccessRequest(): Promise<void> {
-  if (!canRequestAccess.value || loading.value) {
+async function submitRegister(): Promise<void> {
+  if (loading.value) {
+    return;
+  }
+
+  if (registerEmail.value.trim().length === 0) {
+    error.value = 'Введите email для регистрации.';
+    return;
+  }
+
+  if (registerPassword.value.length < 8) {
+    error.value = 'Пароль должен содержать минимум 8 символов.';
+    return;
+  }
+
+  if (registerPassword.value !== registerPasswordRepeat.value) {
+    error.value = 'Пароли не совпадают.';
     return;
   }
 
@@ -68,16 +88,14 @@ async function submitAccessRequest(): Promise<void> {
   status.value = '';
 
   try {
-    await createAccessRequest({
-      contact: contact.value.trim(),
-      comment: comment.value.trim(),
-      sourcePath: route.fullPath
+    await auth.register({
+      email: registerEmail.value.trim(),
+      password: registerPassword.value
     });
-    contact.value = '';
-    comment.value = '';
-    status.value = 'Заявка отправлена. Мы свяжемся с вами и откроем доступ.';
+    prompt.close();
+    await router.replace({ path: route.path, query: withoutAuthQuery(route.query) });
   } catch (err) {
-    error.value = getProblemMessage(err, 'Не удалось отправить заявку.');
+    error.value = getProblemMessage(err, 'Не удалось зарегистрироваться.');
   } finally {
     loading.value = false;
   }
@@ -103,8 +121,8 @@ function withoutAuthQuery(query: typeof route.query): Record<string, unknown> {
       <section class="auth-modal__panel" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
         <header class="auth-modal__header">
           <div>
-            <h2 id="auth-modal-title">Доступ к Ashmes</h2>
-            <p>{{ prompt.message || 'Войдите или оставьте заявку, чтобы пользоваться персональными инструментами.' }}</p>
+            <h2 id="auth-modal-title">Доступ к Ashmes Marketplaces</h2>
+            <p>{{ prompt.message || 'Войдите или зарегистрируйтесь для доступа к персональным инструментам.' }}</p>
           </div>
           <button class="app-icon-button" type="button" aria-label="Закрыть" @click="close">
             <X :size="18" />
@@ -118,15 +136,15 @@ function withoutAuthQuery(query: typeof route.query): Record<string, unknown> {
             class="auth-modal__tab"
             @click="prompt.showLogin(prompt.message)"
           >
-            Войти
+            Вход
           </button>
           <button
             type="button"
-            :class="{ 'auth-modal__tab--active': prompt.mode === 'access' }"
+            :class="{ 'auth-modal__tab--active': prompt.mode === 'register' }"
             class="auth-modal__tab"
-            @click="prompt.showAccess(prompt.message)"
+            @click="prompt.showRegister(prompt.message)"
           >
-            Получить доступ
+            Регистрация
           </button>
         </div>
 
@@ -134,7 +152,7 @@ function withoutAuthQuery(query: typeof route.query): Record<string, unknown> {
           <Input
             id="auth-login"
             v-model="login"
-            label="Логин"
+            label="Email"
             autocomplete="username"
             placeholder="seller@example.com"
           />
@@ -151,27 +169,34 @@ function withoutAuthQuery(query: typeof route.query): Record<string, unknown> {
           <Button type="submit" variant="primary" :disabled="!canLogin" :loading="loading">Войти</Button>
         </form>
 
-        <form v-else class="auth-modal__form" @submit.prevent="submitAccessRequest">
+        <form v-else class="auth-modal__form" @submit.prevent="submitRegister">
           <Input
-            id="auth-contact"
-            v-model="contact"
-            label="Email или телефон"
+            id="auth-register-email"
+            v-model="registerEmail"
+            label="Email"
             autocomplete="email"
             placeholder="seller@example.com"
           />
-          <label class="auth-modal__field" for="auth-comment">
-            <span>Комментарий</span>
-            <textarea
-              id="auth-comment"
-              v-model="comment"
-              rows="4"
-              placeholder="Коротко опишите, какие товары и задачи хотите анализировать"
-            />
-          </label>
+          <Input
+            id="auth-register-password"
+            v-model="registerPassword"
+            label="Пароль"
+            type="password"
+            autocomplete="new-password"
+            placeholder="Минимум 8 символов"
+          />
+          <Input
+            id="auth-register-password-repeat"
+            v-model="registerPasswordRepeat"
+            label="Пароль еще раз"
+            type="password"
+            autocomplete="new-password"
+            placeholder="Повторите пароль"
+          />
           <p v-if="error" class="auth-modal__error">{{ error }}</p>
           <p v-if="status" class="auth-modal__status">{{ status }}</p>
-          <Button type="submit" variant="primary" :disabled="!canRequestAccess" :loading="loading">
-            Отправить заявку
+          <Button type="submit" variant="primary" :disabled="!canRegister" :loading="loading">
+            Зарегистрироваться
           </Button>
         </form>
       </section>
@@ -213,11 +238,16 @@ function withoutAuthQuery(query: typeof route.query): Record<string, unknown> {
   font-size: 1.1rem;
 }
 
-.auth-modal__header p {
+.auth-modal__header p,
+.auth-modal__hint {
   margin: var(--space-1) 0 0;
   color: var(--color-text-muted);
   font-size: 0.875rem;
   line-height: 1.45;
+}
+
+.auth-modal__hint {
+  margin: 0;
 }
 
 .auth-modal__tabs {
@@ -242,36 +272,15 @@ function withoutAuthQuery(query: typeof route.query): Record<string, unknown> {
   color: var(--accent-ember-text-strong);
 }
 
-.auth-modal__form,
-.auth-modal__field {
+.auth-modal__form {
   display: grid;
   gap: var(--space-3);
 }
 
-.auth-modal__field span {
-  color: var(--color-text-muted);
-  font-size: 0.72rem;
-  font-weight: 680;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.auth-modal__field textarea {
-  width: 100%;
-  resize: vertical;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text);
-  padding: var(--space-3);
-  font: inherit;
-}
-
-.auth-modal__field textarea:focus {
-  border-color: var(--color-primary);
-  background: var(--surface-control-focus);
-  box-shadow: var(--focus-ring);
-  outline: none;
+.auth-modal :deep(.field__label) {
+  font-size: 0.8125rem;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .auth-modal__error,

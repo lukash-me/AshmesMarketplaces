@@ -16,8 +16,8 @@ watch(
   (authQuery) => {
     if (authQuery === 'login') {
       authPrompt.showLogin();
-    } else if (authQuery === 'access') {
-      authPrompt.showAccess();
+    } else if (authQuery === 'access' || authQuery === 'register') {
+      authPrompt.showRegister();
     }
   },
   { immediate: true }

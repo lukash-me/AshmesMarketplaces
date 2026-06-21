@@ -38,7 +38,7 @@ async function signOut() {
     </div>
     <div v-else class="topbar__guest">
       <button class="topbar__guest-link" type="button" @click="authPrompt.showLogin()">Войти</button>
-      <button class="topbar__guest-button" type="button" @click="authPrompt.showAccess()">Получить доступ</button>
+      <button class="topbar__guest-button" type="button" @click="authPrompt.showRegister()">Регистрация</button>
     </div>
   </header>
 </template>

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
-export type AuthPromptMode = 'login' | 'access';
+export type AuthPromptMode = 'login' | 'register';
 
 export const useAuthPromptStore = defineStore('authPrompt', () => {
   const open = ref(false);
@@ -14,10 +14,14 @@ export const useAuthPromptStore = defineStore('authPrompt', () => {
     open.value = true;
   }
 
-  function showAccess(text = ''): void {
-    mode.value = 'access';
+  function showRegister(text = ''): void {
+    mode.value = 'register';
     message.value = text;
     open.value = true;
+  }
+
+  function showAccess(text = ''): void {
+    showRegister(text);
   }
 
   function close(): void {
@@ -30,6 +34,7 @@ export const useAuthPromptStore = defineStore('authPrompt', () => {
     mode,
     message,
     showLogin,
+    showRegister,
     showAccess,
     close
   };

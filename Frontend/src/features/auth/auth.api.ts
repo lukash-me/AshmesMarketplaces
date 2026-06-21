@@ -6,11 +6,17 @@ import type {
   AuthUser,
   LoginRequest,
   LoginResponse,
+  RegisterRequest,
   RefreshRequest
 } from './auth.types';
 
 export async function login(request: LoginRequest): Promise<LoginResponse> {
   const response = await publicHttp.post<LoginResponse>('/auth/login', request);
+  return response.data;
+}
+
+export async function register(request: RegisterRequest): Promise<LoginResponse> {
+  const response = await publicHttp.post<LoginResponse>('/auth/register', request);
   return response.data;
 }
 

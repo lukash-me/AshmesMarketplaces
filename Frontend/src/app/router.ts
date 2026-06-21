@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 
 import AppLayout from '@/layouts/AppLayout.vue';
 import { useAuthStore } from '@/features/auth/auth.store';
+import MarketConcentrationPage from '@/features/market-intelligence/MarketConcentrationPage.vue';
 import MarketIntelligencePage from '@/features/market-intelligence/MarketIntelligencePage.vue';
 import MarketOpportunitiesPage from '@/features/market-opportunities/MarketOpportunitiesPage.vue';
 import ParserTestingPage from '@/features/parser-testing/ParserTestingPage.vue';
@@ -50,6 +51,7 @@ export const router = createRouter({
         { path: 'workspace/market-products', name: 'workspace-market-products', component: WorkspaceMarketProductsPage },
         { path: 'market/products', name: 'market-products', component: ParserProductsPage },
         { path: 'market/opportunities', name: 'market-opportunities', component: MarketOpportunitiesPage },
+        { path: 'market/intelligence/concentration', name: 'market-intelligence-concentration', component: MarketConcentrationPage },
         { path: 'market/intelligence', name: 'market-intelligence', component: MarketIntelligencePage },
         { path: 'testing', name: 'parser-testing', component: ParserTestingPage },
         { path: 'products', name: 'products', component: ProductsPage },
@@ -69,6 +71,13 @@ export const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+  if (to.path === '/market/intelligence' && to.hash === '#market-concentration') {
+    return {
+      path: '/market/intelligence/concentration',
+      query: to.query
+    };
+  }
+
   const auth = useAuthStore();
 
   auth.hydrate();

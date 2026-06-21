@@ -2,13 +2,10 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import {
-  BarChart3,
   Boxes,
   BookmarkCheck,
   CreditCard,
-  FlaskConical,
   LayoutDashboard,
-  Lightbulb,
   Radar,
   Settings,
   X
@@ -28,10 +25,11 @@ const route = useRoute();
 const workspaceMarketProductsPath = '/workspace/market-products';
 const workspaceMarketProductCreatePath = '/workspace/market-products/create';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
+const marketProductsPath = '/market/products';
+const marketOpportunitiesPath = '/market/opportunities';
 const marketIntelligencePath = '/market/intelligence';
+const marketIntelligenceConcentrationPath = '/market/intelligence/concentration';
 const marketIntelligencePriceQualityHash = '#price-quality';
-const marketIntelligencePriceCorridorsHash = '#price-corridors';
-const marketIntelligenceConcentrationHash = '#market-concentration';
 const ordersPath = '/orders';
 const ordersAvailabilityPath = '/orders/availability';
 const ordersSections: Array<{ key: OrdersSection; label: string }> = [
@@ -46,27 +44,36 @@ const primaryNavItems = [
   { to: '/overview', label: 'Обзор', icon: LayoutDashboard }
 ];
 
-const marketNavItems = [
-  { to: '/market/products', label: 'Аналитика рынка', icon: BarChart3 },
-  { to: '/market/opportunities', label: 'Перспективные товары', icon: Lightbulb }
-];
-
 const secondaryNavItems = [
-  { to: '/testing', label: 'Тестирование', icon: FlaskConical },
   { to: '/expenses', label: 'Расходы', icon: CreditCard },
   { to: '/settings/access', label: 'Доступы', icon: Settings }
 ];
 
-const isMarketIntelligenceRoute = computed(() => route.path === marketIntelligencePath);
-const activeMarketIntelligenceSection = computed(() =>
-  isMarketIntelligenceRoute.value
-    ? route.hash === marketIntelligencePriceCorridorsHash
-      ? 'price-corridors'
-      : route.hash === marketIntelligenceConcentrationHash
-        ? 'market-concentration'
-      : 'price-quality'
-    : null
+const isMarketIntelligenceRoute = computed(() =>
+  route.path === marketOpportunitiesPath
+  || route.path === marketProductsPath
+  || route.path === marketIntelligencePath
+  || route.path === marketIntelligenceConcentrationPath
 );
+const activeMarketIntelligenceSection = computed(() => {
+  if (route.path === marketOpportunitiesPath) {
+    return 'market-opportunities';
+  }
+
+  if (route.path === marketProductsPath) {
+    return 'market-products';
+  }
+
+  if (route.path === marketIntelligenceConcentrationPath) {
+    return 'market-concentration';
+  }
+
+  if (route.path === marketIntelligencePath) {
+    return 'price-quality';
+  }
+
+  return null;
+});
 const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(workspaceMarketProductsPath));
 const isWorkspaceMarketProductCreateRoute = computed(() => route.path === workspaceMarketProductCreatePath);
 const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
@@ -187,22 +194,11 @@ function ordersSectionTo(section: OrdersSection) {
         </div>
       </div>
 
-      <RouterLink
-        v-for="item in marketNavItems"
-        :key="item.to"
-        class="sidebar__link"
-        :to="item.to"
-        @click="$emit('close')"
-      >
-        <component :is="item.icon" :size="17" />
-        <span>{{ item.label }}</span>
-      </RouterLink>
-
       <div class="sidebar__group">
         <RouterLink
           class="sidebar__link"
           :class="{ 'sidebar__link--active': isMarketIntelligenceRoute }"
-          :to="{ path: marketIntelligencePath }"
+          :to="{ path: marketOpportunitiesPath }"
           @click="$emit('close')"
         >
           <Radar :size="17" />
@@ -210,6 +206,22 @@ function ordersSectionTo(section: OrdersSection) {
         </RouterLink>
 
         <div class="sidebar__subnav" aria-label="Разделы маркетинговой разведки">
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'market-opportunities' }"
+            :to="{ path: marketOpportunitiesPath }"
+            @click="$emit('close')"
+          >
+            Перспективные товары
+          </RouterLink>
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'market-products' }"
+            :to="{ path: marketProductsPath }"
+            @click="$emit('close')"
+          >
+            Аналитика рынка
+          </RouterLink>
           <RouterLink
             class="sidebar__sublink"
             :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'price-quality' }"
@@ -220,16 +232,8 @@ function ordersSectionTo(section: OrdersSection) {
           </RouterLink>
           <RouterLink
             class="sidebar__sublink"
-            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'price-corridors' }"
-            :to="{ path: marketIntelligencePath, hash: marketIntelligencePriceCorridorsHash }"
-            @click="$emit('close')"
-          >
-            Ценовые коридоры
-          </RouterLink>
-          <RouterLink
-            class="sidebar__sublink"
             :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'market-concentration' }"
-            :to="{ path: marketIntelligencePath, hash: marketIntelligenceConcentrationHash }"
+            :to="{ path: marketIntelligenceConcentrationPath }"
             @click="$emit('close')"
           >
             Концентрация рынка

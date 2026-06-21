@@ -5,7 +5,7 @@ import { configureHttpAuth } from '@/shared/api/http';
 
 import * as authApi from './auth.api';
 import { useAuthPromptStore } from './authPrompt.store';
-import type { AuthUser, LoginRequest, LoginResponse, StoredAuthSession } from './auth.types';
+import type { AuthUser, LoginRequest, LoginResponse, RegisterRequest, StoredAuthSession } from './auth.types';
 
 const STORAGE_KEY = 'ashmes.auth.session';
 
@@ -70,6 +70,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(request: LoginRequest): Promise<void> {
     const session = await authApi.login(request);
+    applySession(session);
+    persist();
+  }
+
+  async function register(request: RegisterRequest): Promise<void> {
+    const session = await authApi.register(request);
     applySession(session);
     persist();
   }
@@ -160,6 +166,7 @@ export const useAuthStore = defineStore('auth', () => {
     hydrate,
     bootstrap,
     login,
+    register,
     logout,
     refreshSession,
     clearSession

@@ -24,7 +24,7 @@ const prompt = useAuthPromptStore();
     </div>
     <div class="auth-required__actions">
       <Button type="button" variant="primary" @click="prompt.showLogin()">Авторизоваться</Button>
-      <Button type="button" variant="secondary" @click="prompt.showAccess()">Получить доступ</Button>
+      <Button type="button" variant="secondary" @click="prompt.showRegister()">Регистрация</Button>
     </div>
   </section>
 </template>

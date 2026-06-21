@@ -3,6 +3,11 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface RegisterRequest {
+  email: string;
+  password: string;
+}
+
 export interface AccessRequestPayload {
   contact: string;
   comment: string;

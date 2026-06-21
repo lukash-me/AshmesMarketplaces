@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { SlidersHorizontal, X } from 'lucide-vue-next';
 
 import MarketFilterSelect from '@/features/parser-products/MarketFilterSelect.vue';
@@ -24,6 +24,7 @@ import PageHeader from '@/widgets/PageHeader.vue';
 import { hotProductsHeuristicsHelpText } from './hotProductsHeuristicsCatalog';
 
 type FactorMode = 'any' | 'all';
+const OPPORTUNITY_ITEMS_PER_PAGE = 14;
 
 type OpportunityFilters = {
   search: string;
@@ -150,17 +151,26 @@ const contentEvidenceFactorCodes = new Set([
   'missing_key_specs'
 ]);
 const negativeFactorCodes = new Set([
+  'good_reviews_weak_visibility',
   'bad_recent_reviews',
   'low_review_count_top_position',
+  'high_position_weak_card',
+  'good_reviews_weak_card',
   'expensive_without_advantage',
   'top_low_stock',
+  'good_reviews_low_stock',
+  'good_reviews_high_price',
+  'duplicate_cards',
   'weak_description',
   'weak_visible_description',
   'missing_key_specs',
   'repeated_review_complaint',
   'seller_stock_slow_central_delivery',
   'top_low_stock_slow_central_delivery',
-  'top_slow_central_delivery'
+  'top_slow_central_delivery',
+  'top_slow_cluster_region_delivery',
+  'peers_slow_region_delivery',
+  'slow_delivery'
 ]);
 
 const hiddenFactorCodes = new Set([
@@ -213,6 +223,8 @@ const loading = ref(false);
 const filterOptionsLoading = ref(false);
 const error = ref('');
 const filterError = ref('');
+const currentPage = ref(1);
+const pageTop = ref<HTMLElement | null>(null);
 let loadVersion = 0;
 
 const filters = reactive<OpportunityFilters>({
@@ -230,9 +242,9 @@ const orderedGroups = computed(() =>
 );
 
 const selectedGroup = computed(() =>
-  orderedGroups.value.find((group) => group.key === filters.groupKey)
-  ?? orderedGroups.value[0]
-  ?? null
+  filters.groupKey && filters.factorKeys.includes(filters.groupKey)
+    ? orderedGroups.value.find((group) => group.key === filters.groupKey) ?? null
+    : null
 );
 
 const hotProductsScheduleText = computed(() => {
@@ -321,6 +333,10 @@ const activeItems = computed(() => {
   return filterItems(visibleGroupItems(selectedGroup.value));
 });
 
+const activeTotalPages = computed(() => pageCount(activeItems.value.length));
+const paginatedActiveItems = computed(() => paginateItems(activeItems.value, currentPage.value));
+const activePaginationItems = computed(() => buildPaginationItems(currentPage.value, activeTotalPages.value));
+
 const activeClusters = computed(() => {
   if (selectedGroup.value?.key !== 'duplicate_cards') {
     return [];
@@ -335,6 +351,27 @@ const activeClusters = computed(() => {
 });
 
 const fallbackItems = computed(() => (orderedGroups.value.length ? [] : filterItems(response.value?.items ?? [])));
+const fallbackTotalPages = computed(() => pageCount(fallbackItems.value.length));
+const paginatedFallbackItems = computed(() => paginateItems(fallbackItems.value, currentPage.value));
+const fallbackPaginationItems = computed(() => buildPaginationItems(currentPage.value, fallbackTotalPages.value));
+
+watch(
+  () => [activeItems.value.length, fallbackItems.value.length, activeTotalPages.value, fallbackTotalPages.value] as const,
+  () => {
+    const totalPages = activeItems.value.length ? activeTotalPages.value : fallbackTotalPages.value;
+    if (currentPage.value > totalPages) {
+      currentPage.value = totalPages;
+    }
+  }
+);
+
+watch(
+  () => filters.sourceSubcategory,
+  () => {
+    resetPagination();
+    void loadOpportunities();
+  }
+);
 
 const chips = computed(() => {
   const result: Array<{ key: string; label: string; value: string }> = [];
@@ -402,17 +439,17 @@ async function loadOpportunities(): Promise<void> {
   }
 }
 
-function applyFilters(): void {
-  void loadOpportunities();
-}
-
 function resetFilters(): void {
+  const sourceSubcategoryChanged = Boolean(filters.sourceSubcategory);
   filters.search = '';
   filters.sourceSubcategory = '';
   filters.groupKey = '';
   filters.factorKeys = [];
   filters.factorMode = 'any';
-  void loadOpportunities();
+  resetPagination();
+  if (!sourceSubcategoryChanged && !response.value) {
+    void loadOpportunities();
+  }
 }
 
 function removeFilter(key: string): void {
@@ -425,23 +462,81 @@ function removeFilter(key: string): void {
     return;
   }
 
+  resetPagination();
   void loadOpportunities();
 }
 
 function selectGroup(group: HotProductsGroup): void {
   filters.groupKey = group.key;
-  filters.factorKeys = [];
-  filters.factorMode = 'any';
+  filters.factorKeys = [group.key];
+  resetPagination();
 }
 
 function toggleFactor(key: string): void {
-  filters.factorKeys = filters.factorKeys.includes(key)
+  const nextFactorKeys = filters.factorKeys.includes(key)
     ? filters.factorKeys.filter((value) => value !== key)
     : [...filters.factorKeys, key];
+
+  filters.factorKeys = nextFactorKeys;
+  if (key === filters.groupKey && !nextFactorKeys.includes(key)) {
+    filters.groupKey = '';
+  }
+  resetPagination();
 }
 
 function setFactorMode(mode: FactorMode): void {
   filters.factorMode = mode;
+  resetPagination();
+}
+
+function resetPagination(): void {
+  currentPage.value = 1;
+}
+
+function pageCount(totalItems: number): number {
+  return Math.max(1, Math.ceil(totalItems / OPPORTUNITY_ITEMS_PER_PAGE));
+}
+
+function paginateItems<T>(items: T[], page: number): T[] {
+  const start = (page - 1) * OPPORTUNITY_ITEMS_PER_PAGE;
+  return items.slice(start, start + OPPORTUNITY_ITEMS_PER_PAGE);
+}
+
+function setPage(page: number, totalPages: number): void {
+  currentPage.value = Math.min(Math.max(page, 1), totalPages);
+  scrollToPageTop();
+}
+
+function scrollToPageTop(): void {
+  requestAnimationFrame(() => {
+    pageTop.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+function buildPaginationItems(current: number, totalPages: number): Array<number | string> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (current <= 4) {
+    return [1, 2, 3, 4, 5, 'end-ellipsis', totalPages];
+  }
+
+  if (current >= totalPages - 3) {
+    return [1, 'start-ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [
+    1,
+    'start-ellipsis',
+    current - 2,
+    current - 1,
+    current,
+    current + 1,
+    current + 2,
+    'end-ellipsis',
+    totalPages
+  ];
 }
 
 function groupOrder(key: string): number {
@@ -548,8 +643,12 @@ function matchesFactorFilter(item: HotProductRecommendationItem): boolean {
 
   const codes = new Set(visibleFactorTags(item).map((factor) => factor.code));
   return filters.factorMode === 'all'
-    ? filters.factorKeys.every((key) => codes.has(key))
-    : filters.factorKeys.some((key) => codes.has(key));
+    ? filters.factorKeys.every((key) => matchesFactorKey(codes, key))
+    : filters.factorKeys.some((key) => matchesFactorKey(codes, key));
+}
+
+function matchesFactorKey(codes: Set<string>, key: string): boolean {
+  return (compositeGroupFactorCodes[key] ?? [key]).some((code) => codes.has(code));
 }
 
 function visibleFactorTags(item: HotProductRecommendationItem): HotProductRecommendationFactor[] {
@@ -871,6 +970,20 @@ function factorText(factor: HotProductRecommendationFactor): string {
   return `${label}: ${value}`;
 }
 
+function factorTextParts(factor: HotProductRecommendationFactor): { title: string; details: string } {
+  const text = factorText(factor);
+  const delimiterIndex = text.indexOf(':');
+
+  if (delimiterIndex < 0) {
+    return { title: text, details: '' };
+  }
+
+  return {
+    title: text.slice(0, delimiterIndex),
+    details: text.slice(delimiterIndex)
+  };
+}
+
 function factorTagClasses(factor: HotProductRecommendationFactor): string[] {
   const text = factorText(factor);
   return [
@@ -884,12 +997,12 @@ function hasPeerReviewComparison(value: unknown): boolean {
 }
 
 function factorTone(factor: HotProductRecommendationFactor): string {
-  if (factor.direction === 'positive') {
-    return 'positive';
-  }
-
   if (factor.direction === 'negative' || negativeFactorCodes.has(factor.code)) {
     return 'negative';
+  }
+
+  if (factor.direction === 'positive') {
+    return 'positive';
   }
 
   return 'neutral';
@@ -957,7 +1070,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 </script>
 
 <template>
-  <div class="market-opportunities">
+  <div ref="pageTop" class="market-opportunities">
     <PageHeader title="Перспективные товары" :description="hotProductsHeuristicsHelpText" />
     <p class="analysis-schedule-note">{{ hotProductsScheduleText }}</p>
     <dl v-if="hotProductsRunStats.length" class="analysis-run-stats" aria-label="Сводка расчета перспективных товаров">
@@ -970,7 +1083,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
       Выдача требует диагностики: {{ hotProductsRunWarnings[0] }}
     </p>
 
-    <form class="filters app-surface" @submit.prevent="applyFilters">
+    <form class="filters app-surface" @submit.prevent>
       <div class="filters__search">
         <Input
           v-model="filters.search"
@@ -978,7 +1091,6 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
           placeholder="Название, WB id, бренд или продавец"
         />
         <div class="filters__actions">
-          <Button class="filters__apply" type="submit">Применить</Button>
           <Button v-if="chips.length" type="button" variant="ghost" @click="resetFilters">Сбросить</Button>
         </div>
       </div>
@@ -1074,6 +1186,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                 type="button"
                 class="factor-filter__chip"
                 :class="{ 'factor-filter__chip--active': filters.factorKeys.includes(factor.key) }"
+                :disabled="filters.factorKeys.includes(factor.key)"
                 @click="toggleFactor(factor.key)"
               >
                 {{ factor.label }}
@@ -1119,7 +1232,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 
           <div v-if="activeItems.length" class="opportunities-grid">
             <article
-              v-for="item in activeItems"
+              v-for="item in paginatedActiveItems"
               :key="item.id"
               class="opportunity-card app-operator-card app-operator-card--interactive"
               :class="{ 'opportunity-card--disabled': !item.parserProductRowId }"
@@ -1138,7 +1251,9 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                     class="opportunity-tag"
                     :class="factorTagClasses(factor)"
                   >
-                    {{ factorText(factor) }}
+                    <span class="opportunity-tag__text">
+                      <strong>{{ factorTextParts(factor).title }}</strong>{{ factorTextParts(factor).details }}
+                    </span>
                     <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
                   </span>
                 </div>
@@ -1154,6 +1269,44 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
               </div>
             </article>
           </div>
+
+          <nav
+            v-if="activeItems.length > OPPORTUNITY_ITEMS_PER_PAGE"
+            class="pager opportunities-pagination"
+            aria-label="Пагинация перспективных товаров"
+          >
+            <Button
+              class="pager__nav"
+              variant="secondary"
+              :disabled="currentPage <= 1"
+              @click="setPage(currentPage - 1, activeTotalPages)"
+            >
+              Назад
+            </Button>
+            <div class="pager__pages">
+              <template v-for="item in activePaginationItems" :key="item">
+                <span v-if="typeof item === 'string'" class="pager__ellipsis" aria-hidden="true">…</span>
+                <button
+                  v-else
+                  class="pager__page"
+                  :class="{ 'pager__page--active': item === currentPage }"
+                  type="button"
+                  :aria-current="item === currentPage ? 'page' : undefined"
+                  @click="setPage(item, activeTotalPages)"
+                >
+                  {{ item }}
+                </button>
+              </template>
+            </div>
+            <Button
+              class="pager__nav"
+              variant="secondary"
+              :disabled="currentPage >= activeTotalPages"
+              @click="setPage(currentPage + 1, activeTotalPages)"
+            >
+              Далее
+            </Button>
+          </nav>
 
           <EmptyState
             v-if="!activeItems.length && !activeClusters.length"
@@ -1177,7 +1330,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
           </h2>
           <div class="opportunities-grid">
             <article
-              v-for="item in fallbackItems"
+              v-for="item in paginatedFallbackItems"
               :key="item.id"
               class="opportunity-card app-operator-card app-operator-card--interactive"
               :class="{ 'opportunity-card--disabled': !item.parserProductRowId }"
@@ -1194,13 +1347,53 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
                     class="opportunity-tag"
                     :class="factorTagClasses(factor)"
                   >
-                    {{ factorText(factor) }}
+                    <span class="opportunity-tag__text">
+                      <strong>{{ factorTextParts(factor).title }}</strong>{{ factorTextParts(factor).details }}
+                    </span>
                     <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
                   </span>
                 </div>
               </div>
             </article>
           </div>
+
+          <nav
+            v-if="fallbackItems.length > OPPORTUNITY_ITEMS_PER_PAGE"
+            class="pager opportunities-pagination"
+            aria-label="Пагинация перспективных товаров"
+          >
+            <Button
+              class="pager__nav"
+              variant="secondary"
+              :disabled="currentPage <= 1"
+              @click="setPage(currentPage - 1, fallbackTotalPages)"
+            >
+              Назад
+            </Button>
+            <div class="pager__pages">
+              <template v-for="item in fallbackPaginationItems" :key="item">
+                <span v-if="typeof item === 'string'" class="pager__ellipsis" aria-hidden="true">…</span>
+                <button
+                  v-else
+                  class="pager__page"
+                  :class="{ 'pager__page--active': item === currentPage }"
+                  type="button"
+                  :aria-current="item === currentPage ? 'page' : undefined"
+                  @click="setPage(item, fallbackTotalPages)"
+                >
+                  {{ item }}
+                </button>
+              </template>
+            </div>
+            <Button
+              class="pager__nav"
+              variant="secondary"
+              :disabled="currentPage >= fallbackTotalPages"
+              @click="setPage(currentPage + 1, fallbackTotalPages)"
+            >
+              Далее
+            </Button>
+          </nav>
         </div>
       </section>
     </template>
@@ -1282,10 +1475,6 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   gap: var(--space-2);
 }
 
-.filters__apply {
-  min-width: 7.5rem;
-}
-
 .filters__notice {
   margin: 0;
   color: var(--color-text-muted);
@@ -1355,11 +1544,25 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   padding: 0.28rem 0.55rem;
 }
 
-.factor-filter__mode-button--active,
-.factor-filter__chip--active {
+.factor-filter__mode-button--active {
   border-color: var(--accent-primary-border);
   background: var(--accent-ember-soft);
   color: var(--accent-ember-text-strong);
+}
+
+.factor-filter__chip--active,
+.factor-filter__chip:disabled {
+  border-color: var(--operator-border-muted);
+  background: var(--operator-metric-bg);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+.factor-filter__chip--active span,
+.factor-filter__chip:disabled span {
+  background: var(--operator-card-bg);
+  color: var(--color-text-muted);
 }
 
 .factor-filter__chip span,
@@ -1447,11 +1650,103 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   gap: var(--space-3);
 }
 
+.opportunities-pagination {
+  justify-content: center;
+  padding-top: var(--space-1);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.pager__pages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pager__page,
+.pager__ellipsis {
+  display: inline-flex;
+  min-width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.pager__page {
+  border: 1px solid rgb(249 115 22 / 0.18);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.pager__page:hover {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.09), transparent),
+    var(--color-surface-hover);
+  color: var(--accent-ember-text-strong);
+}
+
+.pager__page--active {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.22), rgb(249 115 22 / 0.08)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 8px 20px rgb(249 115 22 / 0.08);
+}
+
+.pager__page:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.pager__ellipsis {
+  color: var(--color-text-muted);
+}
+
+.pager__nav {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.14), rgb(249 115 22 / 0.05)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  font-weight: 720;
+}
+
+.pager__nav:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.2), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.pager__nav:disabled {
+  border-color: var(--color-border);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  opacity: 0.58;
+}
+
 .opportunity-card {
   display: grid;
   grid-template-columns: 5rem minmax(0, 1fr);
+  grid-template-rows: minmax(16.25rem, auto);
   gap: var(--space-3);
   padding: var(--space-3);
+}
+
+.opportunity-card > .market-image {
+  align-self: stretch;
+  min-height: 16.25rem;
 }
 
 .opportunity-card--disabled {
@@ -1460,9 +1755,11 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 
 .opportunity-card__body {
   display: grid;
-  align-content: start;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  align-content: stretch;
   gap: var(--space-2);
   min-width: 0;
+  min-height: 16.25rem;
 }
 
 .opportunity-card__body > span,
@@ -1489,7 +1786,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 .opportunity-tag {
   display: inline-grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  width: fit-content;
+  width: 100%;
   max-width: 100%;
   box-sizing: border-box;
   align-items: flex-start;
@@ -1499,12 +1796,20 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   background: var(--operator-metric-bg);
   color: var(--color-text);
   font-size: var(--operator-meta-size);
-  font-weight: 760;
+  font-weight: 560;
   line-height: 1.25;
   overflow-wrap: anywhere;
   padding: 0.34rem 0.55rem;
   text-align: left;
   white-space: pre-line;
+}
+
+.opportunity-tag__text {
+  min-width: 0;
+}
+
+.opportunity-tag__text strong {
+  font-weight: 820;
 }
 
 .opportunity-tag--multiline {
@@ -1525,9 +1830,9 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
 }
 
 .opportunity-tag--neutral {
-  border-color: var(--accent-primary-border);
-  background: var(--accent-ember-soft);
-  color: var(--accent-ember-text-strong);
+  border-color: var(--operator-border-muted);
+  background: var(--operator-metric-bg);
+  color: var(--color-text-muted);
 }
 
 .duplicate-cluster {

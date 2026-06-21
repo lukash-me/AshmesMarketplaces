@@ -3,6 +3,7 @@ using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Users;
+using AshmesMarketplaces.Domain.Entities.Workspaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -12,6 +13,7 @@ public sealed class AuthService : IAuthService
 {
     private const string InvalidLoginMessage = "Invalid login or password.";
     private const string InvalidRefreshTokenMessage = "Invalid refresh token.";
+    private const string RegisteredUserRoleName = "Manager";
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IPasswordHashService _passwordHashService;
@@ -37,6 +39,91 @@ public sealed class AuthService : IAuthService
         _analysisScheduleService = analysisScheduleService;
         _currentUser = currentUser;
         _jwtOptions = jwtOptions.Value;
+    }
+
+    public async Task<ServiceResult<LoginResponse>> RegisterAsync(
+        RegisterRequest request,
+        string? ipAddress,
+        string? userAgent,
+        CancellationToken cancellationToken)
+    {
+        var email = request.Email.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(email))
+            return ServiceResult<LoginResponse>.BadRequest("Email is required.");
+
+        var existingUser = await _dbContext.Users
+            .AsNoTracking()
+            .AnyAsync(x => x.Login == email || x.Email == email, cancellationToken);
+        if (existingUser)
+            return ServiceResult<LoginResponse>.Conflict("User with this email already exists.");
+
+        var role = await _dbContext.Roles
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Name == RegisteredUserRoleName, cancellationToken);
+        if (role is null)
+            return ServiceResult<LoginResponse>.Conflict("Registration role is not configured.");
+
+        var nowUtc = DateTime.UtcNow;
+        var passwordHash = _passwordHashService.HashPassword(request.Password);
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            var user = new User(
+                role.Id,
+                email,
+                passwordHash,
+                email,
+                "not-provided",
+                status: 1,
+                nowUtc,
+                nowUtc);
+
+            var workspace = new Workspace(
+                idBrand: null,
+                name: $"Workspace {email}",
+                description: "Personal workspace created during registration.",
+                urlInvite: null,
+                status: 1,
+                nowUtc,
+                nowUtc);
+
+            _dbContext.Users.Add(user);
+            _dbContext.Workspaces.Add(workspace);
+            _dbContext.UserWorkspaces.Add(new UserWorkspace(user.Id, workspace.Id, role.Id));
+
+            var refreshToken = _refreshTokenService.CreateRefreshToken();
+            var refreshTokenHash = _refreshTokenService.HashRefreshToken(refreshToken);
+            var refreshTokenExpiresAtUtc = nowUtc.AddDays(_jwtOptions.RefreshTokenLifetimeDays);
+            var session = new Session(
+                user.Id,
+                ipAddress,
+                userAgent,
+                refreshTokenHash,
+                SessionStatuses.Active,
+                nowUtc,
+                null,
+                refreshTokenExpiresAtUtc);
+
+            _dbContext.Sessions.Add(session);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            var accessToken = _accessTokenService.CreateAccessToken(user, session.Id, nowUtc);
+            var response = await CreateLoginResponseAsync(user, session.Id, refreshToken, refreshTokenExpiresAtUtc, accessToken, cancellationToken);
+            return ServiceResult<LoginResponse>.Success(response);
+        }
+        catch (ArgumentException exception)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return ServiceResult<LoginResponse>.BadRequest(exception.Message);
+        }
+        catch (DbUpdateException)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return ServiceResult<LoginResponse>.Conflict("User cannot be registered because it conflicts with existing data.");
+        }
     }
 
     public async Task<ServiceResult<LoginResponse>> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent, CancellationToken cancellationToken)
