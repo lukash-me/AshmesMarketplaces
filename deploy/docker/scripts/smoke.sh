@@ -49,6 +49,8 @@ check_http_200 "${BASE_URL}/" "Frontend"
 check_http_200 "${API_HEALTH_URL}" "API health"
 
 info "Internal Docker health status:"
-compose ps frontend api intelligence postgres proxy
+compose ps frontend api intelligence analytics-worker postgres proxy
+
+info "analytics-worker has no HTTP health endpoint; Docker running/restart status is its readiness signal."
 
 info "Smoke checks completed."

@@ -11,7 +11,7 @@ require_env_file
 info "Starting PostgreSQL first. This script does not run migrations."
 compose up -d postgres
 
-info "Starting application services and proxy."
-compose up -d intelligence frontend api proxy
+info "Starting application services, analytics worker, and proxy."
+compose up -d intelligence frontend api analytics-worker proxy
 
 info "Stack start requested. Run deploy/docker/scripts/smoke.sh after DNS/TLS is ready."

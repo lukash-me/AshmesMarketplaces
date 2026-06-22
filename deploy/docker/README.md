@@ -10,6 +10,7 @@ The production stack runs on a single VPS with Docker Compose:
 - `frontend`: static Vue build, internal port `80`.
 - `api`: .NET API, internal port `8080`, public only through `/api/*`.
 - `intelligence`: Python FastAPI, internal port `8020`.
+- `analytics-worker`: .NET background worker for scheduled heavy analytics, internal-only with no public ports.
 - `postgres`: PostgreSQL, internal port `5432`, persistent volume.
 - `migrator`: manual-only EF migration runner under the `tools` profile.
 
@@ -18,7 +19,7 @@ Public routing:
 - `https://<ASHMES_PUBLIC_HOST>/` -> frontend.
 - `https://<ASHMES_PUBLIC_HOST>/api/*` -> API without stripping `/api`.
 
-No public route exists for PostgreSQL or Intelligence.
+No public route exists for PostgreSQL, Intelligence, or the analytics worker.
 
 ## 2. Manual VPS Prerequisites
 
@@ -128,7 +129,9 @@ docker compose -f deploy/docker/compose.prod.yml --env-file deploy/docker/.env u
 ./deploy/docker/scripts/up.sh
 ```
 
-The API container does not apply migrations automatically. `up.sh` also does not run migrations.
+The API container does not apply migrations automatically. `up.sh` also does not run migrations. `up.sh` starts `analytics-worker` together with the API, frontend, intelligence service, and proxy.
+
+After the top forecast migration, the public schedule `top_forecast_public` may already be due. On the first start after migration, `analytics-worker` can immediately begin the heavy forecast calculation. Watch worker and intelligence logs plus `docker stats` during that first run.
 
 For later deployments:
 
@@ -163,6 +166,7 @@ Service-specific logs:
 ./deploy/docker/scripts/logs.sh proxy
 ./deploy/docker/scripts/logs.sh frontend
 ./deploy/docker/scripts/logs.sh intelligence
+./deploy/docker/scripts/logs.sh analytics-worker
 ./deploy/docker/scripts/logs.sh postgres
 ```
 
@@ -179,7 +183,9 @@ The smoke script:
 - prints `docker compose ps`;
 - checks the public frontend URL;
 - checks `GET /api/v1/health`;
-- prints internal Docker health status for the production services.
+- prints internal Docker health status for the production services, including `analytics-worker`.
+
+`analytics-worker` has no HTTP health endpoint. For the worker, Docker running/restart status and logs are the readiness signals.
 
 A fresh database may return empty valid responses for Market Analytics and recommendations until parser staging and recalculation are performed later. The smoke script does not depend on those data-heavy endpoints.
 
@@ -198,7 +204,7 @@ sudo ./deploy/docker/scripts/bootstrap-admin.sh
 
 The admin credentials are written to `/etc/ashmes/admin-credentials.env` with `600` permissions.
 The application starts with an empty production database except for the initial admin user and workspace.
-Parser staging and hot-product recalculation are later operational stages.
+Parser staging and public analytics calculations are later operational stages. Scheduled analytics are executed by `analytics-worker`.
 
 Option B: restore a local demo DB
 
@@ -260,7 +266,7 @@ Safe update flow:
 6. Run `./deploy/docker/scripts/up.sh`.
 7. Run `./deploy/docker/scripts/smoke.sh`.
 
-Do not run parser jobs, schedulers, or ad hoc database commands from the Docker MVP stack.
+Do not run parser jobs or ad hoc database commands from the Docker MVP stack during update. Scheduled analytics must run only through `analytics-worker`.
 
 ## 13. Troubleshooting
 
@@ -286,6 +292,13 @@ Intelligence unavailable:
 
 - Check `intelligence` container status and logs.
 - Confirm API uses `Intelligence__BaseUrl=http://intelligence:8020`.
+
+Analytics worker high memory or busy:
+
+- Check worker logs with `./deploy/docker/scripts/logs.sh analytics-worker`.
+- First deploy after the top forecast migration can immediately run `top_forecast_public`.
+- API should remain a lightweight HTTP service; heavy memory should be isolated to `analytics-worker` and `intelligence`.
+- If the first forecast job fails, public pages should remain available and the previous successful snapshots stay in the database.
 
 Migrator fails:
 
@@ -317,5 +330,6 @@ Health check fails:
 - Development seed remains disabled.
 - PostgreSQL is internal-only.
 - Intelligence is internal-only.
+- Analytics worker is internal-only and has no public ports.
 - Swagger should remain disabled outside Development and be reviewed again in production hardening.
 - Manual backups are enabled before risky operations.
