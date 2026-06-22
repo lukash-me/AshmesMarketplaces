@@ -1,10 +1,14 @@
 using System;
+using AshmesMarketplaces.DataAccess;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace AshmesMarketplaces.DataAccess.Migrations
 {
+    [DbContext(typeof(ApplicationDbContext))]
+    [Migration("20260618030000_PublicAnalysisSchedules")]
     public partial class PublicAnalysisSchedules : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

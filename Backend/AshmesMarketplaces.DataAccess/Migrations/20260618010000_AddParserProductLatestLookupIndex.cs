@@ -1,3 +1,5 @@
+using AshmesMarketplaces.DataAccess;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +7,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace AshmesMarketplaces.DataAccess.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(ApplicationDbContext))]
+    [Migration("20260618010000_AddParserProductLatestLookupIndex")]
     public partial class AddParserProductLatestLookupIndex : Migration
     {
         /// <inheritdoc />
