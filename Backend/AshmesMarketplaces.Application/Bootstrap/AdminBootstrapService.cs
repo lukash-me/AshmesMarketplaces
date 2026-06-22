@@ -11,6 +11,12 @@ public sealed class AdminBootstrapService
 {
     private const string AdminRoleName = "Admin";
     private const string DefaultPhone = "+70000000000";
+    private static readonly (string Name, string Description)[] DefaultRoles =
+    [
+        ("Manager", "Registered user"),
+        ("Analyst", "Workspace analyst"),
+        ("Viewer", "Workspace viewer")
+    ];
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IPasswordHashService _passwordHashService;
@@ -52,6 +58,16 @@ public sealed class AdminBootstrapService
             roleCreated = true;
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
+
+        foreach (var defaultRole in DefaultRoles)
+        {
+            if (!await _dbContext.Roles.AnyAsync(x => x.Name == defaultRole.Name, cancellationToken))
+            {
+                _dbContext.Roles.Add(new Role(defaultRole.Name, defaultRole.Description, nowUtc, nowUtc));
+            }
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
         var userCreated = false;
         var passwordUpdated = false;
