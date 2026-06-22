@@ -2,4 +2,5 @@ namespace AshmesMarketplaces.Application.Auth.Dtos;
 
 public sealed record AuthUserWorkspaceResponse(
     Guid IdWorkspace,
-    Guid IdRole);
+    Guid IdRole,
+    string WorkspaceName);

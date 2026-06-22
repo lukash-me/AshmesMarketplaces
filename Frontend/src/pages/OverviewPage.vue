@@ -656,7 +656,7 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
       description="Обзор показывает ежедневную сводку по вашим наблюдаемым товарам: новые события, изменения карточек и похожие товары. Войдите, чтобы увидеть данные своей рабочей области."
     />
     <template v-else>
-      <p class="analysis-schedule-note">{{ overviewScheduleText }}</p>
+      <p v-if="activeWorkspaceId" class="analysis-schedule-note">{{ overviewScheduleText }}</p>
 
     <p v-if="error" class="overview-error">{{ error }}</p>
 
@@ -664,9 +664,11 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
 
     <EmptyState
       v-else-if="!activeWorkspaceId"
-      title="Рабочая область не выбрана"
-      description="Выберите рабочую область, чтобы увидеть наблюдаемые товары."
-    />
+      title="Вне рабочей области"
+      description="Создайте или выберите рабочую область, чтобы открыть обзор."
+    >
+      <RouterLink class="app-operator-link" to="/management/workspaces">Рабочие области</RouterLink>
+    </EmptyState>
 
     <EmptyState
       v-else-if="!hasProducts"

@@ -22,6 +22,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.ParserIn
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.Application.Tests", "AshmesMarketplaces.Application.Tests\AshmesMarketplaces.Application.Tests.csproj", "{4A808B68-A421-4B8C-B253-0E8042AD314D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AshmesMarketplaces.AnalyticsWorker", "AshmesMarketplaces.AnalyticsWorker\AshmesMarketplaces.AnalyticsWorker.csproj", "{6485D4C8-A308-4742-A2A2-23D0629273CE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -116,6 +118,18 @@ Global
 		{4A808B68-A421-4B8C-B253-0E8042AD314D}.Release|x64.Build.0 = Release|Any CPU
 		{4A808B68-A421-4B8C-B253-0E8042AD314D}.Release|x86.ActiveCfg = Release|Any CPU
 		{4A808B68-A421-4B8C-B253-0E8042AD314D}.Release|x86.Build.0 = Release|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Debug|x64.Build.0 = Debug|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Debug|x86.Build.0 = Debug|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Release|x64.ActiveCfg = Release|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Release|x64.Build.0 = Release|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Release|x86.ActiveCfg = Release|Any CPU
+		{6485D4C8-A308-4742-A2A2-23D0629273CE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

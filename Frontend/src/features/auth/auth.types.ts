@@ -29,6 +29,7 @@ export interface RefreshRequest {
 export interface AuthUserWorkspace {
   idWorkspace: string;
   idRole: string;
+  workspaceName: string;
 }
 
 export interface AuthPermission {

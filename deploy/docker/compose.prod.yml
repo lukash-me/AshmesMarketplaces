@@ -100,6 +100,31 @@ services:
     mem_limit: 1536m
     cpus: "1.50"
 
+  analytics-worker:
+    build:
+      context: ../..
+      dockerfile: Backend/AnalyticsWorker.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Intelligence__Enabled: ${INTELLIGENCE_ENABLED}
+      Intelligence__BaseUrl: http://intelligence:8020
+      Intelligence__TimeoutSeconds: "1200"
+      Intelligence__MaxProductsPerRequest: "100000"
+      Intelligence__HotProductsAlgorithm: rule_based_hot_products_v1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      intelligence:
+        condition: service_healthy
+    networks:
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 3072m
+    cpus: "2.00"
+
   intelligence:
     build:
       context: ../..

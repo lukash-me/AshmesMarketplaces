@@ -197,6 +197,89 @@ class HotProductsResponse(ContractModel):
     diagnostics: dict[str, Any] | None = None
 
 
+class TopForecastOptionsDto(ContractModel):
+    algorithm: str = "catboost_top100_v1"
+    top_threshold: int = Field(default=100, ge=1, le=1000, alias="topThreshold")
+    min_probability: float = Field(default=0.7, ge=0, le=1, alias="minProbability")
+    random_seed: int = Field(default=42, alias="randomSeed")
+    train_fraction: float = Field(default=0.70, ge=0.1, le=0.9, alias="trainFraction")
+    validation_fraction: float = Field(default=0.15, ge=0.05, le=0.8, alias="validationFraction")
+    test_fraction: float = Field(default=0.15, ge=0.05, le=0.8, alias="testFraction")
+    iterations: int = Field(default=250, ge=20, le=2000)
+
+
+class TopForecastTrainRequest(ContractModel):
+    request_id: str = Field(min_length=1, alias="requestId")
+    generated_at_utc: datetime = Field(alias="generatedAtUtc")
+    marketplace: str = Field(min_length=1)
+    scope: MarketScopeDto
+    products: list[MarketProductFeatureDto]
+    options: TopForecastOptionsDto | None = None
+
+
+class TopForecastPredictRequest(ContractModel):
+    request_id: str = Field(min_length=1, alias="requestId")
+    generated_at_utc: datetime = Field(alias="generatedAtUtc")
+    marketplace: str = Field(min_length=1)
+    model_artifact_id: str = Field(min_length=1, alias="modelArtifactId")
+    products: list[MarketProductFeatureDto]
+    options: TopForecastOptionsDto | None = None
+
+
+class TopForecastMetricsDto(ContractModel):
+    split: str
+    sample_size: int = Field(alias="sampleSize")
+    positive_count: int = Field(alias="positiveCount")
+    accuracy: float | None = None
+    precision: float | None = None
+    recall: float | None = None
+    f1: float | None = None
+    roc_auc: float | None = Field(default=None, alias="rocAuc")
+    position_mae: float | None = Field(default=None, alias="positionMae")
+
+
+class TopForecastTrainResponse(ContractModel):
+    request_id: str = Field(alias="requestId")
+    status: RecommendationStatus
+    algorithm: str
+    algorithm_version: str = Field(alias="algorithmVersion")
+    model_version: str = Field(alias="modelVersion")
+    model_artifact_id: str | None = Field(default=None, alias="modelArtifactId")
+    trained_at_utc: datetime = Field(alias="trainedAtUtc")
+    feature_names: list[str] = Field(default_factory=list, alias="featureNames")
+    categorical_feature_names: list[str] = Field(default_factory=list, alias="categoricalFeatureNames")
+    metrics: list[TopForecastMetricsDto] = Field(default_factory=list)
+    sample_size: int = Field(default=0, alias="sampleSize")
+    training_sample_size: int = Field(default=0, alias="trainingSampleSize")
+    validation_sample_size: int = Field(default=0, alias="validationSampleSize")
+    test_sample_size: int = Field(default=0, alias="testSampleSize")
+    positive_count: int = Field(default=0, alias="positiveCount")
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TopForecastPredictionDto(ContractModel):
+    product_key: str | None = Field(default=None, alias="productKey")
+    wb_product_id: WbIdentifier = Field(default=None, alias="wbProductId")
+    wb_root_id: WbIdentifier = Field(default=None, alias="wbRootId")
+    predicted_position: int | None = Field(default=None, alias="predictedPosition")
+    top100_probability: float = Field(alias="top100Probability")
+    confidence: float
+    feature_coverage_percent: float = Field(alias="featureCoveragePercent")
+    reasons: list[str] = Field(default_factory=list)
+
+
+class TopForecastPredictResponse(ContractModel):
+    request_id: str = Field(alias="requestId")
+    status: RecommendationStatus
+    algorithm: str
+    algorithm_version: str = Field(alias="algorithmVersion")
+    model_version: str = Field(alias="modelVersion")
+    model_artifact_id: str = Field(alias="modelArtifactId")
+    computed_at_utc: datetime = Field(alias="computedAtUtc")
+    predictions: list[TopForecastPredictionDto] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ProductAdviceOptionsDto(ContractModel):
     algorithm: str | None = None
     include_debug: bool | None = Field(default=None, alias="includeDebug")

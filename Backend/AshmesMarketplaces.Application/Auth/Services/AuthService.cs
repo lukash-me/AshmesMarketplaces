@@ -82,8 +82,8 @@ public sealed class AuthService : IAuthService
 
             var workspace = new Workspace(
                 idBrand: null,
-                name: $"Workspace {email}",
-                description: "Personal workspace created during registration.",
+                name: "Первое пространство",
+                description: null,
                 urlInvite: null,
                 status: 1,
                 nowUtc,
@@ -255,8 +255,17 @@ public sealed class AuthService : IAuthService
         var workspaces = await _dbContext.UserWorkspaces
             .AsNoTracking()
             .Where(x => x.IdUser == user.Id)
-            .OrderBy(x => x.IdWorkspace)
-            .Select(x => new AuthUserWorkspaceResponse(x.IdWorkspace, x.IdRole))
+            .Join(
+                _dbContext.Workspaces.AsNoTracking(),
+                membership => membership.IdWorkspace,
+                workspace => workspace.Id,
+                (membership, workspace) => new { membership, workspace })
+            .OrderBy(x => x.workspace.Name)
+            .ThenBy(x => x.workspace.Id)
+            .Select(x => new AuthUserWorkspaceResponse(
+                x.membership.IdWorkspace,
+                x.membership.IdRole,
+                x.workspace.Name))
             .ToListAsync(cancellationToken);
 
         var permissions = await (

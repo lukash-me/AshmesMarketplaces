@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
 import { useAuthStore } from '@/features/auth/auth.store';
+import { useActiveWorkspace } from '@/features/workspace-market-products/useActiveWorkspace';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
@@ -47,6 +48,7 @@ import type {
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const workspace = useActiveWorkspace();
 
 const queryState = ref<ExpenseQueryState>(parseExpensesQuery(route.query));
 const expenses = ref<ExpenseListItem[]>([]);
@@ -83,7 +85,7 @@ const usersById = computed(() =>
   }, {})
 );
 
-const currentWorkspaceId = computed(() => auth.user?.workspaces[0]?.idWorkspace ?? '');
+const currentWorkspaceId = computed(() => workspace.activeWorkspaceId.value ?? '');
 const currentUserId = computed(() => auth.user?.id ?? '');
 const isGuest = computed(() => !auth.isAuthenticated);
 
@@ -131,6 +133,12 @@ watch(isGuest, (guest) => {
   }
 });
 
+watch(currentWorkspaceId, () => {
+  if (!isGuest.value) {
+    void loadExpensesAndSummary();
+  }
+});
+
 if (!isGuest.value) {
   void loadLookups();
 }
@@ -157,6 +165,10 @@ function showToast(message: string) {
   }, 3000);
 }
 
+function goToWorkspaces(): void {
+  void router.push('/management/workspaces');
+}
+
 async function loadExpensesAndSummary() {
   if (isGuest.value) {
     expenses.value = [];
@@ -173,7 +185,7 @@ async function loadExpensesAndSummary() {
     expenses.value = [];
     totalCount.value = 0;
     summary.value = null;
-    error.value = 'Нет доступной рабочей области для учета расходов.';
+    error.value = '';
     summaryError.value = '';
     loading.value = false;
     summaryLoading.value = false;
@@ -364,6 +376,16 @@ async function changeStatus(expense: ExpenseListItem | ExpenseDetail, statusKey:
       description="Раздел расходов помогает учитывать закупки, логистику, услуги и платежные статусы по рабочей области. Войдите, чтобы открыть финансовые данные."
     />
     <template v-else>
+    <EmptyState
+      v-if="!currentWorkspaceId"
+      class="app-surface"
+      title="Вне рабочей области"
+      description="Создайте или выберите рабочую область, чтобы открыть расходы."
+    >
+      <Button variant="primary" @click="goToWorkspaces">Рабочие области</Button>
+    </EmptyState>
+
+    <template v-else>
     <ExpensesFilters
       :state="queryState"
       :categories-by-id="categoriesById"
@@ -456,6 +478,7 @@ async function changeStatus(expense: ExpenseListItem | ExpenseDetail, statusKey:
         {{ toastMessage }}
       </div>
     </Teleport>
+    </template>
     </template>
   </div>
 </template>

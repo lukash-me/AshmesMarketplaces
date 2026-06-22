@@ -8,6 +8,15 @@ import type {
   RoleDetail,
   RoleListItem,
   RoleListParams,
+  AddManagementWorkspaceMemberRequest,
+  CreateManagementWorkspaceRequest,
+  CreateUserWorkspaceRequest,
+  CreateWorkspaceRequest,
+  ManagementWorkspace,
+  ManagementWorkspaceMember,
+  ManagementWorkspaceRole,
+  UpdateManagementWorkspaceRequest,
+  UpdateManagementWorkspaceMemberRoleRequest,
   RolePermissionListItem,
   RolePermissionListParams,
   UserDetail,
@@ -30,6 +39,65 @@ export async function getUserWorkspaces(
   return response.data;
 }
 
+export async function getManagementWorkspaces(): Promise<ManagementWorkspace[]> {
+  const response = await http.get<ManagementWorkspace[]>('/management/workspaces');
+  return response.data;
+}
+
+export async function getManagementWorkspaceRoles(): Promise<ManagementWorkspaceRole[]> {
+  const response = await http.get<ManagementWorkspaceRole[]>('/management/workspaces/roles');
+  return response.data;
+}
+
+export async function createManagementWorkspace(
+  request: CreateManagementWorkspaceRequest
+): Promise<ManagementWorkspace> {
+  const response = await http.post<ManagementWorkspace>('/management/workspaces', request);
+  return response.data;
+}
+
+export async function updateManagementWorkspace(
+  workspaceId: string,
+  request: UpdateManagementWorkspaceRequest
+): Promise<ManagementWorkspace> {
+  const response = await http.put<ManagementWorkspace>(`/management/workspaces/${workspaceId}`, request);
+  return response.data;
+}
+
+export async function deleteManagementWorkspace(workspaceId: string): Promise<void> {
+  await http.delete(`/management/workspaces/${workspaceId}`);
+}
+
+export async function addManagementWorkspaceMember(
+  workspaceId: string,
+  request: AddManagementWorkspaceMemberRequest
+): Promise<ManagementWorkspaceMember> {
+  const response = await http.post<ManagementWorkspaceMember>(
+    `/management/workspaces/${workspaceId}/members`,
+    request
+  );
+  return response.data;
+}
+
+export async function updateManagementWorkspaceMemberRole(
+  workspaceId: string,
+  userId: string,
+  request: UpdateManagementWorkspaceMemberRoleRequest
+): Promise<ManagementWorkspaceMember> {
+  const response = await http.put<ManagementWorkspaceMember>(
+    `/management/workspaces/${workspaceId}/members/${userId}/role`,
+    request
+  );
+  return response.data;
+}
+
+export async function deleteManagementWorkspaceMember(
+  workspaceId: string,
+  userId: string
+): Promise<void> {
+  await http.delete(`/management/workspaces/${workspaceId}/members/${userId}`);
+}
+
 export async function getUserWorkspace(
   idUser: string,
   idWorkspace: string
@@ -37,6 +105,13 @@ export async function getUserWorkspace(
   const response = await http.get<UserWorkspaceDetail>(
     `/user-workspaces/${idUser}/${idWorkspace}`
   );
+  return response.data;
+}
+
+export async function createUserWorkspace(
+  request: CreateUserWorkspaceRequest
+): Promise<UserWorkspaceDetail> {
+  const response = await http.post<UserWorkspaceDetail>('/user-workspaces', request);
   return response.data;
 }
 
@@ -59,6 +134,11 @@ export async function getWorkspaces(
 
 export async function getWorkspace(id: string): Promise<WorkspaceDetail> {
   const response = await http.get<WorkspaceDetail>(`/workspaces/${id}`);
+  return response.data;
+}
+
+export async function createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceDetail> {
+  const response = await http.post<WorkspaceDetail>('/workspaces', request);
   return response.data;
 }
 
@@ -92,4 +172,3 @@ export async function getRolePermissions(
   });
   return response.data;
 }
-

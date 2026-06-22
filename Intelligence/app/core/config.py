@@ -22,6 +22,7 @@ class Settings:
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
     enable_debug: bool = False
+    top_forecast_model_dir: str = "./data/top_forecast_models"
 
 
 @lru_cache(maxsize=1)
@@ -32,4 +33,8 @@ def get_settings() -> Settings:
         log_level=os.getenv("INTELLIGENCE_LOG_LEVEL", Settings.log_level).upper(),
         api_prefix=os.getenv("INTELLIGENCE_API_PREFIX", Settings.api_prefix),
         enable_debug=_env_bool("INTELLIGENCE_ENABLE_DEBUG", Settings.enable_debug),
+        top_forecast_model_dir=os.getenv(
+            "INTELLIGENCE_TOP_FORECAST_MODEL_DIR",
+            Settings.top_forecast_model_dir,
+        ),
     )

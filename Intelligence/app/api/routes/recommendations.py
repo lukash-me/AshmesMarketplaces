@@ -11,6 +11,10 @@ from app.models.recommendations import (
     ProductAdviceJobRequest,
     ProductAdviceRequest,
     ProductAdviceResponse,
+    TopForecastPredictRequest,
+    TopForecastPredictResponse,
+    TopForecastTrainRequest,
+    TopForecastTrainResponse,
     WorkspaceProductAnalysisRequest,
     WorkspaceProductAnalysisResponse,
 )
@@ -25,6 +29,8 @@ SUPPORTED_ENDPOINTS = [
     "GET /api/v1/health",
     "GET /api/v1/intelligence/metadata",
     "POST /api/v1/recommendations/hot-products",
+    "POST /api/v1/recommendations/top-forecast/train",
+    "POST /api/v1/recommendations/top-forecast/predict",
     "POST /api/v1/recommendations/workspace-product-analysis",
     "POST /api/v1/recommendations/product-advice",
     "POST /api/v1/jobs/product-advice",
@@ -41,6 +47,7 @@ async def metadata(request: Request) -> MetadataResponse:
         contract_version=settings.contract_version,
         supported_algorithms=[
             "rule_based_hot_products_v1",
+            "catboost_top100_v1",
             "workspace_product_analysis_v1",
             "contract_only_product_advice",
         ],
@@ -52,6 +59,18 @@ async def metadata(request: Request) -> MetadataResponse:
 async def hot_products(payload: HotProductsRequest, request: Request) -> HotProductsResponse:
     request.state.request_id = payload.request_id
     return request.app.state.hot_products_service.calculate(payload)
+
+
+@router.post("/recommendations/top-forecast/train", response_model=TopForecastTrainResponse)
+async def top_forecast_train(payload: TopForecastTrainRequest, request: Request) -> TopForecastTrainResponse:
+    request.state.request_id = payload.request_id
+    return request.app.state.top_forecast_service.train(payload)
+
+
+@router.post("/recommendations/top-forecast/predict", response_model=TopForecastPredictResponse)
+async def top_forecast_predict(payload: TopForecastPredictRequest, request: Request) -> TopForecastPredictResponse:
+    request.state.request_id = payload.request_id
+    return request.app.state.top_forecast_service.predict(payload)
 
 
 @router.post("/recommendations/product-advice", response_model=ProductAdviceResponse)

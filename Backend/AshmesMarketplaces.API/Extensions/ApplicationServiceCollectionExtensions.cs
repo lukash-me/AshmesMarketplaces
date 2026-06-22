@@ -1,5 +1,4 @@
 using AshmesMarketplaces.API.Filters;
-using AshmesMarketplaces.API.Background;
 using AshmesMarketplaces.API.DevelopmentSeed;
 using AshmesMarketplaces.API.Security;
 using AshmesMarketplaces.API.Storage;
@@ -61,8 +60,9 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IParserReviewReadService, ParserReviewReadService>();
         services.AddScoped<IParserRunReadService, ParserRunReadService>();
         services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
-        services.AddScoped<IPublicMarketConcentrationRefreshService, PublicMarketConcentrationRefreshService>();
         services.AddScoped<IPublicMarketConcentrationReadService, PublicMarketConcentrationReadService>();
+        services.AddScoped<IPublicTopForecastReadService, PublicTopForecastReadService>();
+        services.AddScoped<IPublicAnalysisRefreshScheduler, PublicAnalysisRefreshScheduler>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IReviewReplyService, ReviewReplyService>();
@@ -73,6 +73,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IExpenseCategoryService, ExpenseCategoryService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IWorkspaceService, WorkspaceService>();
+        services.AddScoped<IManagementWorkspaceService, ManagementWorkspaceService>();
         services.AddScoped<IWorkspaceMarketProductService, WorkspaceMarketProductService>();
         services.AddScoped<IWorkspaceOverviewService, WorkspaceOverviewService>();
         services.AddScoped<IUserWorkspaceService, UserWorkspaceService>();
@@ -95,7 +96,6 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IAccessTokenService, AccessTokenService>();
         services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddScoped<DevelopmentSeeder>();
-        services.AddHostedService<AnalysisRefreshHostedService>();
         services.AddValidatorsFromAssemblyContaining<CreateMarketplaceRequestValidator>();
         services.AddScoped<FluentValidationActionFilter>();
 

@@ -6,6 +6,7 @@ public sealed class PublicAnalysisSchedule
 {
     public const string HotProductsScheduleKey = "hot_products_public";
     public const string MarketConcentrationScheduleKey = "market_concentration_public";
+    public const string TopForecastScheduleKey = "top_forecast_public";
     public const string PendingStatus = "pending";
     public const string RunningStatus = "running";
     public const string CompletedStatus = "completed";
@@ -108,5 +109,17 @@ public sealed class PublicAnalysisSchedule
         LastError = error;
         NextRunAtUtc = retryAtUtc;
         UpdatedAtUtc = completedAtUtc;
+    }
+
+    public void RequestRun(DateTime requestedAtUtc)
+    {
+        DateTimeUtc.EnsureUtc(requestedAtUtc, nameof(requestedAtUtc));
+
+        NextRunAtUtc = requestedAtUtc;
+        LastStatus = PendingStatus;
+        LastError = null;
+        LockedBy = null;
+        LockedUntilUtc = null;
+        UpdatedAtUtc = requestedAtUtc;
     }
 }

@@ -1,6 +1,7 @@
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketIntelligence.Dtos;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
+using AshmesMarketplaces.Domain.Entities.Users;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -13,13 +14,19 @@ public sealed class MarketIntelligenceController : ControllerBase
 {
     private readonly IPublicMarketIntelligenceReadService _readService;
     private readonly IPublicMarketConcentrationReadService _concentrationReadService;
+    private readonly IPublicTopForecastReadService _topForecastReadService;
+    private readonly IPublicAnalysisRefreshScheduler _publicAnalysisRefreshScheduler;
 
     public MarketIntelligenceController(
         IPublicMarketIntelligenceReadService readService,
-        IPublicMarketConcentrationReadService concentrationReadService)
+        IPublicMarketConcentrationReadService concentrationReadService,
+        IPublicTopForecastReadService topForecastReadService,
+        IPublicAnalysisRefreshScheduler publicAnalysisRefreshScheduler)
     {
         _readService = readService;
         _concentrationReadService = concentrationReadService;
+        _topForecastReadService = topForecastReadService;
+        _publicAnalysisRefreshScheduler = publicAnalysisRefreshScheduler;
     }
 
     [HttpGet("public")]
@@ -62,6 +69,34 @@ public sealed class MarketIntelligenceController : ControllerBase
     {
         var result = await _concentrationReadService.GetProductsAsync(request, kind, key, cancellationToken);
         return ToActionResult(result);
+    }
+
+    [HttpGet("public/top-forecast")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(PublicTopForecastResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<PublicTopForecastResponse>> GetPublicTopForecast(
+        [FromQuery] PublicTopForecastQuery request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _topForecastReadService.GetAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("top-forecast/recalculate")]
+    [Authorize]
+    [ProducesResponseType(typeof(SchedulePublicAnalysisRefreshResponse), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<ActionResult<SchedulePublicAnalysisRefreshResponse>> RecalculateTopForecast(
+        CancellationToken cancellationToken)
+    {
+        var result = await _publicAnalysisRefreshScheduler.RequestRunAsync(
+            PublicAnalysisSchedule.TopForecastScheduleKey,
+            cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return Accepted(result.Value);
     }
 
     private ActionResult<T> ToActionResult<T>(ServiceResult<T> result)

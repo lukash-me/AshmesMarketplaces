@@ -116,6 +116,28 @@ public sealed class IntelligenceClient : IIntelligenceClient
         }
     }
 
+    public Task<ServiceResult<TopForecastTrainResponse>> TrainTopForecastAsync(
+        TopForecastTrainRequest request,
+        CancellationToken cancellationToken) =>
+        PostJsonAsync<TopForecastTrainRequest, TopForecastTrainResponse>(
+            "/api/v1/recommendations/top-forecast/train",
+            request,
+            "top-forecast train",
+            request.RequestId,
+            request.Products.Count,
+            cancellationToken);
+
+    public Task<ServiceResult<TopForecastPredictResponse>> PredictTopForecastAsync(
+        TopForecastPredictRequest request,
+        CancellationToken cancellationToken) =>
+        PostJsonAsync<TopForecastPredictRequest, TopForecastPredictResponse>(
+            "/api/v1/recommendations/top-forecast/predict",
+            request,
+            "top-forecast predict",
+            request.RequestId,
+            request.Products.Count,
+            cancellationToken);
+
     public async Task<ServiceResult<WorkspaceProductAnalysisIntelligenceResponse>> AnalyzeWorkspaceProductAsync(
         WorkspaceProductAnalysisIntelligenceRequest request,
         CancellationToken cancellationToken)
@@ -201,6 +223,95 @@ public sealed class IntelligenceClient : IIntelligenceClient
                 stopwatch.ElapsedMilliseconds);
             return ServiceResult<WorkspaceProductAnalysisIntelligenceResponse>.Unavailable(
                 "Intelligence service is unavailable.");
+        }
+    }
+
+    private async Task<ServiceResult<TResponse>> PostJsonAsync<TRequest, TResponse>(
+        string path,
+        TRequest request,
+        string operationName,
+        string requestId,
+        int productCount,
+        CancellationToken cancellationToken)
+        where TResponse : class
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            using var content = new StringContent(
+                JsonSerializer.Serialize(request, JsonOptions),
+                Encoding.UTF8,
+                "application/json");
+
+            using var response = await _httpClient.PostAsync(path, content, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMessage = TryReadPythonError(responseBody)
+                    ?? $"Intelligence service returned HTTP {(int)response.StatusCode}.";
+
+                _logger.LogWarning(
+                    "Intelligence {OperationName} call failed. requestId={RequestId} productCount={ProductCount} statusCode={StatusCode} durationMs={DurationMs}",
+                    operationName,
+                    requestId,
+                    productCount,
+                    (int)response.StatusCode,
+                    stopwatch.ElapsedMilliseconds);
+
+                return response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity
+                    ? ServiceResult<TResponse>.BadRequest(errorMessage)
+                    : ServiceResult<TResponse>.Unavailable(errorMessage);
+            }
+
+            TResponse? payload;
+            try
+            {
+                payload = JsonSerializer.Deserialize<TResponse>(responseBody, JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Intelligence {OperationName} returned invalid JSON. requestId={RequestId} productCount={ProductCount} durationMs={DurationMs}",
+                    operationName,
+                    requestId,
+                    productCount,
+                    stopwatch.ElapsedMilliseconds);
+                return ServiceResult<TResponse>.Unavailable("Intelligence service returned an invalid JSON response.");
+            }
+
+            if (payload is null)
+                return ServiceResult<TResponse>.Unavailable("Intelligence service returned an empty response.");
+
+            _logger.LogInformation(
+                "Intelligence {OperationName} call completed. requestId={RequestId} productCount={ProductCount} durationMs={DurationMs}",
+                operationName,
+                requestId,
+                productCount,
+                stopwatch.ElapsedMilliseconds);
+
+            return ServiceResult<TResponse>.Success(payload);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Intelligence {OperationName} call timed out. requestId={RequestId} productCount={ProductCount} durationMs={DurationMs}",
+                operationName,
+                requestId,
+                productCount,
+                stopwatch.ElapsedMilliseconds);
+            return ServiceResult<TResponse>.Unavailable("Intelligence service request timed out.");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Intelligence {OperationName} call could not connect. requestId={RequestId} productCount={ProductCount} durationMs={DurationMs}",
+                operationName,
+                requestId,
+                productCount,
+                stopwatch.ElapsedMilliseconds);
+            return ServiceResult<TResponse>.Unavailable("Intelligence service is unavailable.");
         }
     }
 

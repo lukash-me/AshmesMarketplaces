@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { Eye, History, Pencil, Save, Trash2, X } from 'lucide-vue-next';
+import { useRouter } from 'vue-router';
 
 import type { PagedResponse } from '@/entities/pagination';
 import AuthRequiredState from '@/features/auth/AuthRequiredState.vue';
@@ -39,6 +40,7 @@ type ProductDraft = {
 };
 
 const pageSize = 20;
+const router = useRouter();
 const auth = useAuthStore();
 const workspace = useActiveWorkspace();
 const products = ref<WorkspaceMarketProductListItem[]>([]);
@@ -478,6 +480,10 @@ function changePage(nextPage: number): void {
   page.value = Math.min(Math.max(1, nextPage), totalPages.value);
   void loadProducts();
 }
+
+function goToWorkspaces(): void {
+  void router.push('/management/workspaces');
+}
 </script>
 
 <template>
@@ -492,20 +498,7 @@ function changePage(nextPage: number): void {
       description="Наблюдаемые товары сохраняют карточки вашей рабочей области, сравнивают их с конкурентами и показывают изменения. Войдите, чтобы открыть свой список."
     />
     <template v-else>
-    <form class="filters app-surface" @submit.prevent="applyFilters">
-      <label v-if="workspace.hasMultipleWorkspaces.value" class="workspace-products__field">
-        <span>Рабочая область</span>
-        <select v-model="workspace.selectedWorkspaceId.value" class="app-select">
-          <option
-            v-for="option in workspace.workspaceOptions.value"
-            :key="option.idWorkspace"
-            :value="option.idWorkspace"
-          >
-            {{ option.idWorkspace }}
-          </option>
-        </select>
-      </label>
-
+    <form v-if="activeWorkspaceId" class="filters app-surface" @submit.prevent="applyFilters">
       <div class="filters__search">
         <Input
           v-model="filterForm.search"
@@ -552,9 +545,11 @@ function changePage(nextPage: number): void {
 
     <EmptyState
       v-else-if="!activeWorkspaceId"
-      title="Рабочая область недоступна"
-      description="У пользователя нет доступной рабочей области."
-    />
+      title="Вне рабочей области"
+      description="Создайте или выберите рабочую область, чтобы открыть наблюдаемые товары."
+    >
+      <Button variant="primary" @click="goToWorkspaces">Рабочие области</Button>
+    </EmptyState>
 
     <EmptyState
       v-else-if="error"

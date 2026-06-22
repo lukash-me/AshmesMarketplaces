@@ -547,9 +547,11 @@ function groupPriority(key: string): number {
 
     <EmptyState
       v-else-if="!activeWorkspaceId"
-      title="Рабочая область не выбрана"
-      description="Выберите рабочую область, чтобы увидеть кластерный анализ наблюдаемых товаров."
-    />
+      title="Вне рабочей области"
+      description="Создайте или выберите рабочую область, чтобы открыть кластерный анализ."
+    >
+      <RouterLink class="app-operator-link" to="/management/workspaces">Рабочие области</RouterLink>
+    </EmptyState>
 
     <EmptyState
       v-else-if="!hasProducts"

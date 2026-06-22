@@ -54,6 +54,10 @@ async function loadOptions(): Promise<void> {
 function goToList(): void {
   void router.push('/workspace/market-products');
 }
+
+function goToWorkspaces(): void {
+  void router.push('/management/workspaces');
+}
 </script>
 
 <template>
@@ -68,24 +72,13 @@ function goToList(): void {
     />
 
     <template v-else>
-    <label v-if="workspace.hasMultipleWorkspaces.value" class="workspace-product-create__field">
-      <span>Рабочая область</span>
-      <select v-model="workspace.selectedWorkspaceId.value" class="app-select">
-        <option
-          v-for="option in workspace.workspaceOptions.value"
-          :key="option.idWorkspace"
-          :value="option.idWorkspace"
-        >
-          {{ option.idWorkspace }}
-        </option>
-      </select>
-    </label>
-
     <EmptyState
       v-if="!workspace.activeWorkspaceId.value"
-      title="Рабочая область недоступна"
-      description="У пользователя нет доступной рабочей области для создания карточки."
-    />
+      title="Вне рабочей области"
+      description="Создайте или выберите рабочую область, чтобы создать карточку."
+    >
+      <Button variant="primary" @click="goToWorkspaces">Рабочие области</Button>
+    </EmptyState>
     <LoadingState v-else-if="optionsLoading" :rows="6" class="workspace-product-create__state" />
     <EmptyState
       v-else-if="optionsError"

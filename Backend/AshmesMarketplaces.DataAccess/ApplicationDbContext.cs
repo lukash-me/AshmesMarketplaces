@@ -61,6 +61,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<RecommendationCategory> RecommendationCategories => Set<RecommendationCategory>();
     public DbSet<MarketRecommendationRun> MarketRecommendationRuns => Set<MarketRecommendationRun>();
     public DbSet<MarketHotProductRecommendation> MarketHotProductRecommendations => Set<MarketHotProductRecommendation>();
+    public DbSet<PublicTopForecastRun> PublicTopForecastRuns => Set<PublicTopForecastRun>();
+    public DbSet<PublicTopForecastPrediction> PublicTopForecastPredictions => Set<PublicTopForecastPrediction>();
 
     public DbSet<Marketplace> Marketplaces => Set<Marketplace>();
     public DbSet<Brand> Brands => Set<Brand>();

@@ -14,14 +14,10 @@ public sealed class PublicMarketConcentrationReadService : IPublicMarketConcentr
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ApplicationDbContext _dbContext;
-    private readonly IPublicMarketConcentrationRefreshService _refreshService;
 
-    public PublicMarketConcentrationReadService(
-        ApplicationDbContext dbContext,
-        IPublicMarketConcentrationRefreshService refreshService)
+    public PublicMarketConcentrationReadService(ApplicationDbContext dbContext)
     {
         _dbContext = dbContext;
-        _refreshService = refreshService;
     }
 
     public async Task<ServiceResult<PublicMarketConcentrationSnapshotDto>> GetAsync(
@@ -45,27 +41,17 @@ public sealed class PublicMarketConcentrationReadService : IPublicMarketConcentr
             return ServiceResult<PublicMarketConcentrationSnapshotDto>.Success(cached.Value);
         }
 
-        if (snapshotMeta is not null)
-        {
-            var snapshot = await _dbContext.PublicMarketConcentrationSnapshots
-                .AsNoTracking()
-                .FirstAsync(x => x.Id == snapshotMeta.Id, cancellationToken);
+        if (snapshotMeta is null)
+            return ServiceResult<PublicMarketConcentrationSnapshotDto>.NotFound("Концентрация рынка еще не рассчитана.");
 
-            var dto = PublicMarketConcentrationRefreshService.Map(snapshot, includePoints);
-            Cache[cacheKey] = new CacheEntry(dto, snapshot.UpdatedAtUtc, now);
+        var snapshot = await _dbContext.PublicMarketConcentrationSnapshots
+            .AsNoTracking()
+            .FirstAsync(x => x.Id == snapshotMeta.Id, cancellationToken);
 
-            return ServiceResult<PublicMarketConcentrationSnapshotDto>.Success(dto);
-        }
+        var dto = PublicMarketConcentrationRefreshService.Map(snapshot, includePoints);
+        Cache[cacheKey] = new CacheEntry(dto, snapshot.UpdatedAtUtc, now);
 
-        var refreshed = await _refreshService.RefreshAsync(context, cancellationToken);
-        if (!refreshed.IsSuccess || includePoints)
-            return refreshed;
-
-        return ServiceResult<PublicMarketConcentrationSnapshotDto>.Success(
-            refreshed.Value! with
-            {
-                PriceQualityMap = new PriceQualityMapDto([], refreshed.Value!.PriceQualityMap.Summary, refreshed.Value.PriceQualityMap.Limitations)
-            });
+        return ServiceResult<PublicMarketConcentrationSnapshotDto>.Success(dto);
     }
 
     public async Task<ServiceResult<PublicMarketConcentrationProductsDto>> GetProductsAsync(
@@ -84,16 +70,7 @@ public sealed class PublicMarketConcentrationReadService : IPublicMarketConcentr
 
         var snapshotMeta = await GetSnapshotMetaAsync(context, cancellationToken);
         if (snapshotMeta is null)
-        {
-            var refreshed = await _refreshService.RefreshAsync(context, cancellationToken);
-            if (!refreshed.IsSuccess)
-                return ServiceResult<PublicMarketConcentrationProductsDto>.Unavailable(refreshed.Error!.Message);
-
-            snapshotMeta = await GetSnapshotMetaAsync(context, cancellationToken);
-        }
-
-        if (snapshotMeta is null)
-            return ServiceResult<PublicMarketConcentrationProductsDto>.NotFound("Snapshot концентрации рынка не найден.");
+            return ServiceResult<PublicMarketConcentrationProductsDto>.NotFound("Концентрация рынка еще не рассчитана.");
 
         var snapshot = await _dbContext.PublicMarketConcentrationSnapshots
             .AsNoTracking()

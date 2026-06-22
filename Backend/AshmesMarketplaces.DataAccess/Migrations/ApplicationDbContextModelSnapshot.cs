@@ -678,6 +678,253 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.ToTable("PublicMarketConcentrationSnapshots", (string)null);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Marketplaces.PublicTopForecastPrediction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BrandName")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("brand_name");
+
+                    b.Property<decimal>("Confidence")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)")
+                        .HasColumnName("confidence");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<int?>("CurrentPosition")
+                        .HasColumnType("integer")
+                        .HasColumnName("current_position");
+
+                    b.Property<string>("CurrentPositionState")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("current_position_state");
+
+                    b.Property<decimal>("FeatureCoveragePercent")
+                        .HasPrecision(9, 2)
+                        .HasColumnType("numeric(9,2)")
+                        .HasColumnName("feature_coverage_percent");
+
+                    b.Property<int?>("FeedbackCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("feedback_count");
+
+                    b.Property<Guid>("IdRun")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id_run");
+
+                    b.Property<int?>("ObservedRangeLimit")
+                        .HasColumnType("integer")
+                        .HasColumnName("observed_range_limit");
+
+                    b.Property<int?>("PredictedPosition")
+                        .HasColumnType("integer")
+                        .HasColumnName("predicted_position");
+
+                    b.Property<decimal?>("Price")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)")
+                        .HasColumnName("price");
+
+                    b.Property<string>("ProductName")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("product_name");
+
+                    b.Property<Guid?>("ProductRowId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("product_row_id");
+
+                    b.Property<string>("Query")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("query");
+
+                    b.Property<decimal?>("Rating")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("numeric(6,2)")
+                        .HasColumnName("rating");
+
+                    b.Property<string>("ReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("reasons_json");
+
+                    b.Property<string>("SellerName")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("seller_name");
+
+                    b.Property<string>("Sort")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("sort");
+
+                    b.Property<string>("SourceCategory")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceRegionDest")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("source_region_dest");
+
+                    b.Property<string>("SourceSubcategory")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<int?>("Stock")
+                        .HasColumnType("integer")
+                        .HasColumnName("stock");
+
+                    b.Property<string>("ThumbnailUrl")
+                        .HasColumnType("text")
+                        .HasColumnName("thumbnail_url");
+
+                    b.Property<decimal>("Top100Probability")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)")
+                        .HasColumnName("top100_probability");
+
+                    b.Property<int>("TopN")
+                        .HasColumnType("integer")
+                        .HasColumnName("top_n");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductRowId");
+
+                    b.HasIndex("WbProductId");
+
+                    b.HasIndex("IdRun", "Top100Probability");
+
+                    b.HasIndex("SourceCategory", "SourceSubcategory", "Query", "SourceRegionDest", "Sort", "TopN");
+
+                    b.ToTable("PublicTopForecastPredictions", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Marketplaces.PublicTopForecastRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CalculatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("calculated_at_utc");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text")
+                        .HasColumnName("error");
+
+                    b.Property<string>("FeatureSchemaJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("feature_schema_json");
+
+                    b.Property<string>("MetricsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("metrics_json");
+
+                    b.Property<decimal>("MinProbability")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)")
+                        .HasColumnName("min_probability");
+
+                    b.Property<string>("ModelArtifactId")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("model_artifact_id");
+
+                    b.Property<string>("ModelVersion")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("model_version");
+
+                    b.Property<int>("PositiveCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("positive_count");
+
+                    b.Property<int>("PredictionsCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("predictions_count");
+
+                    b.Property<int>("SampleSize")
+                        .HasColumnType("integer")
+                        .HasColumnName("sample_size");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("status");
+
+                    b.Property<int>("TestSampleSize")
+                        .HasColumnType("integer")
+                        .HasColumnName("test_sample_size");
+
+                    b.Property<DateTime>("TrainedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("trained_at_utc");
+
+                    b.Property<int>("TrainingSampleSize")
+                        .HasColumnType("integer")
+                        .HasColumnName("training_sample_size");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<int>("ValidationSampleSize")
+                        .HasColumnType("integer")
+                        .HasColumnName("validation_sample_size");
+
+                    b.Property<string>("WarningsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("warnings_json");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CalculatedAtUtc");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("PublicTopForecastRuns", (string)null);
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Marketplaces.Warehouse", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4437,6 +4684,17 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Marketplaces.PublicTopForecastPrediction", b =>
+                {
+                    b.HasOne("AshmesMarketplaces.Domain.Entities.Marketplaces.PublicTopForecastRun", "Run")
+                        .WithMany("Predictions")
+                        .HasForeignKey("IdRun")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Run");
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Marketplaces.Warehouse", b =>
                 {
                     b.HasOne("AshmesMarketplaces.Domain.Entities.Marketplaces.Marketplace", null)
@@ -4904,6 +5162,11 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasForeignKey("IdWorkspaceMarketProduct")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Marketplaces.PublicTopForecastRun", b =>
+                {
+                    b.Navigation("Predictions");
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.Product.Product", b =>

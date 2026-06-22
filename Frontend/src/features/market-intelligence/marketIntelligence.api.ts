@@ -2,6 +2,8 @@ import { publicHttp } from '@/shared/api/http';
 
 import type {
   PublicMarketConcentrationSnapshot,
+  PublicTopForecastParams,
+  PublicTopForecastResponse,
   PriceQualityPoint,
   PublicMarketIntelligence,
   PublicMarketIntelligenceParams
@@ -34,4 +36,11 @@ export async function getPublicMarketConcentrationProducts(
     }
   });
   return response.data.products;
+}
+
+export async function getPublicTopForecast(
+  params: PublicTopForecastParams
+): Promise<PublicTopForecastResponse> {
+  const response = await publicHttp.get<PublicTopForecastResponse>('/market-intelligence/public/top-forecast', { params });
+  return response.data;
 }

@@ -60,6 +60,16 @@ export interface WorkspaceListParams {
   status?: number;
 }
 
+export interface CreateWorkspaceRequest {
+  idBrand: string | null;
+  name: string;
+  description: string | null;
+  urlInvite: string | null;
+  status: number;
+  dateCreate: string;
+  dateUpdate: string;
+}
+
 export interface RoleListItem {
   id: string;
   name: string;
@@ -112,6 +122,53 @@ export interface RolePermissionListParams {
   idPermission?: string;
 }
 
+export interface CreateUserWorkspaceRequest {
+  idUser: string;
+  idWorkspace: string;
+  idRole: string;
+}
+
+export interface ManagementWorkspaceMember {
+  idUser: string;
+  login: string;
+  email: string | null;
+  idRole: string;
+  roleName: string;
+  isCurrentUser: boolean;
+}
+
+export interface ManagementWorkspaceRole {
+  id: string;
+  name: string;
+}
+
+export interface ManagementWorkspace {
+  id: string;
+  idBrand: string | null;
+  name: string;
+  description: string | null;
+  status: number;
+  dateCreate: string;
+  dateUpdate: string;
+  members: ManagementWorkspaceMember[];
+}
+
+export interface CreateManagementWorkspaceRequest {
+  name: string;
+  description: string | null;
+}
+
+export type UpdateManagementWorkspaceRequest = CreateManagementWorkspaceRequest;
+
+export interface AddManagementWorkspaceMemberRequest {
+  email: string;
+  idRole: string;
+}
+
+export interface UpdateManagementWorkspaceMemberRoleRequest {
+  idRole: string;
+}
+
 export type AccessSettingsQueryState = {
   page: number;
   pageSize: number;
@@ -121,4 +178,3 @@ export type AccessSettingsQueryState = {
   idWorkspace: string;
   idRole: string;
 };
-

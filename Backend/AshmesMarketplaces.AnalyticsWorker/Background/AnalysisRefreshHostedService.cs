@@ -7,7 +7,7 @@ using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Users;
 using Microsoft.EntityFrameworkCore;
 
-namespace AshmesMarketplaces.API.Background;
+namespace AshmesMarketplaces.AnalyticsWorker.Background;
 
 public sealed class AnalysisRefreshHostedService : BackgroundService
 {
@@ -29,6 +29,8 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("Analytics worker started. workerId={WorkerId}", _workerId);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -53,6 +55,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         var nowUtc = DateTime.UtcNow;
         await ProcessHotProductsDueAsync(nowUtc, cancellationToken);
         await ProcessMarketConcentrationDueAsync(nowUtc, cancellationToken);
+        await ProcessTopForecastDueAsync(nowUtc, cancellationToken);
         await ProcessOverviewDueAsync(nowUtc, cancellationToken);
     }
 
@@ -63,6 +66,12 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             return;
 
         var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled public hot-products refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
         try
         {
             using var scope = _scopeFactory.CreateScope();
@@ -74,17 +83,22 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
 
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
-                "Scheduled public hot-products refresh completed. scheduleId={ScheduleId} durationMs={DurationMs}",
+                "Scheduled public hot-products refresh completed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
                 scheduleId.Value,
-                (completedAtUtc - startedAtUtc).TotalMilliseconds);
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
             _logger.LogWarning(
                 ex,
-                "Scheduled public hot-products refresh failed. scheduleId={ScheduleId}",
-                scheduleId.Value);
+                "Scheduled public hot-products refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
         }
     }
 
@@ -95,6 +109,12 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             return;
 
         var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled public market concentration refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
         try
         {
             using var scope = _scopeFactory.CreateScope();
@@ -106,18 +126,67 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
 
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
-                "Scheduled public market concentration refresh completed. scheduleId={ScheduleId} snapshotCount={SnapshotCount} durationMs={DurationMs}",
+                "Scheduled public market concentration refresh completed. scheduleId={ScheduleId} snapshotCount={SnapshotCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
                 scheduleId.Value,
                 result.Value!.Count,
-                (completedAtUtc - startedAtUtc).TotalMilliseconds);
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
             _logger.LogWarning(
                 ex,
-                "Scheduled public market concentration refresh failed. scheduleId={ScheduleId}",
-                scheduleId.Value);
+                "Scheduled public market concentration refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+    }
+
+    private async Task ProcessTopForecastDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.TopForecastScheduleKey, nowUtc, cancellationToken);
+        if (!scheduleId.HasValue)
+            return;
+
+        var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled public top-forecast refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IPublicTopForecastRefreshService>();
+            var result = await service.RefreshAsync(cancellationToken);
+            var completedAtUtc = DateTime.UtcNow;
+            if (!result.IsSuccess)
+                throw new InvalidOperationException(result.Error!.Message);
+
+            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public top-forecast refresh completed. scheduleId={ScheduleId} predictionsCount={PredictionsCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                result.Value!.PredictionsCount,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            _logger.LogWarning(
+                ex,
+                "Scheduled public top-forecast refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
         }
     }
 
@@ -128,6 +197,12 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             return;
 
         var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled overview refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
         try
         {
             var userId = await LoadUserIdAsync(scheduleId.Value, cancellationToken);
@@ -155,18 +230,23 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var completedAtUtc = DateTime.UtcNow;
             await CompleteOverviewScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
-                "Scheduled overview refresh completed. scheduleId={ScheduleId} workspaceCount={WorkspaceCount} durationMs={DurationMs}",
+                "Scheduled overview refresh completed. scheduleId={ScheduleId} workspaceCount={WorkspaceCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
                 scheduleId.Value,
                 workspaceIds.Count,
-                (completedAtUtc - startedAtUtc).TotalMilliseconds);
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await FailOverviewScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
             _logger.LogWarning(
                 ex,
-                "Scheduled overview refresh failed. scheduleId={ScheduleId}",
-                scheduleId.Value);
+                "Scheduled overview refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
         }
     }
 
@@ -278,6 +358,9 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             MaxRecommendations: 1000,
             MinConfidence: null,
             MinProductsForScoring: 5);
+
+    private static long CurrentMemoryMb() =>
+        GC.GetTotalMemory(false) / 1024 / 1024;
 
     private static string Truncate(string value) =>
         value.Length <= 2000 ? value : value[..2000];

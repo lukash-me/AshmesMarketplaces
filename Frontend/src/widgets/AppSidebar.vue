@@ -4,7 +4,6 @@ import { useRoute } from 'vue-router';
 import {
   Boxes,
   BookmarkCheck,
-  CreditCard,
   LayoutDashboard,
   Radar,
   Settings,
@@ -27,11 +26,14 @@ const workspaceMarketProductCreatePath = '/workspace/market-products/create';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
 const marketProductsPath = '/market/products';
 const marketOpportunitiesPath = '/market/opportunities';
+const marketTopForecastPath = '/market/intelligence/top-forecast';
 const marketIntelligencePath = '/market/intelligence';
 const marketIntelligenceConcentrationPath = '/market/intelligence/concentration';
 const marketIntelligencePriceQualityHash = '#price-quality';
 const ordersPath = '/orders';
 const ordersAvailabilityPath = '/orders/availability';
+const expensesPath = '/expenses';
+const managementWorkspacesPath = '/management/workspaces';
 const ordersSections: Array<{ key: OrdersSection; label: string }> = [
   { key: 'assumed-orders', label: 'Уменьшения остатков' },
   { key: 'new-products', label: 'Новые карточки' },
@@ -44,18 +46,18 @@ const primaryNavItems = [
   { to: '/overview', label: 'Обзор', icon: LayoutDashboard }
 ];
 
-const secondaryNavItems = [
-  { to: '/expenses', label: 'Расходы', icon: CreditCard },
-  { to: '/settings/access', label: 'Доступы', icon: Settings }
-];
-
 const isMarketIntelligenceRoute = computed(() =>
   route.path === marketOpportunitiesPath
   || route.path === marketProductsPath
+  || route.path === marketTopForecastPath
   || route.path === marketIntelligencePath
   || route.path === marketIntelligenceConcentrationPath
 );
 const activeMarketIntelligenceSection = computed(() => {
+  if (route.path === marketTopForecastPath) {
+    return 'top-forecast';
+  }
+
   if (route.path === marketOpportunitiesPath) {
     return 'market-opportunities';
   }
@@ -78,6 +80,9 @@ const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(work
 const isWorkspaceMarketProductCreateRoute = computed(() => route.path === workspaceMarketProductCreatePath);
 const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
 const isOrdersRoute = computed(() => route.path === ordersPath || route.path === ordersAvailabilityPath);
+const isManagementRoute = computed(() => route.path === expensesPath || route.path === managementWorkspacesPath);
+const isExpensesRoute = computed(() => route.path === expensesPath);
+const isManagementWorkspacesRoute = computed(() => route.path === managementWorkspacesPath);
 const activeOrdersSection = computed(() =>
   route.path === ordersAvailabilityPath
     ? 'availability'
@@ -198,7 +203,7 @@ function ordersSectionTo(section: OrdersSection) {
         <RouterLink
           class="sidebar__link"
           :class="{ 'sidebar__link--active': isMarketIntelligenceRoute }"
-          :to="{ path: marketOpportunitiesPath }"
+          :to="{ path: marketTopForecastPath }"
           @click="$emit('close')"
         >
           <Radar :size="17" />
@@ -206,6 +211,14 @@ function ordersSectionTo(section: OrdersSection) {
         </RouterLink>
 
         <div class="sidebar__subnav" aria-label="Разделы маркетинговой разведки">
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'top-forecast' }"
+            :to="{ path: marketTopForecastPath }"
+            @click="$emit('close')"
+          >
+            Прогноз топа
+          </RouterLink>
           <RouterLink
             class="sidebar__sublink"
             :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'market-opportunities' }"
@@ -266,16 +279,36 @@ function ordersSectionTo(section: OrdersSection) {
         </div>
       </div>
 
-      <RouterLink
-        v-for="item in secondaryNavItems"
-        :key="item.to"
-        class="sidebar__link"
-        :to="item.to"
-        @click="$emit('close')"
-      >
-        <component :is="item.icon" :size="17" />
-        <span>{{ item.label }}</span>
-      </RouterLink>
+      <div class="sidebar__group">
+        <RouterLink
+          class="sidebar__link"
+          :class="{ 'sidebar__link--active': isManagementRoute }"
+          :to="{ path: expensesPath }"
+          @click="$emit('close')"
+        >
+          <Settings :size="17" />
+          <span>Управление</span>
+        </RouterLink>
+
+        <div class="sidebar__subnav" aria-label="Разделы управления">
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isExpensesRoute }"
+            :to="{ path: expensesPath }"
+            @click="$emit('close')"
+          >
+            Расходы
+          </RouterLink>
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isManagementWorkspacesRoute }"
+            :to="{ path: managementWorkspacesPath }"
+            @click="$emit('close')"
+          >
+            Рабочие области
+          </RouterLink>
+        </div>
+      </div>
     </nav>
   </aside>
 </template>

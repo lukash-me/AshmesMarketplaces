@@ -2,13 +2,19 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ChevronsUpDown, Search, X } from 'lucide-vue-next';
 
-const props = defineProps<{
-  label: string;
-  modelValue: string;
-  options: string[];
-  placeholder: string;
-  searchPlaceholder: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    label: string;
+    modelValue: string;
+    options: string[];
+    placeholder: string;
+    searchPlaceholder: string;
+    clearable?: boolean;
+  }>(),
+  {
+    clearable: true
+  }
+);
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
@@ -142,7 +148,7 @@ function onDocumentKeydown(event: KeyboardEvent) {
         <ChevronsUpDown class="filter-select__chevrons" :size="14" />
       </button>
       <button
-        v-if="modelValue"
+        v-if="clearable && modelValue"
         class="filter-select__clear"
         type="button"
         :aria-label="`Сбросить ${label}`"
@@ -158,7 +164,7 @@ function onDocumentKeydown(event: KeyboardEvent) {
         <input ref="searchInput" v-model="search" type="search" :placeholder="searchPlaceholder" />
       </label>
       <button
-        v-if="modelValue"
+        v-if="clearable && modelValue"
         class="filter-select__option filter-select__option--clear"
         type="button"
         @click="select('')"

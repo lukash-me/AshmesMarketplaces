@@ -38,6 +38,63 @@ export interface PublicMarketConcentrationSnapshot {
   limitations: string[];
 }
 
+export interface PublicTopForecastParams extends PublicMarketIntelligenceParams {
+  page?: number;
+  pageSize?: number;
+  minProbability?: number;
+}
+
+export interface PublicTopForecastResponse {
+  context: PublicMarketContext;
+  run: PublicTopForecastRun | null;
+  items: PublicTopForecastItem[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+  limitations: string[];
+}
+
+export interface PublicTopForecastRun {
+  id: string;
+  modelVersion: string;
+  modelArtifactId: string;
+  trainedAtUtc: string;
+  calculatedAtUtc: string;
+  sampleSize: number;
+  trainingSampleSize: number;
+  validationSampleSize: number;
+  testSampleSize: number;
+  positiveCount: number;
+  predictionsCount: number;
+  minProbability: number;
+  metrics: unknown;
+  featureSchema: unknown;
+  warnings: string[];
+}
+
+export interface PublicTopForecastItem {
+  wbProductId: string;
+  wbRootId: string | null;
+  productRowId: string | null;
+  name: string | null;
+  image: string | null;
+  price: number | null;
+  rating: number | null;
+  feedbackCount: number | null;
+  stock: number | null;
+  currentPosition: number | null;
+  currentPositionState: string | null;
+  observedRangeLimit: number | null;
+  predictedPosition: number | null;
+  top100Probability: number;
+  confidence: number;
+  sellerName: string | null;
+  brandName: string | null;
+  featureCoveragePercent: number;
+  reasons: string[];
+}
+
 export interface PublicMarketContext {
   marketplace: string;
   sourceCategory: string | null;

@@ -9,6 +9,14 @@ public interface IIntelligenceClient
         HotProductsIntelligenceRequest request,
         CancellationToken cancellationToken);
 
+    Task<ServiceResult<TopForecastTrainResponse>> TrainTopForecastAsync(
+        TopForecastTrainRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ServiceResult<TopForecastPredictResponse>> PredictTopForecastAsync(
+        TopForecastPredictRequest request,
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<WorkspaceProductAnalysisIntelligenceResponse>> AnalyzeWorkspaceProductAsync(
         WorkspaceProductAnalysisIntelligenceRequest request,
         CancellationToken cancellationToken);
