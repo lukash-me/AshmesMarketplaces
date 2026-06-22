@@ -47,30 +47,24 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                 column: "schedule_key",
                 unique: true);
 
-            migrationBuilder.InsertData(
-                table: "PublicAnalysisSchedules",
-                columns: new[]
-                {
-                    "id",
-                    "schedule_key",
-                    "timezone_id",
-                    "local_time",
-                    "next_run_at_utc",
-                    "last_status",
-                    "created_at_utc",
-                    "updated_at_utc"
-                },
-                values: new object[]
-                {
-                    new Guid("7beef1e1-98a8-4a87-93bb-4a0bff8d719d"),
-                    "hot_products_public",
-                    "Europe/Moscow",
-                    new TimeOnly(3, 0),
-                    new DateTime(2026, 6, 19, 0, 0, 0, DateTimeKind.Utc),
-                    "pending",
-                    new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc),
-                    new DateTime(2026, 6, 18, 0, 0, 0, DateTimeKind.Utc)
-                });
+            migrationBuilder.Sql("""
+                INSERT INTO "PublicAnalysisSchedules"
+                    (id, schedule_key, timezone_id, local_time, next_run_at_utc, last_status, created_at_utc, updated_at_utc)
+                SELECT
+                    '7beef1e1-98a8-4a87-93bb-4a0bff8d719d'::uuid,
+                    'hot_products_public',
+                    'Europe/Moscow',
+                    TIME '03:00:00',
+                    TIMESTAMPTZ '2026-06-19 00:00:00+00',
+                    'pending',
+                    TIMESTAMPTZ '2026-06-18 00:00:00+00',
+                    TIMESTAMPTZ '2026-06-18 00:00:00+00'
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM "PublicAnalysisSchedules"
+                    WHERE schedule_key = 'hot_products_public'
+                );
+                """);
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)

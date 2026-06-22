@@ -49,39 +49,33 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                 columns: new[] { "source_category", "source_subcategory", "query", "source_region_dest", "sort", "top_n" },
                 unique: true);
 
-            migrationBuilder.InsertData(
-                table: "PublicAnalysisSchedules",
-                columns: new[]
-                {
-                    "id",
-                    "schedule_key",
-                    "timezone_id",
-                    "local_time",
-                    "next_run_at_utc",
-                    "last_status",
-                    "created_at_utc",
-                    "updated_at_utc"
-                },
-                values: new object[]
-                {
-                    new Guid("a8705b94-5d23-4708-9b9b-1894b4d31710"),
-                    "market_concentration_public",
-                    "Europe/Moscow",
-                    new TimeOnly(4, 0),
-                    new DateTime(2026, 6, 21, 1, 0, 0, DateTimeKind.Utc),
-                    "pending",
-                    new DateTime(2026, 6, 21, 0, 0, 0, DateTimeKind.Utc),
-                    new DateTime(2026, 6, 21, 0, 0, 0, DateTimeKind.Utc)
-                });
+            migrationBuilder.Sql("""
+                INSERT INTO "PublicAnalysisSchedules"
+                    (id, schedule_key, timezone_id, local_time, next_run_at_utc, last_status, created_at_utc, updated_at_utc)
+                SELECT
+                    'a8705b94-5d23-4708-9b9b-1894b4d31710'::uuid,
+                    'market_concentration_public',
+                    'Europe/Moscow',
+                    TIME '04:00:00',
+                    TIMESTAMPTZ '2026-06-21 01:00:00+00',
+                    'pending',
+                    TIMESTAMPTZ '2026-06-21 00:00:00+00',
+                    TIMESTAMPTZ '2026-06-21 00:00:00+00'
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM "PublicAnalysisSchedules"
+                    WHERE schedule_key = 'market_concentration_public'
+                );
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DeleteData(
-                table: "PublicAnalysisSchedules",
-                keyColumn: "id",
-                keyValue: new Guid("a8705b94-5d23-4708-9b9b-1894b4d31710"));
+            migrationBuilder.Sql("""
+                DELETE FROM "PublicAnalysisSchedules"
+                WHERE schedule_key = 'market_concentration_public';
+                """);
 
             migrationBuilder.DropTable(
                 name: "PublicMarketConcentrationSnapshots");
