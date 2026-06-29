@@ -25,10 +25,16 @@ public class ApplicationDbContext : DbContext
     public DbSet<ProductHistory> ProductHistories => Set<ProductHistory>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<ParserRun> ParserRuns => Set<ParserRun>();
+    public DbSet<ParserInstance> ParserInstances => Set<ParserInstance>();
+    public DbSet<ParserNicheAssignment> ParserNicheAssignments => Set<ParserNicheAssignment>();
+    public DbSet<ParserBatchSubmission> ParserBatchSubmissions => Set<ParserBatchSubmission>();
+    public DbSet<ParserBatchSubmissionEvent> ParserBatchSubmissionEvents => Set<ParserBatchSubmissionEvent>();
+    public DbSet<ParserBatchArtifact> ParserBatchArtifacts => Set<ParserBatchArtifact>();
     public DbSet<ParserFile> ParserFiles => Set<ParserFile>();
     public DbSet<ParserImportExecution> ParserImportExecutions => Set<ParserImportExecution>();
     public DbSet<ParserImportError> ParserImportErrors => Set<ParserImportError>();
     public DbSet<ParserProductRow> ParserProductRows => Set<ParserProductRow>();
+    public DbSet<ParserCurrentProductRow> ParserCurrentProductRows => Set<ParserCurrentProductRow>();
     public DbSet<ParserProductDetailRow> ParserProductDetailRows => Set<ParserProductDetailRow>();
     public DbSet<ParserReviewRootFetch> ParserReviewRootFetches => Set<ParserReviewRootFetch>();
     public DbSet<ParserReviewRow> ParserReviewRows => Set<ParserReviewRow>();
@@ -37,6 +43,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserRankPageFetch> ParserRankPageFetches => Set<ParserRankPageFetch>();
     public DbSet<ParserLogisticsSnapshotRow> ParserLogisticsSnapshotRows => Set<ParserLogisticsSnapshotRow>();
     public DbSet<ParserWarehouseAvailabilityRow> ParserWarehouseAvailabilityRows => Set<ParserWarehouseAvailabilityRow>();
+    public DbSet<PublicParserObservedLogisticsSnapshot> PublicParserObservedLogisticsSnapshots => Set<PublicParserObservedLogisticsSnapshot>();
+    public DbSet<PublicProductAvailabilitySnapshot> PublicProductAvailabilitySnapshots => Set<PublicProductAvailabilitySnapshot>();
     public DbSet<Review> Reviews => Set<Review>();
     public DbSet<ReviewReply> ReviewReplies => Set<ReviewReply>();
     public DbSet<Logistic> Logistics => Set<Logistic>();
@@ -69,6 +77,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<BrandMarketplace> BrandMarketplaces => Set<BrandMarketplace>();
     public DbSet<Category> Categories => Set<Category>();
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
+    public DbSet<PublicMarketIntelligenceSnapshot> PublicMarketIntelligenceSnapshots => Set<PublicMarketIntelligenceSnapshot>();
     public DbSet<PublicMarketConcentrationSnapshot> PublicMarketConcentrationSnapshots => Set<PublicMarketConcentrationSnapshot>();
 
     public DbSet<Role> Roles => Set<Role>();

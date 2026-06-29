@@ -25,6 +25,13 @@ export async function getParserProducts(
   return response.data;
 }
 
+export async function getParserProductAvailability(
+  params: ParserProductListParams
+): Promise<PagedResponse<ParserProductListItem>> {
+  const response = await publicHttp.get<PagedResponse<ParserProductListItem>>('/parser/products/availability', { params });
+  return response.data;
+}
+
 export async function getParserProductFilterOptions(
   params: ParserProductFilterOptionsParams
 ): Promise<ParserProductFilterOptions> {

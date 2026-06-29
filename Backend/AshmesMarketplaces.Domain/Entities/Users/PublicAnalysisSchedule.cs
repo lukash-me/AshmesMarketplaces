@@ -5,6 +5,10 @@ namespace AshmesMarketplaces.Domain.Entities.Users;
 public sealed class PublicAnalysisSchedule
 {
     public const string HotProductsScheduleKey = "hot_products_public";
+    public const string ParserCurrentProductsScheduleKey = "parser_current_products_public";
+    public const string MarketIntelligenceScheduleKey = "market_intelligence_public";
+    public const string MarketLogisticsEventsScheduleKey = "market_logistics_events_public";
+    public const string ProductAvailabilityScheduleKey = "product_availability_public";
     public const string MarketConcentrationScheduleKey = "market_concentration_public";
     public const string TopForecastScheduleKey = "top_forecast_public";
     public const string PendingStatus = "pending";

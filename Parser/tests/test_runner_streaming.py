@@ -8,7 +8,7 @@ PARSER_DIR = Path(__file__).resolve().parents[1]
 if str(PARSER_DIR) not in sys.path:
     sys.path.insert(0, str(PARSER_DIR))
 
-import runner  # noqa: E402
+from pipelines.products import runner  # noqa: E402
 from config import ParserConfig  # noqa: E402
 
 

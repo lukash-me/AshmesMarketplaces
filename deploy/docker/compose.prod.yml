@@ -226,8 +226,8 @@ services:
         condition: service_healthy
     working_dir: /app
     command: >
-      /bin/sh -c "python Parser/market_refresh_runner.py
-      --config Parser/presets/market_refresh_selected_niches_batched.prod.json
+      /bin/sh -c "python Parser/app/market_refresh.py
+      --config Parser/presets/production/market_refresh_selected_niches_batched.prod.json
       --mode batched_full_enrichment
       --stage-to-db
       --connection-string \"$${PARSER_POSTGRES_CONNECTION}\""

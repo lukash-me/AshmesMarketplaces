@@ -1,0 +1,2 @@
+"""Search rank pipeline stage."""
+

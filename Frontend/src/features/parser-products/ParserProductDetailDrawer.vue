@@ -1104,9 +1104,11 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
   border: 1px solid rgb(249 115 22 / 0.26);
   border-radius: var(--radius-sm);
   background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.018), transparent),
-    rgb(7 10 16 / 0.42);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.025), 0 8px 22px rgb(249 115 22 / 0.035);
+    radial-gradient(circle at 100% 0, rgb(249 115 22 / 0.075), transparent 45%),
+    var(--surface-control);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.55),
+    0 8px 22px rgb(249 115 22 / 0.035);
   padding: var(--space-2);
 }
 

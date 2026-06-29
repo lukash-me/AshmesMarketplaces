@@ -1,0 +1,2 @@
+"""Product discovery pipeline stage."""
+

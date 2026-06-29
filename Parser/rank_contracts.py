@@ -8,7 +8,7 @@ from rank_config import RankContextConfig
 
 
 RANK_SCHEMA_VERSION = 1
-WB_SEARCH_ENDPOINT = "https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search"
+WB_SEARCH_ENDPOINT = "https://search.wb.ru/exactmatch/ru/common/v18/search"
 
 
 def build_search_params(

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronDown, LogOut, Menu, Search } from 'lucide-vue-next';
+import { Check, ChevronDown, LogOut, Menu } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { useAuthPromptStore } from '@/features/auth/authPrompt.store';
@@ -66,10 +66,6 @@ onBeforeUnmount(() => {
     <button class="app-icon-button topbar__menu" type="button" @click="$emit('menu')">
       <Menu :size="20" />
     </button>
-    <div class="topbar__search">
-      <Search :size="16" />
-      <span>Search workspace</span>
-    </div>
     <div v-if="isSignedIn" class="topbar__user">
       <div ref="workspacePickerRef" class="topbar__workspace">
         <button
@@ -116,7 +112,7 @@ onBeforeUnmount(() => {
   top: 0;
   z-index: 20;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--space-3);
   min-height: 3.5rem;
@@ -124,20 +120,6 @@ onBeforeUnmount(() => {
   background: var(--surface-topbar);
   padding: 0 var(--space-4);
   backdrop-filter: blur(16px);
-}
-
-.topbar__search {
-  display: none;
-  align-items: center;
-  gap: var(--space-2);
-  height: 2.125rem;
-  max-width: 28rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-control);
-  color: var(--color-text-subtle);
-  padding: 0 var(--space-3);
-  font-size: 0.8125rem;
 }
 
 .topbar__user {
@@ -242,12 +224,6 @@ onBeforeUnmount(() => {
 .topbar__workspace-empty {
   color: var(--color-text-muted);
   padding: var(--space-2);
-}
-
-@media (min-width: 720px) {
-  .topbar__search {
-    display: flex;
-  }
 }
 
 @media (min-width: 1024px) {

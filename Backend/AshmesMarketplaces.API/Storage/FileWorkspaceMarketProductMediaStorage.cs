@@ -15,13 +15,16 @@ public sealed class FileWorkspaceMarketProductMediaStorage : IWorkspaceMarketPro
     };
 
     private readonly IWebHostEnvironment _environment;
+    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly WorkspaceMarketProductMediaStorageOptions _options;
 
     public FileWorkspaceMarketProductMediaStorage(
         IWebHostEnvironment environment,
+        IHttpContextAccessor httpContextAccessor,
         IOptions<WorkspaceMarketProductMediaStorageOptions> options)
     {
         _environment = environment;
+        _httpContextAccessor = httpContextAccessor;
         _options = options.Value;
     }
 
@@ -69,8 +72,18 @@ public sealed class FileWorkspaceMarketProductMediaStorage : IWorkspaceMarketPro
         }
 
         var publicBase = "/" + _options.PublicBasePath.Trim('/');
-        var url = $"{publicBase}/{storageKey}";
+        var relativeUrl = $"{publicBase}/{storageKey}";
+        var url = BuildPublicUrl(relativeUrl);
         return new WorkspaceMarketProductStoredMedia(url, storageKey, $"{safeName}{extension}", contentType);
+    }
+
+    private string BuildPublicUrl(string relativeUrl)
+    {
+        var request = _httpContextAccessor.HttpContext?.Request;
+        if (request is null || !request.Host.HasValue)
+            return relativeUrl;
+
+        return $"{request.Scheme}://{request.Host}{request.PathBase}{relativeUrl}";
     }
 
     private static string ExtensionFromContentType(string contentType) =>

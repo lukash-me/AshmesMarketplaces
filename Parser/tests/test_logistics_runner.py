@@ -14,7 +14,7 @@ PARSER_DIR = Path(__file__).resolve().parents[1]
 if str(PARSER_DIR) not in sys.path:
     sys.path.insert(0, str(PARSER_DIR))
 
-import logistics_runner  # noqa: E402
+from pipelines.logistics import runner as logistics_runner  # noqa: E402
 from logistics_exporters import iter_jsonl  # noqa: E402
 from visible_delivery import build_visible_delivery_evidence  # noqa: E402
 from wb_logistics_client import LogisticsFetchResult  # noqa: E402

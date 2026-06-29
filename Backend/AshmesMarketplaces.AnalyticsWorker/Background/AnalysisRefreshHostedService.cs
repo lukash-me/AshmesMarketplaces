@@ -2,6 +2,7 @@ using AshmesMarketplaces.Application.Auth.Services;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
 using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
 using AshmesMarketplaces.Application.MarketRecommendations.Services;
+using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Users;
@@ -54,9 +55,57 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
     {
         var nowUtc = DateTime.UtcNow;
         await ProcessHotProductsDueAsync(nowUtc, cancellationToken);
+        await ProcessParserCurrentProductsDueAsync(nowUtc, cancellationToken);
+        await ProcessMarketIntelligenceDueAsync(nowUtc, cancellationToken);
+        await ProcessMarketLogisticsEventsDueAsync(nowUtc, cancellationToken);
+        await ProcessProductAvailabilityDueAsync(nowUtc, cancellationToken);
         await ProcessMarketConcentrationDueAsync(nowUtc, cancellationToken);
         await ProcessTopForecastDueAsync(nowUtc, cancellationToken);
         await ProcessOverviewDueAsync(nowUtc, cancellationToken);
+    }
+
+    private async Task ProcessParserCurrentProductsDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.ParserCurrentProductsScheduleKey, nowUtc, cancellationToken);
+        if (!scheduleId.HasValue)
+            return;
+
+        var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled parser current-products read-model refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IPublicParserCurrentProductRefreshService>();
+            var result = await service.RefreshAsync(cancellationToken);
+            var completedAtUtc = DateTime.UtcNow;
+            if (!result.IsSuccess)
+                throw new InvalidOperationException(result.Error!.Message);
+
+            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled parser current-products read-model refresh completed. scheduleId={ScheduleId} totalCount={TotalCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                result.Value!.TotalCount,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            _logger.LogWarning(
+                ex,
+                "Scheduled parser current-products read-model refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
     }
 
     private async Task ProcessHotProductsDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
@@ -95,6 +144,141 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             _logger.LogWarning(
                 ex,
                 "Scheduled public hot-products refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+    }
+
+    private async Task ProcessMarketIntelligenceDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.MarketIntelligenceScheduleKey, nowUtc, cancellationToken);
+        if (!scheduleId.HasValue)
+            return;
+
+        var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled public market intelligence refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IPublicMarketIntelligenceRefreshService>();
+            var result = await service.RefreshAllAsync(cancellationToken);
+            var completedAtUtc = DateTime.UtcNow;
+            if (!result.IsSuccess)
+                throw new InvalidOperationException(result.Error!.Message);
+
+            var sampleSize = result.Value!.Sum(x => x.PriceQualityMap.Summary.TotalPoints);
+            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public market intelligence refresh completed. scheduleId={ScheduleId} snapshotCount={SnapshotCount} sampleSize={SampleSize} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                result.Value!.Count,
+                sampleSize,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            _logger.LogWarning(
+                ex,
+                "Scheduled public market intelligence refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+    }
+
+    private async Task ProcessMarketLogisticsEventsDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.MarketLogisticsEventsScheduleKey, nowUtc, cancellationToken);
+        if (!scheduleId.HasValue)
+            return;
+
+        var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled public logistics event snapshot refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IPublicParserObservedLogisticsRefreshService>();
+            var result = await service.RefreshAsync(cancellationToken);
+            var completedAtUtc = DateTime.UtcNow;
+            if (!result.IsSuccess)
+                throw new InvalidOperationException(result.Error!.Message);
+
+            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public logistics event snapshot refresh completed. scheduleId={ScheduleId} marketEventsCount={MarketEventsCount} stockDecreasesCount={StockDecreasesCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                result.Value!.MarketEventsCount,
+                result.Value.StockDecreasesCount,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            _logger.LogWarning(
+                ex,
+                "Scheduled public logistics event snapshot refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+    }
+
+    private async Task ProcessProductAvailabilityDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.ProductAvailabilityScheduleKey, nowUtc, cancellationToken);
+        if (!scheduleId.HasValue)
+            return;
+
+        var startedAtUtc = DateTime.UtcNow;
+        var memoryBeforeMb = CurrentMemoryMb();
+        _logger.LogInformation(
+            "Scheduled public product availability snapshot refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            scheduleId.Value,
+            memoryBeforeMb);
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IPublicProductAvailabilityRefreshService>();
+            var result = await service.RefreshAsync(cancellationToken);
+            var completedAtUtc = DateTime.UtcNow;
+            if (!result.IsSuccess)
+                throw new InvalidOperationException(result.Error!.Message);
+
+            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public product availability snapshot refresh completed. scheduleId={ScheduleId} totalCount={TotalCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                scheduleId.Value,
+                result.Value!.TotalCount,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                memoryBeforeMb,
+                CurrentMemoryMb());
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            _logger.LogWarning(
+                ex,
+                "Scheduled public product availability snapshot refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
                 scheduleId.Value,
                 (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,

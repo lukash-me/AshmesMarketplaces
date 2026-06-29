@@ -11,7 +11,7 @@ PARSER_DIR = Path(__file__).resolve().parents[1]
 if str(PARSER_DIR) not in sys.path:
     sys.path.insert(0, str(PARSER_DIR))
 
-import rank_runner  # noqa: E402
+from pipelines.ranks import runner as rank_runner  # noqa: E402
 from rank_config import (  # noqa: E402
     KNOWN_RANK_CONTEXT_TYPES,
     RankContextConfig,

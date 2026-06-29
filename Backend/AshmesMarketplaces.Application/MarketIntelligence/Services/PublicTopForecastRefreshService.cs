@@ -132,11 +132,7 @@ public sealed class PublicTopForecastRefreshService : IPublicTopForecastRefreshS
             createdAtUtc);
         _dbContext.PublicTopForecastRuns.Add(run);
 
-        var productRows = await LoadProductRowsAsync(
-            contextSnapshots.SelectMany(x => x.Snapshot.Products).Select(x => x.ParserProductRowId).Distinct().ToList(),
-            cancellationToken);
-
-        var savedCount = 0;
+        var candidates = new List<(TopForecastPredictionDto Prediction, SnapshotProduct SnapshotProduct)>();
         foreach (var prediction in predict.Predictions)
         {
             if (string.IsNullOrWhiteSpace(prediction.ProductKey)
@@ -151,6 +147,19 @@ public sealed class PublicTopForecastRefreshService : IPublicTopForecastRefreshS
             if (currentPosition.HasValue && currentPosition.Value <= 100)
                 continue;
 
+            candidates.Add((prediction, snapshotProduct));
+        }
+
+        var productRows = await LoadProductRowsAsync(
+            candidates.Select(x => x.SnapshotProduct.Product.ParserProductRowId).Distinct().ToList(),
+            cancellationToken);
+
+        var savedCount = 0;
+        foreach (var candidate in candidates)
+        {
+            var prediction = candidate.Prediction;
+            var snapshotProduct = candidate.SnapshotProduct;
+            var currentPosition = snapshotProduct.Product.Position;
             var context = snapshotProduct.Context;
             var entity = new PublicTopForecastPrediction(
                 run.Id,

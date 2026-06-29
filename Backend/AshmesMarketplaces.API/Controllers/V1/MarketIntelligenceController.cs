@@ -12,13 +12,13 @@ namespace AshmesMarketplaces.API.Controllers.V1;
 [Produces("application/json")]
 public sealed class MarketIntelligenceController : ControllerBase
 {
-    private readonly IPublicMarketIntelligenceReadService _readService;
+    private readonly IPublicMarketIntelligenceSnapshotReadService _readService;
     private readonly IPublicMarketConcentrationReadService _concentrationReadService;
     private readonly IPublicTopForecastReadService _topForecastReadService;
     private readonly IPublicAnalysisRefreshScheduler _publicAnalysisRefreshScheduler;
 
     public MarketIntelligenceController(
-        IPublicMarketIntelligenceReadService readService,
+        IPublicMarketIntelligenceSnapshotReadService readService,
         IPublicMarketConcentrationReadService concentrationReadService,
         IPublicTopForecastReadService topForecastReadService,
         IPublicAnalysisRefreshScheduler publicAnalysisRefreshScheduler)

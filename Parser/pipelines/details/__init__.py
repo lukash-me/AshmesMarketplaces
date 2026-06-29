@@ -1,0 +1,2 @@
+"""Product details pipeline stage."""
+

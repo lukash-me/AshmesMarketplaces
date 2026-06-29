@@ -1,5 +1,7 @@
 using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
+using AshmesMarketplaces.Application.ParserBatches.Dtos;
+using AshmesMarketplaces.Application.ParserBatches.Services;
 using AshmesMarketplaces.Application.ParserObservability.Dtos;
 using AshmesMarketplaces.Application.ParserObservability.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -17,19 +19,65 @@ public sealed class ParserController : ControllerBase
     private readonly IParserRunReadService _runReadService;
     private readonly IParserObservedStockDecreaseReadService _observedStockDecreaseReadService;
     private readonly IParserObservedMarketEventReadService _observedMarketEventReadService;
+    private readonly IPublicProductAvailabilityReadService _productAvailabilityReadService;
+    private readonly IParserBatchQueueService _parserBatchQueueService;
 
     public ParserController(
         IParserProductReadService productReadService,
         IParserReviewReadService reviewReadService,
         IParserRunReadService runReadService,
         IParserObservedStockDecreaseReadService observedStockDecreaseReadService,
-        IParserObservedMarketEventReadService observedMarketEventReadService)
+        IParserObservedMarketEventReadService observedMarketEventReadService,
+        IPublicProductAvailabilityReadService productAvailabilityReadService,
+        IParserBatchQueueService parserBatchQueueService)
     {
         _productReadService = productReadService;
         _reviewReadService = reviewReadService;
         _runReadService = runReadService;
         _observedStockDecreaseReadService = observedStockDecreaseReadService;
         _observedMarketEventReadService = observedMarketEventReadService;
+        _productAvailabilityReadService = productAvailabilityReadService;
+        _parserBatchQueueService = parserBatchQueueService;
+    }
+
+    [HttpPost("batches")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserBatchSubmitResponse), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ParserBatchSubmitResponse>> SubmitBatch(
+        [FromBody] ParserBatchSubmitRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserBatchQueueService.SubmitAsync(request, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return Accepted(result.Value);
+    }
+
+    [HttpGet("batches/{externalBatchId}/status")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserBatchStatusResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserBatchStatusResponse>> GetBatchStatus(
+        string externalBatchId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserBatchQueueService.GetStatusAsync(externalBatchId, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("instances/{parserInstanceId}/pending-acks")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserPendingAckResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserPendingAckResponse>> GetPendingAcks(
+        string parserInstanceId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserBatchQueueService.GetPendingAcksAsync(parserInstanceId, cancellationToken);
+        return ToActionResult(result);
     }
 
     [HttpGet("products")]
@@ -113,6 +161,18 @@ public sealed class ParserController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _observedMarketEventReadService.GetListAsync(query, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("products/availability")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(PagedResponse<ParserProductListItemDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<PagedResponse<ParserProductListItemDto>>> GetProductAvailability(
+        [FromQuery] ParserProductListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await _productAvailabilityReadService.GetAsync(query, cancellationToken);
         return ToActionResult(result);
     }
 

@@ -405,9 +405,9 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 }
 
 .event-pill--new_product_observed {
-  border-color: rgb(34 197 94 / 0.24);
-  background: rgb(34 197 94 / 0.08);
-  color: rgb(134 239 172);
+  border-color: rgb(22 101 52 / 0.38);
+  background: rgb(22 163 74 / 0.12);
+  color: rgb(21 128 61);
 }
 
 .event-pill--product_missing_in_current {

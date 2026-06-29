@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { storeToRefs } from 'pinia';
 import { Eye, History } from 'lucide-vue-next';
 
 import {
@@ -41,7 +40,6 @@ type TagItem = {
 
 const workspace = useActiveWorkspace();
 const authStore = useAuthStore();
-const { user } = storeToRefs(authStore);
 const overview = ref<WorkspaceOverview | null>(null);
 const loading = ref(false);
 const error = ref('');
@@ -57,15 +55,6 @@ const hasProducts = computed(() => (overview.value?.workspaceProductCount ?? 0) 
 const groups = computed<WorkspaceOverviewGroup[]>(() =>
   overview.value ? [overview.value.newItems] : []
 );
-const overviewScheduleText = computed(() => {
-  const schedule = user.value?.analysisSchedule;
-  if (!schedule) {
-    return 'Обзор обновляется автоматически один раз в сутки.';
-  }
-
-  return `Обновляется ежедневно в ${schedule.overviewLocalTime}. Следующий запуск: ${formatScheduleDate(schedule.nextOverviewRunAtUtc)}.`;
-});
-
 watch(
   activeWorkspaceId,
   () => {
@@ -109,24 +98,6 @@ async function loadOverview(): Promise<void> {
       loading.value = false;
     }
   }
-}
-
-function formatScheduleDate(value: string | null | undefined): string {
-  if (!value) {
-    return 'ожидает назначения';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return 'ожидает назначения';
-  }
-
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date);
 }
 
 async function markViewed(product: WorkspaceOverviewProduct): Promise<void> {
@@ -656,8 +627,6 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
       description="Обзор показывает ежедневную сводку по вашим наблюдаемым товарам: новые события, изменения карточек и похожие товары. Войдите, чтобы увидеть данные своей рабочей области."
     />
     <template v-else>
-      <p v-if="activeWorkspaceId" class="analysis-schedule-note">{{ overviewScheduleText }}</p>
-
     <p v-if="error" class="overview-error">{{ error }}</p>
 
     <LoadingState v-if="loading" :rows="6" />
@@ -870,12 +839,6 @@ function openSimilarProduct(similar: WorkspaceOverviewSimilarProduct): void {
 .overview-page {
   display: grid;
   gap: var(--space-5);
-}
-
-.analysis-schedule-note {
-  margin: calc(var(--space-3) * -1) 0 0;
-  color: var(--text-muted);
-  font-size: 0.9rem;
 }
 
 .overview-error {

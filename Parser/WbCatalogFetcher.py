@@ -177,7 +177,7 @@ class WbCatalogFetcher:
                         self.attempt_recorder()
 
                     response = await client.get(
-                        'https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search',
+                        'https://search.wb.ru/exactmatch/ru/common/v18/search',
                         params=params,
                         cookies=self.cookies,
                         headers=self.headers,

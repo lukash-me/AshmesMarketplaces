@@ -293,7 +293,6 @@ function readNumberQuery(key: string): number | null {
       <header class="forecast-summary">
         <span>Выборка: <strong>{{ forecast.run?.sampleSize?.toLocaleString('ru-RU') ?? 0 }}</strong></span>
         <span>Прогнозов: <strong>{{ forecast.totalCount.toLocaleString('ru-RU') }}</strong></span>
-        <span>Рассчитано: <strong>{{ formatDate(forecast.run?.calculatedAtUtc) }}</strong></span>
       </header>
 
       <div class="forecast-grid">
@@ -325,7 +324,7 @@ function readNumberQuery(key: string): number | null {
               </div>
               <div>
                 <span>Уверенность прогноза</span>
-                <strong>{{ formatPercent(item.top100Probability) }}</strong>
+                <strong>{{ formatPercent(item.confidence) }}</strong>
               </div>
             </div>
 
@@ -355,7 +354,7 @@ function readNumberQuery(key: string): number | null {
         <Button variant="secondary" :disabled="page <= 1" @click="setPage(page - 1)">Назад</Button>
         <div class="forecast-pager__pages">
           <template v-for="item in paginationItems" :key="item">
-            <span v-if="typeof item === 'string'" class="forecast-pager__ellipsis">…</span>
+            <span v-if="typeof item === 'string'" class="forecast-pager__ellipsis">...</span>
             <button
               v-else
               class="forecast-pager__page"

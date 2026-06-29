@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AshmesMarketplaces.Application.ParserObservability.Services;
 
-public sealed class ParserProductReadService : IParserProductReadService
+public sealed partial class ParserProductReadService : IParserProductReadService
 {
     private static readonly SemaphoreSlim ProductFilterOptionsCacheLock = new(1, 1);
     private static readonly TimeSpan ProductFilterOptionsCacheDuration = TimeSpan.FromMinutes(5);
@@ -38,20 +38,20 @@ public sealed class ParserProductReadService : IParserProductReadService
     private const string WarningLatestProductsAndLogisticsOverlapIsPartial = "latest_products_and_logistics_overlap_is_partial";
     private const string WarningLatestLogisticsRunNotFound = "latest_logistics_run_not_found";
     private const string MoscowDeliveryDestination = "1259570991";
-    private const string MoscowDeliveryCity = "Москва";
-    private const string MoscowDeliveryLabel = "Москва, ПВЗ WB на улице Зацепа 32";
-    private const string MoscowDeliveryAddress = "г Москва, улица Зацепа 32";
+    private const string MoscowDeliveryCity = "РњРѕСЃРєРІР°";
+    private const string MoscowDeliveryLabel = "РњРѕСЃРєРІР°, РџР’Р— WB РЅР° СѓР»РёС†Рµ Р—Р°С†РµРїР° 32";
+    private const string MoscowDeliveryAddress = "Рі РњРѕСЃРєРІР°, СѓР»РёС†Р° Р—Р°С†РµРїР° 32";
 
     private static readonly string[] DemoCardSubcategoryAllowlist =
     [
-        "Органайзеры для хранения вещей",
-        "Коврики для ванной",
-        "Светильники бра"
+        "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№",
+        "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
+        "РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°"
     ];
     private static readonly IReadOnlyDictionary<string, string> DemoCardCategoryBySubcategory =
         DemoCardSubcategoryAllowlist.ToDictionary(
             subcategory => subcategory,
-            _ => "Товары для дома",
+            _ => "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
             StringComparer.Ordinal);
 
     private static readonly ParserProductReviewEvidenceDto EmptyReviewEvidence = new(
@@ -78,6 +78,9 @@ public sealed class ParserProductReadService : IParserProductReadService
         var page = Math.Max(query.Page, 1);
         var pageSize = Math.Clamp(query.PageSize, 1, 200);
         var runScope = ParserRunScope.From(query.IncludeTestRuns, query.TestRunsOnly, query.TestLabel);
+        if (CanUseCurrentProductRows(query, runScope))
+            return await GetCurrentProductListAsync(query, page, pageSize, cancellationToken);
+
         var rows = await BuildEffectiveProductRowsAsync(query.ParserRunId, runScope, cancellationToken);
         if (rows is null)
         {
@@ -124,6 +127,9 @@ public sealed class ParserProductReadService : IParserProductReadService
         CancellationToken cancellationToken)
     {
         var runScope = ParserRunScope.From(query.IncludeTestRuns, query.TestRunsOnly, query.TestLabel);
+        if (CanUseCurrentProductFilterOptions(query, runScope))
+            return await GetCurrentProductFilterOptionsAsync(query, cancellationToken);
+
         if (CanUseProductionFilterOptionsCache(query))
         {
             var cached = await GetCachedProductionFilterOptionsAsync(runScope, cancellationToken);
@@ -397,6 +403,83 @@ public sealed class ParserProductReadService : IParserProductReadService
         return ServiceResult<ParserProductDetailDto>.Success(MapToDetail(row, sourceFile, evidence, details));
     }
 
+    private async Task<ServiceResult<PagedResponse<ParserProductListItemDto>>> GetCurrentProductListAsync(
+        ParserProductListQuery query,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var rows = _dbContext.ParserCurrentProductRows.AsNoTracking();
+        rows = ApplyCurrentFilters(rows, query);
+
+        var totalCount = await rows.CountAsync(cancellationToken);
+        if (totalCount == 0)
+        {
+            return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
+                new PagedResponse<ParserProductListItemDto>([], page, pageSize, 0));
+        }
+
+        var pageProductIds = await ApplyCurrentSort(rows, query.Sort)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(x => x.ProductRowId)
+            .ToListAsync(cancellationToken);
+
+        var pageRowsById = await _dbContext.ParserProductRows
+            .AsNoTracking()
+            .Where(x => pageProductIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+
+        var pageRows = pageProductIds
+            .Select(id => pageRowsById.GetValueOrDefault(id))
+            .Where(x => x is not null)
+            .Cast<ParserProductRow>()
+            .ToList();
+
+        var evidence = await LoadListEvidenceAsync(pageRows, ParserRunScope.Production, cancellationToken);
+        var items = pageRows
+            .Select(row => MapToListItem(row, evidence))
+            .ToList();
+
+        return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
+            new PagedResponse<ParserProductListItemDto>(items, page, pageSize, totalCount));
+    }
+
+    private async Task<ServiceResult<ParserProductFilterOptionsDto>> GetCurrentProductFilterOptionsAsync(
+        ParserProductFilterOptionsQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (CanUseProductionFilterOptionsCache(query))
+        {
+            var cached = await GetCachedProductionFilterOptionsAsync(ParserRunScope.Production, cancellationToken);
+            if (cached is not null)
+                return ServiceResult<ParserProductFilterOptionsDto>.Success(cached);
+        }
+
+        var rows = _dbContext.ParserCurrentProductRows.AsNoTracking();
+        var searchedRows = ApplyCurrentSearch(rows, query.Search);
+        var categoryRows = searchedRows;
+        var subcategoryRows = ApplyCurrentFilterOptionValue(searchedRows, nameof(ParserCurrentProductRow.SourceCategory), query.SourceCategory);
+        var brandRows = ApplyCurrentFilterOptionValue(subcategoryRows, nameof(ParserCurrentProductRow.SourceSubcategory), query.SourceSubcategory);
+        var sellerRows = ApplyCurrentFilterOptionValue(brandRows, nameof(ParserCurrentProductRow.BrandName), query.BrandName);
+
+        var categories = await LoadDistinctOptionValuesAsync(
+            categoryRows.Select(x => x.SourceCategory),
+            cancellationToken);
+        var subcategories = await LoadDistinctOptionValuesAsync(
+            subcategoryRows.Select(x => x.SourceSubcategory),
+            cancellationToken);
+        var brands = await LoadDistinctOptionValuesAsync(
+            brandRows.Select(x => x.BrandName),
+            cancellationToken);
+        var sellers = await LoadDistinctOptionValuesAsync(
+            sellerRows.Select(x => x.SellerName),
+            cancellationToken);
+
+        return ServiceResult<ParserProductFilterOptionsDto>.Success(
+            new ParserProductFilterOptionsDto(categories, subcategories, brands, sellers));
+    }
+
     private async Task<IQueryable<ParserProductRow>?> BuildEffectiveProductRowsAsync(
         string? parserRunId,
         ParserRunScope runScope,
@@ -469,8 +552,8 @@ public sealed class ParserProductReadService : IParserProductReadService
                 return _productionProductFilterOptionsCache;
             }
 
-            var rows = await BuildEffectiveProductRowsAsync(parserRunId: null, runScope, cancellationToken);
-            if (rows is null)
+            var rows = _dbContext.ParserCurrentProductRows.AsNoTracking();
+            if (!await rows.AnyAsync(cancellationToken))
             {
                 _productionProductFilterOptionsCache = EmptyFilterOptions();
                 _productionProductFilterOptionsCacheExpiresAtUtc = now.Add(ProductFilterOptionsCacheDuration);
@@ -535,6 +618,21 @@ public sealed class ParserProductReadService : IParserProductReadService
             || (x.SellerName != null && EF.Functions.ILike(x.SellerName, $"%{search}%")));
     }
 
+    private static IQueryable<ParserCurrentProductRow> ApplyCurrentSearch(
+        IQueryable<ParserCurrentProductRow> rows,
+        string? searchText)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+            return rows;
+
+        var search = searchText.Trim();
+        return rows.Where(x =>
+            EF.Functions.ILike(x.Name, $"%{search}%")
+            || EF.Functions.ILike(x.WbProductId, $"%{search}%")
+            || (x.BrandName != null && EF.Functions.ILike(x.BrandName, $"%{search}%"))
+            || (x.SellerName != null && EF.Functions.ILike(x.SellerName, $"%{search}%")));
+    }
+
     private static IQueryable<ParserProductRow> ApplyFilterOptionValue(
         IQueryable<ParserProductRow> rows,
         string fieldName,
@@ -553,6 +651,29 @@ public sealed class ParserProductReadService : IParserProductReadService
             nameof(ParserProductRow.BrandName) => rows.Where(x =>
                 x.BrandName != null && x.BrandName.Trim().ToLower() == normalized),
             nameof(ParserProductRow.SellerName) => rows.Where(x =>
+                x.SellerName != null && x.SellerName.Trim().ToLower() == normalized),
+            _ => rows
+        };
+    }
+
+    private static IQueryable<ParserCurrentProductRow> ApplyCurrentFilterOptionValue(
+        IQueryable<ParserCurrentProductRow> rows,
+        string fieldName,
+        string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return rows;
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return fieldName switch
+        {
+            nameof(ParserCurrentProductRow.SourceCategory) => rows.Where(x =>
+                x.SourceCategory != null && x.SourceCategory.Trim().ToLower() == normalized),
+            nameof(ParserCurrentProductRow.SourceSubcategory) => rows.Where(x =>
+                x.SourceSubcategory != null && x.SourceSubcategory.Trim().ToLower() == normalized),
+            nameof(ParserCurrentProductRow.BrandName) => rows.Where(x =>
+                x.BrandName != null && x.BrandName.Trim().ToLower() == normalized),
+            nameof(ParserCurrentProductRow.SellerName) => rows.Where(x =>
                 x.SellerName != null && x.SellerName.Trim().ToLower() == normalized),
             _ => rows
         };
@@ -1237,7 +1358,7 @@ public sealed class ParserProductReadService : IParserProductReadService
             var moscowCandidates = candidates
                 .Where(x =>
                     x.DeliveryProfileKey == "moscow_baseline_v1"
-                    || x.DeliveryProfileKey == "nationwide_v1" && x.DeliveryDestinationName == "Москва")
+                    || x.DeliveryProfileKey == "nationwide_v1" && x.DeliveryDestinationName == "РњРѕСЃРєРІР°")
                 .ToList();
             if (moscowCandidates.Count > 0)
                 scopedCandidates = moscowCandidates;
@@ -1304,11 +1425,11 @@ public sealed class ParserProductReadService : IParserProductReadService
         int? quantityCapObserved)
     {
         if (quantityIsCapped == true && quantityCapObserved.HasValue)
-            return $"≥{quantityCapObserved.Value.ToString(CultureInfo.InvariantCulture)}";
+            return $"в‰Ґ{quantityCapObserved.Value.ToString(CultureInfo.InvariantCulture)}";
 
         return totalQuantityObserved.HasValue
             ? totalQuantityObserved.Value.ToString(CultureInfo.InvariantCulture)
-            : "Нет данных";
+            : "РќРµС‚ РґР°РЅРЅС‹С…";
     }
 
     private static ParserWarehouseAvailabilityDto MapWarehouseAvailability(WarehouseAvailabilityCandidate row)
@@ -2001,6 +2122,98 @@ public sealed class ParserProductReadService : IParserProductReadService
         return bucket;
     }
 
+    private static bool CanUseCurrentProductRows(ParserProductListQuery query, ParserRunScope runScope)
+    {
+        return runScope.IsDefaultProduction
+            && string.IsNullOrWhiteSpace(query.ParserRunId)
+            && !query.RequireDeliveryProfile;
+    }
+
+    private static bool CanUseCurrentProductFilterOptions(ParserProductFilterOptionsQuery query, ParserRunScope runScope)
+    {
+        return runScope.IsDefaultProduction
+            && string.IsNullOrWhiteSpace(query.ParserRunId);
+    }
+
+    private static IQueryable<ParserCurrentProductRow> ApplyCurrentFilters(
+        IQueryable<ParserCurrentProductRow> rows,
+        ParserProductListQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.SourceCategory))
+            rows = rows.Where(x => x.SourceCategory == query.SourceCategory.Trim());
+
+        if (!string.IsNullOrWhiteSpace(query.SourceSubcategory))
+            rows = rows.Where(x => x.SourceSubcategory == query.SourceSubcategory.Trim());
+
+        if (!string.IsNullOrWhiteSpace(query.BrandName))
+            rows = rows.Where(x => x.BrandName == query.BrandName.Trim());
+
+        if (!string.IsNullOrWhiteSpace(query.SellerName))
+            rows = rows.Where(x => x.SellerName == query.SellerName.Trim());
+
+        if (!string.IsNullOrWhiteSpace(query.WbRootId))
+            rows = rows.Where(x => x.WbRootId == query.WbRootId.Trim());
+
+        if (query.PriceDiscountedFrom.HasValue)
+            rows = rows.Where(x => x.PriceDiscounted >= query.PriceDiscountedFrom.Value);
+
+        if (query.PriceDiscountedTo.HasValue)
+            rows = rows.Where(x => x.PriceDiscounted <= query.PriceDiscountedTo.Value);
+
+        if (query.ReviewRatingFrom.HasValue)
+            rows = rows.Where(x => x.ReviewRating >= query.ReviewRatingFrom.Value);
+
+        if (query.ReviewRatingTo.HasValue)
+            rows = rows.Where(x => x.ReviewRating <= query.ReviewRatingTo.Value);
+
+        if (query.FeedbackCountFrom.HasValue)
+            rows = rows.Where(x => x.FeedbackCount >= query.FeedbackCountFrom.Value);
+
+        if (query.FeedbackCountTo.HasValue)
+            rows = rows.Where(x => x.FeedbackCount <= query.FeedbackCountTo.Value);
+
+        return ApplyCurrentSearch(rows, query.Search);
+    }
+
+    private static IOrderedQueryable<ParserCurrentProductRow> ApplyCurrentSort(
+        IQueryable<ParserCurrentProductRow> rows,
+        string? sort)
+    {
+        return sort?.Trim() switch
+        {
+            "name" => rows.OrderBy(x => x.Name).ThenBy(x => x.ProductRowId),
+            "-name" => rows.OrderByDescending(x => x.Name).ThenByDescending(x => x.ProductRowId),
+            "parsedAtUtc" => rows.OrderBy(x => x.ParsedAtUtc).ThenBy(x => x.ProductRowId),
+            "wbProductId" => rows.OrderBy(x => x.WbProductId).ThenBy(x => x.ProductRowId),
+            "-wbProductId" => rows.OrderByDescending(x => x.WbProductId).ThenByDescending(x => x.ProductRowId),
+            "position" => rows
+                .OrderBy(x =>
+                    x.PositionState == PositionStateObserved
+                        ? 0
+                        : x.PositionState == PositionStateBeyondObservedRange
+                            ? 1
+                            : 2)
+                .ThenBy(x => x.PositionAbsolute ?? x.PositionObservedRangeLimit ?? int.MaxValue)
+                .ThenBy(x => x.ProductRowId),
+            "-position" => rows
+                .OrderBy(x =>
+                    x.PositionState == PositionStateObserved
+                        ? 2
+                        : x.PositionState == PositionStateBeyondObservedRange
+                            ? 1
+                            : 0)
+                .ThenByDescending(x => x.PositionAbsolute ?? x.PositionObservedRangeLimit ?? 0)
+                .ThenByDescending(x => x.ProductRowId),
+            "price" or "priceDiscounted" => rows.OrderBy(x => x.PriceDiscounted == null).ThenBy(x => x.PriceDiscounted).ThenBy(x => x.ProductRowId),
+            "-price" or "-priceDiscounted" => rows.OrderBy(x => x.PriceDiscounted == null).ThenByDescending(x => x.PriceDiscounted).ThenByDescending(x => x.ProductRowId),
+            "reviewRating" => rows.OrderBy(x => x.ReviewRating).ThenBy(x => x.ProductRowId),
+            "-reviewRating" => rows.OrderByDescending(x => x.ReviewRating).ThenByDescending(x => x.ProductRowId),
+            "feedbackCount" => rows.OrderBy(x => x.FeedbackCount).ThenBy(x => x.ProductRowId),
+            "-feedbackCount" => rows.OrderByDescending(x => x.FeedbackCount).ThenByDescending(x => x.ProductRowId),
+            _ => rows.OrderByDescending(x => x.ParsedAtUtc).ThenByDescending(x => x.ProductRowId)
+        };
+    }
+
     private static IQueryable<ParserProductRow> ApplyFilters(
         IQueryable<ParserProductRow> rows,
         ParserProductListQuery query)
@@ -2278,300 +2491,5 @@ public sealed class ParserProductReadService : IParserProductReadService
             .Select(x => x!.Trim())
             .Where(x => x.Length > 0)
             .ToList();
-    }
-
-    private sealed record DemoCardDetailCharacteristicsRow(
-        string Subcategory,
-        JsonDocument? Characteristics);
-
-    private sealed record ParserRunScope(
-        bool IncludeTestRuns,
-        bool TestRunsOnly,
-        string? TestLabel)
-    {
-        public static ParserRunScope Production { get; } = new(false, false, null);
-        public bool IsDefaultProduction => !IncludeTestRuns && !TestRunsOnly && string.IsNullOrWhiteSpace(TestLabel);
-
-        public static ParserRunScope From(bool includeTestRuns, bool testRunsOnly, string? testLabel)
-        {
-            return new ParserRunScope(
-                IncludeTestRuns: includeTestRuns || testRunsOnly,
-                TestRunsOnly: testRunsOnly,
-                TestLabel: string.IsNullOrWhiteSpace(testLabel) ? null : testLabel.Trim());
-        }
-
-        public bool Matches(ParserRun run)
-        {
-            var isTest = IsTestRun(run);
-            if (TestRunsOnly && !isTest)
-                return false;
-
-            if (!IncludeTestRuns && isTest)
-                return false;
-
-            if (!string.IsNullOrWhiteSpace(TestLabel)
-                && !string.Equals(TestLabelOf(run), TestLabel, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        public static bool IsTestRun(ParserRun run)
-        {
-            var value = RequestedScopeValue(run, "is_test_run");
-            return value?.ValueKind switch
-            {
-                JsonValueKind.True => true,
-                JsonValueKind.String => bool.TryParse(value.Value.GetString(), out var parsed) && parsed,
-                _ => false
-            };
-        }
-
-        public static string? TestLabelOf(ParserRun run)
-        {
-            var value = RequestedScopeValue(run, "test_label");
-            return value?.ValueKind == JsonValueKind.String ? value.Value.GetString() : null;
-        }
-
-        private static JsonElement? RequestedScopeValue(ParserRun run, string propertyName)
-        {
-            if (run.RequestedScope is null || run.RequestedScope.RootElement.ValueKind != JsonValueKind.Object)
-                return null;
-
-            return run.RequestedScope.RootElement.TryGetProperty(propertyName, out var value)
-                ? value
-                : null;
-        }
-    }
-
-    private sealed record ProductEvidenceLookup(
-        IReadOnlyDictionary<Guid, ParserProductRankSummaryDto> Ranks,
-        IReadOnlyDictionary<Guid, ParserProductPositionDto> Positions,
-        IReadOnlyDictionary<Guid, ParserProductReviewEvidenceDto> Reviews,
-        IReadOnlyDictionary<Guid, ParserProductLogisticsSummaryDto> LogisticsSummaries,
-        IReadOnlyDictionary<Guid, ParserProductLogisticsDetailDto> LogisticsDetails,
-        IReadOnlyDictionary<Guid, ParserProductDeliveryProfileDto> DeliveryProfiles)
-    {
-        public static ProductEvidenceLookup Empty { get; } = new(
-            new Dictionary<Guid, ParserProductRankSummaryDto>(),
-            new Dictionary<Guid, ParserProductPositionDto>(),
-            new Dictionary<Guid, ParserProductReviewEvidenceDto>(),
-            new Dictionary<Guid, ParserProductLogisticsSummaryDto>(),
-            new Dictionary<Guid, ParserProductLogisticsDetailDto>(),
-            new Dictionary<Guid, ParserProductDeliveryProfileDto>());
-
-        public ParserProductRankSummaryDto? GetRank(Guid productId)
-        {
-            return Ranks.TryGetValue(productId, out var rank) ? rank : null;
-        }
-
-        public ParserProductPositionDto? GetPosition(Guid productId)
-        {
-            return Positions.TryGetValue(productId, out var position) ? position : null;
-        }
-
-        public ParserProductReviewEvidenceDto GetReviewEvidence(Guid productId)
-        {
-            return Reviews.TryGetValue(productId, out var evidence) ? evidence : EmptyReviewEvidence;
-        }
-
-        public ParserProductLogisticsSummaryDto? GetLogisticsSummary(Guid productId)
-        {
-            return LogisticsSummaries.TryGetValue(productId, out var logistics) ? logistics : null;
-        }
-
-        public ParserProductLogisticsDetailDto? GetLogisticsDetail(Guid productId)
-        {
-            return LogisticsDetails.TryGetValue(productId, out var logistics) ? logistics : null;
-        }
-
-        public ParserProductDeliveryProfileDto? GetDeliveryProfile(Guid productId)
-        {
-            return DeliveryProfiles.TryGetValue(productId, out var profile) ? profile : null;
-        }
-    }
-
-    private sealed record ProductLogisticsEvidence(
-        IReadOnlyDictionary<Guid, ParserProductLogisticsSummaryDto> Summaries,
-        IReadOnlyDictionary<Guid, ParserProductLogisticsDetailDto> Details,
-        IReadOnlyDictionary<Guid, ParserProductDeliveryProfileDto> DeliveryProfiles)
-    {
-        public static ProductLogisticsEvidence Empty { get; } = new(
-            new Dictionary<Guid, ParserProductLogisticsSummaryDto>(),
-            new Dictionary<Guid, ParserProductLogisticsDetailDto>(),
-            new Dictionary<Guid, ParserProductDeliveryProfileDto>());
-    }
-
-    private sealed record SelectedLogisticsObservation(
-        Guid ProductRowId,
-        LogisticsSnapshotCandidate Snapshot,
-        IReadOnlyList<WarehouseAvailabilityCandidate> WarehouseRows)
-    {
-        public int DistinctWarehouseCount { get; } = WarehouseRows
-            .Select(x => x.WarehouseIdOnMp)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Cast<string>()
-            .Distinct(StringComparer.Ordinal)
-            .Count();
-    }
-
-    private sealed record LogisticsSnapshotCandidate(
-        long SourceLineNumber,
-        string ParserRunId,
-        DateTime ObservedAtUtc,
-        string SourceRegionDest,
-        string? DeliveryProfileKey,
-        string? DeliveryDestinationName,
-        string? DeliveryProfileVersion,
-        string? DeliveryDestinationCity,
-        string? DeliveryDestinationLabel,
-        string? DeliveryDestinationAddress,
-        decimal? DeliveryDestinationLatitude,
-        decimal? DeliveryDestinationLongitude,
-        string WbProductId,
-        int? TotalQuantityObserved,
-        bool? QuantityIsCapped,
-        int? QuantityCapObserved,
-        string QuantitySemantics,
-        string? ProductWhRaw,
-        int? ProductTime1Raw,
-        int? ProductTime2Raw,
-        long? ProductDtypeRaw,
-        int? ProductDistRaw,
-        string? VisibleDeliveryStatus,
-        string? VisibleDeliveryLabel,
-        DateTime? VisibleDeliveryDate,
-        string? VisibleDeliverySource,
-        DateTime? VisibleDeliveryObservedAtUtc,
-        JsonDocument? VisibleDeliveryRawPayload);
-
-    private sealed record WarehouseAvailabilityCandidate(
-        long SourceLineNumber,
-        string ParserRunId,
-        string SourceRegionDest,
-        string? DeliveryProfileKey,
-        string? DeliveryDestinationName,
-        string? DeliveryProfileVersion,
-        string? DeliveryDestinationCity,
-        string? DeliveryDestinationLabel,
-        string? DeliveryDestinationAddress,
-        decimal? DeliveryDestinationLatitude,
-        decimal? DeliveryDestinationLongitude,
-        string WbProductId,
-        string? WarehouseIdOnMp,
-        string? OptionId,
-        string? SizeName,
-        string? SizeOrigName,
-        int? QuantityObserved,
-        bool? QuantityIsCapped,
-        int? QuantityCapObserved,
-        string QuantitySemantics,
-        int? StockPriorityRaw,
-        int? StockTime1Raw,
-        int? StockTime2Raw,
-        long? StockDtypeRaw,
-        int? StockDistRaw,
-        decimal? PriceBasic,
-        decimal? PriceProduct,
-        decimal? PriceLogisticsRaw,
-        decimal? PriceReturnRaw);
-
-    private readonly record struct LogisticsWarehouseKey(string WbProductId, string SourceRegionDest);
-
-    private sealed record RankCandidate(
-        bool IsRootKey,
-        string Key,
-        int AbsolutePosition,
-        int Page,
-        int PositionOnPage,
-        string Query,
-        string? SourceCategory,
-        string? SourceSubcategory,
-        string? SourceRegionDest,
-        string? Sort,
-        DateTime ObservedAtUtc,
-        string ParserRunId,
-        string RankContextId);
-
-    private readonly record struct RankMatchKey(bool IsRootKey, string Key);
-
-    private sealed record PositionCoverageCandidate(
-        string? SourceCategory,
-        string? SourceSubcategory,
-        string? SourceRegionDest,
-        string? WbRootId,
-        string WbProductId,
-        string Query,
-        int AbsolutePosition,
-        DateTime ObservedAtUtc);
-
-    private sealed record PositionCoverage(
-        int ObservedRangeLimit,
-        string? Query,
-        DateTime ObservedAtUtc);
-
-    private readonly record struct PositionCoverageKey(
-        string? SourceCategory,
-        string? SourceSubcategory,
-        string? SourceRegionDest);
-
-    private sealed record RootFetchAggregate(
-        string Key,
-        int RootFetchCount,
-        string? LatestRunId,
-        DateTime LatestAtUtc,
-        bool IsFullHistoryUnknown,
-        bool HasCappedRootPayload);
-
-    private sealed record ReviewRowAggregate(
-        bool IsRootKey,
-        string Key,
-        string? ProductRunId,
-        int ParsedReviewCount,
-        int RootFetchCount,
-        string? LatestRunId,
-        DateTime LatestAtUtc,
-        string? AttributionMode,
-        bool IsFullHistoryUnknown,
-        bool HasCappedRootPayload);
-
-    private sealed record ReplyRowAggregate(
-        bool IsRootKey,
-        string Key,
-        string? ProductRunId,
-        int ParsedReplyCount,
-        int RootFetchCount,
-        string? LatestRunId,
-        DateTime LatestAtUtc,
-        string? AttributionMode,
-        bool IsFullHistoryUnknown,
-        bool HasCappedRootPayload);
-
-    private readonly record struct ReviewEvidenceKey(bool IsRootKey, string Key, string? ProductRunId);
-
-    private sealed class ReviewEvidenceBucket
-    {
-        public int RootFetchCount { get; set; }
-        public int ParsedReviewCount { get; set; }
-        public int ParsedReplyCount { get; set; }
-        public string? LatestReviewRunId { get; private set; }
-        public DateTime? LatestAtUtc { get; private set; }
-        public string? AttributionMode { get; set; }
-        public bool IsFullHistoryUnknown { get; set; }
-        public bool HasCappedRootPayload { get; set; }
-
-        public void SetLatest(DateTime? latestAtUtc, string? latestRunId)
-        {
-            if (!latestAtUtc.HasValue || string.IsNullOrWhiteSpace(latestRunId))
-                return;
-
-            if (!LatestAtUtc.HasValue || latestAtUtc.Value > LatestAtUtc.Value)
-            {
-                LatestAtUtc = latestAtUtc.Value;
-                LatestReviewRunId = latestRunId;
-            }
-        }
     }
 }

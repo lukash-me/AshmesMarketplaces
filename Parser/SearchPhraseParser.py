@@ -99,7 +99,7 @@ class SearchPhraseParser:
 
             try:
                 response = requests.get(
-                    "https://www.wildberries.ru/__internal/u-search/exactmatch/ru/common/v18/search",
+                    "https://search.wb.ru/exactmatch/ru/common/v18/search",
                     params=params,
                     cookies=self.cookies,
                     headers=HEADERS,

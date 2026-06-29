@@ -118,7 +118,6 @@ function removeFilter(key: ParserProductQueryFilterKey) {
     query: toParserProductsRouteQuery(removeParserProductQueryFilter(queryState.value, key))
   });
 }
-
 </script>
 
 <template>
@@ -149,7 +148,7 @@ function removeFilter(key: ParserProductQueryFilterKey) {
       v-else-if="rows.length === 0"
       class="app-surface"
       title="Товары маркетплейса не найдены"
-      description="Измените фильтры или обновите данные по выбранным категориям."
+      description="Измените фильтры или дождитесь обновления актуальной базы товаров."
     />
     <MarketProductsTable
       v-else

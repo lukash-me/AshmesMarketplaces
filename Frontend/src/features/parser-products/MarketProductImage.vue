@@ -21,10 +21,24 @@ const activeSrc = ref<string | null>(null);
 const loaded = ref(false);
 const failed = ref(false);
 
+const devApiOrigin = (import.meta.env.VITE_API_ORIGIN as string | undefined) || 'http://localhost:5019';
+
+function normalizeImageSrc(src: string | null | undefined): string | null {
+  if (!src) {
+    return null;
+  }
+
+  if (src.startsWith('/uploads/') && import.meta.env.DEV) {
+    return `${devApiOrigin}${src}`;
+  }
+
+  return src;
+}
+
 watch(
   () => [props.src, props.fallbackSrc] as const,
   ([src, fallbackSrc]) => {
-    activeSrc.value = src || fallbackSrc || null;
+    activeSrc.value = normalizeImageSrc(src) || normalizeImageSrc(fallbackSrc);
     loaded.value = activeSrc.value ? loadedImageUrls.has(activeSrc.value) : false;
     failed.value = !activeSrc.value;
   },
@@ -33,8 +47,9 @@ watch(
 
 const loadingMode = computed(() => (props.priority ? 'eager' : 'lazy'));
 const fetchPriority = computed(() => (props.priority ? 'high' : 'auto'));
+const normalizedFallbackSrc = computed(() => normalizeImageSrc(props.fallbackSrc));
 const hasPreview = computed(
-  () => Boolean(props.fallbackSrc && activeSrc.value && activeSrc.value !== props.fallbackSrc)
+  () => Boolean(normalizedFallbackSrc.value && activeSrc.value && activeSrc.value !== normalizedFallbackSrc.value)
 );
 
 async function onLoad(event: Event) {
@@ -57,9 +72,10 @@ async function onLoad(event: Event) {
 }
 
 function onError() {
-  if (props.fallbackSrc && activeSrc.value !== props.fallbackSrc) {
-    activeSrc.value = props.fallbackSrc;
-    loaded.value = loadedImageUrls.has(props.fallbackSrc);
+  const fallbackSrc = normalizeImageSrc(props.fallbackSrc);
+  if (fallbackSrc && activeSrc.value !== fallbackSrc) {
+    activeSrc.value = fallbackSrc;
+    loaded.value = loadedImageUrls.has(fallbackSrc);
     failed.value = false;
     return;
   }
@@ -73,7 +89,7 @@ function onError() {
     <img
       v-if="hasPreview && !loaded"
       class="market-image__preview"
-      :src="fallbackSrc"
+      :src="normalizedFallbackSrc"
       alt=""
       loading="eager"
       decoding="async"

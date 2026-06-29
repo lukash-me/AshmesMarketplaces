@@ -223,12 +223,52 @@ class TopForecastService:
             use_best_model=True,
         )
 
+        validation_probabilities = classifier.predict_proba(x_all.iloc[validation_idx])[:, 1]
+        probability_temperature = self._fit_probability_temperature(
+            validation_probabilities,
+            y_all[validation_idx],
+        )
+        validation_calibrated = self._apply_probability_temperature(
+            validation_probabilities,
+            probability_temperature,
+        )
+        validation_predicted = (validation_calibrated >= options.min_probability).astype(int)
+        validation_precision_at_threshold = float(
+            precision_score(y_all[validation_idx], validation_predicted, zero_division=0)
+        )
+        model_confidence_factor = self._model_confidence_factor(validation_precision_at_threshold)
+
         metrics = [
-            self._classification_metrics("train", classifier, regressor, x_all, y_all, positions_all, train_idx),
             self._classification_metrics(
-                "validation", classifier, regressor, x_all, y_all, positions_all, validation_idx
+                "train",
+                classifier,
+                regressor,
+                x_all,
+                y_all,
+                positions_all,
+                train_idx,
+                probability_temperature,
             ),
-            self._classification_metrics("test", classifier, regressor, x_all, y_all, positions_all, test_idx),
+            self._classification_metrics(
+                "validation",
+                classifier,
+                regressor,
+                x_all,
+                y_all,
+                positions_all,
+                validation_idx,
+                probability_temperature,
+            ),
+            self._classification_metrics(
+                "test",
+                classifier,
+                regressor,
+                x_all,
+                y_all,
+                positions_all,
+                test_idx,
+                probability_temperature,
+            ),
         ]
 
         trained_at = datetime.now(timezone.utc)
@@ -249,6 +289,13 @@ class TopForecastService:
             "clipBounds": clip_bounds,
             "logFeatures": sorted(LOG_FEATURES),
             "leakageFieldsExcluded": sorted(LEAKAGE_FIELDS),
+            "probabilityCalibration": {
+                "method": "temperature_scaling",
+                "temperature": probability_temperature,
+                "validationPrecisionAtMinProbability": round(validation_precision_at_threshold, 4),
+                "modelConfidenceFactor": round(model_confidence_factor, 4),
+                "maxDisplayedConfidence": 0.95,
+            },
             "metrics": [metric.model_dump(by_alias=True) for metric in metrics],
         }
         (artifact_dir / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -310,12 +357,21 @@ class TopForecastService:
 
         cat_indices = [FEATURE_NAMES.index(name) for name in CATEGORICAL_FEATURES]
         pool = Pool(feature_frame.frame[FEATURE_NAMES], cat_features=cat_indices)
-        probabilities = classifier.predict_proba(pool)[:, 1]
+        raw_probabilities = classifier.predict_proba(pool)[:, 1]
+        calibration = metadata.get("probabilityCalibration") or {}
+        probability_temperature = float(calibration.get("temperature") or 1.0)
+        model_confidence_factor = float(calibration.get("modelConfidenceFactor") or 0.85)
+        probabilities = self._apply_probability_temperature(raw_probabilities, probability_temperature)
         raw_positions = np.expm1(regressor.predict(pool))
 
         predictions: list[TopForecastPredictionDto] = []
         for index, probability in enumerate(probabilities):
             predicted_position = int(max(1, min(1000, round(float(raw_positions[index])))))
+            confidence = self._prediction_confidence(
+                float(probability),
+                float(feature_frame.feature_coverage[index]),
+                model_confidence_factor,
+            )
             predictions.append(
                 TopForecastPredictionDto(
                     productKey=feature_frame.product_keys[index],
@@ -323,7 +379,7 @@ class TopForecastService:
                     wbRootId=feature_frame.wb_root_ids[index],
                     predictedPosition=predicted_position,
                     top100Probability=round(float(probability), 4),
-                    confidence=round(float(probability), 4),
+                    confidence=round(confidence, 4),
                     featureCoveragePercent=round(float(feature_frame.feature_coverage[index]), 2),
                     reasons=self._build_reasons(payload.products[index]),
                 )
@@ -615,12 +671,16 @@ class TopForecastService:
         labels: np.ndarray,
         position_targets: np.ndarray,
         indices: np.ndarray,
+        probability_temperature: float = 1.0,
     ) -> TopForecastMetricsDto:
         if len(indices) == 0:
             return TopForecastMetricsDto(split=split, sampleSize=0, positiveCount=0)
         x = frame.iloc[indices]
         y = labels[indices]
-        probabilities = classifier.predict_proba(x)[:, 1]
+        probabilities = TopForecastService._apply_probability_temperature(
+            classifier.predict_proba(x)[:, 1],
+            probability_temperature,
+        )
         predicted = (probabilities >= 0.5).astype(int)
         roc_auc = None
         if len(np.unique(y)) > 1:
@@ -637,6 +697,46 @@ class TopForecastService:
             rocAuc=round(roc_auc, 4) if roc_auc is not None else None,
             positionMae=round(float(mean_absolute_error(position_targets[indices], predicted_position)), 2),
         )
+
+    @staticmethod
+    def _fit_probability_temperature(probabilities: np.ndarray, labels: np.ndarray) -> float:
+        if len(probabilities) == 0 or len(np.unique(labels)) < 2:
+            return 1.0
+
+        candidates = np.array([1.0, 1.25, 1.5, 2.0, 3.0, 5.0, 8.0, 12.0], dtype=np.float64)
+        best_temperature = 1.0
+        best_loss = float("inf")
+        for temperature in candidates:
+            calibrated = TopForecastService._apply_probability_temperature(probabilities, float(temperature))
+            clipped = np.clip(calibrated, 1e-6, 1 - 1e-6)
+            loss = -float(np.mean(labels * np.log(clipped) + (1 - labels) * np.log(1 - clipped)))
+            if loss < best_loss:
+                best_loss = loss
+                best_temperature = float(temperature)
+        return best_temperature
+
+    @staticmethod
+    def _apply_probability_temperature(probabilities: np.ndarray, temperature: float) -> np.ndarray:
+        safe_temperature = max(float(temperature or 1.0), 1.0)
+        clipped = np.clip(probabilities, 1e-6, 1 - 1e-6)
+        logits = np.log(clipped / (1 - clipped))
+        return 1 / (1 + np.exp(-(logits / safe_temperature)))
+
+    @staticmethod
+    def _model_confidence_factor(validation_precision: float) -> float:
+        if not math.isfinite(validation_precision) or validation_precision <= 0:
+            return 0.65
+        return max(0.65, min(0.90, validation_precision))
+
+    @staticmethod
+    def _prediction_confidence(
+        probability: float,
+        feature_coverage_percent: float,
+        model_confidence_factor: float,
+    ) -> float:
+        _ = feature_coverage_percent, model_confidence_factor
+        calibrated = max(0.0, min(1.0, probability))
+        return min(0.95, calibrated)
 
     @staticmethod
     def _build_reasons(product: MarketProductFeatureDto) -> list[str]:

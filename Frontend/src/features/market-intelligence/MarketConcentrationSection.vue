@@ -238,7 +238,6 @@ function openProducts(payload: OpenProductsPayload): void {
       </div>
       <div v-if="concentration" class="market-concentration__stats">
         <span>Выборка: <b>{{ formatNumber(concentration.sampleSize) }}</b></span>
-        <span v-if="calculatedAtUtc">Рассчитано: <b>{{ formatDateTime(calculatedAtUtc) }}</b></span>
       </div>
     </header>
 

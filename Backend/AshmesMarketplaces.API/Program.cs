@@ -1,6 +1,7 @@
 using AshmesMarketplaces.API.Extensions;
 using AshmesMarketplaces.API.Filters;
 using AshmesMarketplaces.API.DevelopmentSeed;
+using Microsoft.AspNetCore.HttpOverrides;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,6 +22,14 @@ var app = builder.Build();
 
 await app.SeedDevelopmentDataAsync();
 
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedHost | ForwardedHeaders.XForwardedProto,
+    ForwardLimit = 2
+};
+forwardedHeadersOptions.KnownIPNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
 app.UseExceptionHandler();
 app.UseSwaggerDocumentation();
 app.UseStaticFiles();

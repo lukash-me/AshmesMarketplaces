@@ -2,6 +2,7 @@ using AshmesMarketplaces.Application.Auth.Dtos;
 using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.DataAccess;
+using AshmesMarketplaces.Domain.Entities.Access;
 using AshmesMarketplaces.Domain.Entities.Users;
 using AshmesMarketplaces.Domain.Entities.Workspaces;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,7 @@ public sealed class AuthService : IAuthService
     private const string InvalidLoginMessage = "Invalid login or password.";
     private const string InvalidRefreshTokenMessage = "Invalid refresh token.";
     private const string RegisteredUserRoleName = "Manager";
+    private const string RegisteredUserRoleDescription = "Registered user";
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IPasswordHashService _passwordHashService;
@@ -57,12 +59,6 @@ public sealed class AuthService : IAuthService
         if (existingUser)
             return ServiceResult<LoginResponse>.Conflict("User with this email already exists.");
 
-        var role = await _dbContext.Roles
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Name == RegisteredUserRoleName, cancellationToken);
-        if (role is null)
-            return ServiceResult<LoginResponse>.Conflict("Registration role is not configured.");
-
         var nowUtc = DateTime.UtcNow;
         var passwordHash = _passwordHashService.HashPassword(request.Password);
 
@@ -70,6 +66,15 @@ public sealed class AuthService : IAuthService
 
         try
         {
+            var role = await _dbContext.Roles
+                .FirstOrDefaultAsync(x => x.Name == RegisteredUserRoleName, cancellationToken);
+            if (role is null)
+            {
+                role = new Role(RegisteredUserRoleName, RegisteredUserRoleDescription, nowUtc, nowUtc);
+                _dbContext.Roles.Add(role);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             var user = new User(
                 role.Id,
                 email,
@@ -128,9 +133,9 @@ public sealed class AuthService : IAuthService
 
     public async Task<ServiceResult<LoginResponse>> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent, CancellationToken cancellationToken)
     {
-        var login = request.Login.Trim();
+        var login = request.Login.Trim().ToLowerInvariant();
         var users = await _dbContext.Users
-            .Where(x => x.Login == login)
+            .Where(x => x.Login == login || x.Email == login)
             .Take(2)
             .ToListAsync(cancellationToken);
 

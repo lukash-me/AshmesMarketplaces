@@ -3,6 +3,7 @@ using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
 using AshmesMarketplaces.Application.MarketRecommendations.Options;
 using AshmesMarketplaces.Application.MarketRecommendations.Services;
+using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.DataAccess;
 using Microsoft.EntityFrameworkCore;
@@ -63,8 +64,15 @@ public static class WorkerServiceCollectionExtensions
     {
         services.AddScoped<ICurrentUser, WorkerCurrentUser>();
         services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
+        services.AddScoped<IPublicMarketIntelligenceRefreshService, PublicMarketIntelligenceRefreshService>();
         services.AddScoped<IPublicMarketConcentrationRefreshService, PublicMarketConcentrationRefreshService>();
         services.AddScoped<IPublicTopForecastRefreshService, PublicTopForecastRefreshService>();
+        services.AddScoped<ParserProductReadService>();
+        services.AddScoped<ParserObservedMarketEventReadService>();
+        services.AddScoped<ParserObservedStockDecreaseReadService>();
+        services.AddScoped<IPublicParserCurrentProductRefreshService, PublicParserCurrentProductRefreshService>();
+        services.AddScoped<IPublicParserObservedLogisticsRefreshService, PublicParserObservedLogisticsRefreshService>();
+        services.AddScoped<IPublicProductAvailabilityRefreshService, PublicProductAvailabilityRefreshService>();
         services.AddScoped<IWorkspaceOverviewService, WorkspaceOverviewService>();
 
         return services;

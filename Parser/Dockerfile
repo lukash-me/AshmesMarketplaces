@@ -67,4 +67,4 @@ RUN dotnet build Backend/AshmesMarketplaces.ParserIngestionCli/AshmesMarketplace
     -c Release \
     --no-restore
 
-CMD ["python", "Parser/market_refresh_runner.py", "--help"]
+CMD ["python", "Parser/app/market_refresh.py", "--help"]
