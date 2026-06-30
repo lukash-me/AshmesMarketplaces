@@ -11,6 +11,7 @@ from loguru import logger
 
 from common_data import HEADERS
 from config import ReviewsParserConfig
+from app.proxy_transport import httpx_proxy_kwargs
 
 
 @dataclass
@@ -34,6 +35,7 @@ class WbReviewsClient:
         self._client = httpx.AsyncClient(
             headers=HEADERS,
             timeout=config.timeout_seconds,
+            **httpx_proxy_kwargs(),
         )
 
     async def __aenter__(self) -> "WbReviewsClient":

@@ -43,8 +43,8 @@ class _Fetcher:
 def test_run_parser_streaming_flushes_batches_before_full_discovery_finishes(tmp_path, monkeypatch) -> None:
     _Fetcher.events = []
     monkeypatch.setattr(runner, "_selected_subcategories", lambda config: [{"name": "Test niche"}])
-    monkeypatch.setattr(runner, "_acquire_token", lambda config, manifest: None)
-    monkeypatch.setattr(runner, "_network_smoke_check", lambda config, manifest, selected, cookies: {"status": "ok"})
+    monkeypatch.setattr(runner, "_acquire_cookies", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_network_smoke_check", lambda config, manifest, selected: {"status": "ok"})
     monkeypatch.setattr(runner, "WbCatalogFetcher", _Fetcher)
     monkeypatch.setattr(runner.Items, "model_validate", staticmethod(lambda raw: _Items([_Product(item["id"]) for item in raw["products"]])))
     monkeypatch.setattr(runner, "add_images", lambda products: products)
@@ -69,6 +69,7 @@ def test_run_parser_streaming_flushes_batches_before_full_discovery_finishes(tmp
         include_xlsx=False,
         include_wb_wallet_prices=False,
         product_fetch_mode="direct",
+        acquire_token=False,
         batch_delay_min_seconds=0.0,
         batch_delay_max_seconds=0.0,
     )

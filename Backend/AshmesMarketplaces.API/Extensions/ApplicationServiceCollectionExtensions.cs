@@ -12,6 +12,7 @@ using AshmesMarketplaces.Application.ExpenseCategories.Services;
 using AshmesMarketplaces.Application.Expenses.Services;
 using AshmesMarketplaces.Application.Logistics.Services;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
+using AshmesMarketplaces.Application.MarketplaceCategories.Services;
 using AshmesMarketplaces.Application.Marketplaces.Services;
 using AshmesMarketplaces.Application.Marketplaces.Validators;
 using AshmesMarketplaces.Application.Orders.Services;
@@ -50,12 +51,15 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IWorkspaceMarketProductMediaStorage, FileWorkspaceMarketProductMediaStorage>();
 
         services.AddScoped<IMarketplaceService, MarketplaceService>();
+        services.AddHttpClient<IWildberriesCategoryCatalogService, WildberriesCategoryCatalogService>();
         services.AddScoped<IBrandService, BrandService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IWarehouseService, WarehouseService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IProductHistoryService, ProductHistoryService>();
         services.AddScoped<IParserBatchQueueService, ParserBatchQueueService>();
+        services.AddScoped<IParserProxyRunService, ParserProxyRunService>();
+        services.AddScoped<IParserAdminMonitoringService, ParserAdminMonitoringService>();
         services.AddScoped<IParserProductReadService, ParserProductReadService>();
         services.AddScoped<IParserObservedStockDecreaseReadService, CachedParserObservedStockDecreaseReadService>();
         services.AddScoped<IParserObservedMarketEventReadService, CachedParserObservedMarketEventReadService>();

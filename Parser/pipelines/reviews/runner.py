@@ -437,6 +437,10 @@ def run_reviews(
     config: ReviewsParserConfig,
     args: argparse.Namespace,
 ) -> Path:
+    if getattr(args, "output_base_dir", None) is not None:
+        config = replace(config, output_base_dir=args.output_base_dir)
+        config.validate()
+
     if getattr(args, "max_concurrent", None) is not None:
         config = replace(config, max_concurrent=args.max_concurrent)
         config.validate()
@@ -578,6 +582,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=BASE_DIR / ".env", help="Path to parser .env config.")
     parser.add_argument("--products-run-dir", type=Path, help="Existing product parser run directory.")
     parser.add_argument("--products-jsonl", type=Path, help="Explicit products.jsonl input path.")
+    parser.add_argument("--output-base-dir", type=Path, help="Directory where the review run directory will be created.")
     parser.add_argument("--limit-products", type=int, help="Limit selected products before root dedupe.")
     parser.add_argument("--source-subcategory", help="Optional product source_subcategory filter.")
     parser.add_argument("--max-concurrent", type=int, help="Override PARSER_REVIEWS_MAX_CONCURRENT for this run.")

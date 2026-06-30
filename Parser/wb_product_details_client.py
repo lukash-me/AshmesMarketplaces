@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import requests
 
+from app.proxy_transport import requests_proxy_kwargs
 from common_data import HEADERS
 from product_details_contracts import build_card_info_url, request_fingerprint
 
@@ -34,11 +35,13 @@ class WbProductDetailsClient:
         retries: int = 2,
         delay_ms: int = 300,
         delay_provider: Callable[[], None] | None = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.timeout_sec = timeout_sec
         self.retries = retries
         self.delay_ms = delay_ms
         self.delay_provider = delay_provider
+        self.proxy_url = proxy_url
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
@@ -55,7 +58,7 @@ class WbProductDetailsClient:
             attempts_made = attempt
             self._delay()
             try:
-                response = self.session.get(endpoint, timeout=self.timeout_sec)
+                response = self.session.get(endpoint, timeout=self.timeout_sec, **requests_proxy_kwargs(self.proxy_url))
                 last_status = response.status_code
                 last_transient = self._is_retryable_status(response.status_code)
                 if response.status_code == 200:

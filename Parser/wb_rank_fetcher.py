@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import requests
 
+from app.proxy_transport import requests_proxy_kwargs
 from common_data import HEADERS
 from rank_config import RankContextConfig
 from rank_contracts import (
@@ -43,6 +44,7 @@ class WbRankFetcher:
         attempt_recorder: Callable | None = None,
         retry_recorder: Callable | None = None,
         backoff_recorder: Callable | None = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.cookies = cookies or {}
         self.timeout = timeout
@@ -51,6 +53,7 @@ class WbRankFetcher:
         self.attempt_recorder = attempt_recorder
         self.retry_recorder = retry_recorder
         self.backoff_recorder = backoff_recorder
+        self.proxy_url = proxy_url
 
     @staticmethod
     def _extract_wb_code(payload: dict[str, Any] | None) -> str | int | None:
@@ -96,6 +99,7 @@ class WbRankFetcher:
                     cookies=self.cookies,
                     headers=HEADERS,
                     timeout=self.timeout,
+                    **requests_proxy_kwargs(self.proxy_url),
                 )
             except requests.RequestException as exception:
                 message = str(exception)

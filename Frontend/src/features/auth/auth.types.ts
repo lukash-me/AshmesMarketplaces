@@ -59,6 +59,7 @@ export interface AuthAnalysisSchedule {
 export interface AuthUser {
   id: string;
   idRole: string;
+  roleName: string;
   login: string;
   email: string | null;
   phone: string;

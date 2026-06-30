@@ -1,48 +1,42 @@
-﻿{
-    "defaults":  {
-                     "marketplace":  "wildberries",
-                     "source_region_dest":  "12354108",
-                     "output_base_dir":  "/parser-data/output",
-                     "top_n":  1000,
-                     "page_size":  100,
-                     "sort":  "popular",
-                     "timeout_seconds":  10,
-                     "max_retries":  2,
-                     "request_delay_min_seconds":  2.0,
-                     "request_delay_max_seconds":  5.0,
-                     "acquire_token":  true,
-                     "fail_fast":  false
-                 },
-    "contexts":  [
-                     {
-                         "id":  "home_storage_organizers",
-                         "type":  "search_query",
-                         "source_category":  "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                         "source_subcategory":  "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№",
-                         "query":  "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№",
-                         "filters":  {
-
-                                     }
-                     },
-                     {
-                         "id":  "home_bath_mats",
-                         "type":  "search_query",
-                         "source_category":  "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                         "source_subcategory":  "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
-                         "query":  "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
-                         "filters":  {
-
-                                     }
-                     },
-                     {
-                         "id":  "home_wall_sconces",
-                         "type":  "search_query",
-                         "source_category":  "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                         "source_subcategory":  "РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°",
-                         "query":  "РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°",
-                         "filters":  {
-
-                                     }
-                     }
-                 ]
+{
+  "defaults": {
+    "marketplace": "wildberries",
+    "source_region_dest": "12354108",
+    "output_base_dir": "/parser-data/output",
+    "top_n": 1000,
+    "page_size": 100,
+    "sort": "popular",
+    "timeout_seconds": 10,
+    "max_retries": 2,
+    "request_delay_min_seconds": 2.0,
+    "request_delay_max_seconds": 5.0,
+    "acquire_token": true,
+    "fail_fast": false
+  },
+  "contexts": [
+    {
+      "id": "women_dresses_sundresses",
+      "type": "search_query",
+      "source_category": "Женщинам",
+      "source_subcategory": "Платья и сарафаны",
+      "query": "menu_v3_8137 платье женские",
+      "filters": {}
+    },
+    {
+      "id": "men_sneakers",
+      "type": "search_query",
+      "source_category": "Обувь",
+      "source_subcategory": "Кеды и кроссовки",
+      "query": "menu_redirect_subject_v2_8194 мужские кеды и кроссовки",
+      "filters": {}
+    },
+    {
+      "id": "organic_cosmetics",
+      "type": "search_query",
+      "source_category": "Красота",
+      "source_subcategory": "Органическая косметика",
+      "query": "menu_redirect_subject_v2_10012 органическая косметика",
+      "filters": {}
+    }
+  ]
 }

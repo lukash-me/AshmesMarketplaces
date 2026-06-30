@@ -9,6 +9,7 @@ import {
   Settings,
   X
 } from 'lucide-vue-next';
+import { useAuthStore } from '@/features/auth/auth.store';
 
 defineProps<{
   open: boolean;
@@ -21,6 +22,7 @@ defineEmits<{
 type OrdersSection = 'assumed-orders' | 'new-products' | 'restocks' | 'availability';
 
 const route = useRoute();
+const auth = useAuthStore();
 const workspaceMarketProductsPath = '/workspace/market-products';
 const workspaceMarketProductCreatePath = '/workspace/market-products/create';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
@@ -34,6 +36,7 @@ const ordersPath = '/orders';
 const ordersAvailabilityPath = '/orders/availability';
 const expensesPath = '/expenses';
 const managementWorkspacesPath = '/management/workspaces';
+const adminParserPath = '/admin/parser';
 const ordersSections: Array<{ key: OrdersSection; label: string }> = [
   { key: 'assumed-orders', label: 'Уменьшения остатков' },
   { key: 'new-products', label: 'Новые карточки' },
@@ -80,9 +83,13 @@ const isWorkspaceMarketProductsRoute = computed(() => route.path.startsWith(work
 const isWorkspaceMarketProductCreateRoute = computed(() => route.path === workspaceMarketProductCreatePath);
 const isWorkspaceMarketProductClustersRoute = computed(() => route.path === workspaceMarketProductClustersPath);
 const isOrdersRoute = computed(() => route.path === ordersPath || route.path === ordersAvailabilityPath);
-const isManagementRoute = computed(() => route.path === expensesPath || route.path === managementWorkspacesPath);
+const isAdmin = computed(() => auth.user?.roleName === 'Admin');
+const isManagementRoute = computed(() =>
+  route.path === expensesPath || route.path === managementWorkspacesPath || route.path === adminParserPath
+);
 const isExpensesRoute = computed(() => route.path === expensesPath);
 const isManagementWorkspacesRoute = computed(() => route.path === managementWorkspacesPath);
+const isAdminParserRoute = computed(() => route.path === adminParserPath);
 const activeOrdersSection = computed(() =>
   route.path === ordersAvailabilityPath
     ? 'availability'
@@ -306,6 +313,15 @@ function ordersSectionTo(section: OrdersSection) {
             @click="$emit('close')"
           >
             Рабочие области
+          </RouterLink>
+          <RouterLink
+            v-if="isAdmin"
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isAdminParserRoute }"
+            :to="{ path: adminParserPath }"
+            @click="$emit('close')"
+          >
+            Parser мониторинг
           </RouterLink>
         </div>
       </div>

@@ -4,16 +4,15 @@ namespace AshmesMarketplaces.Application.MarketIntelligence.Services;
 
 public static class PublicMarketIntelligenceContextCatalog
 {
-    public const string SourceCategory = "Товары для дома";
     public const string SourceRegionDest = "12354108";
     public const string Sort = "popular";
     public const int TopN = 1000;
 
     private static readonly PublicMarketIntelligenceQuery[] Contexts =
     [
-        Build("Коврики для ванной"),
-        Build("Органайзеры для хранения вещей"),
-        Build("Светильники бра")
+        Build("Женщинам", "Платья и сарафаны", "menu_v3_8137 платье женские"),
+        Build("Обувь", "Кеды и кроссовки", "menu_redirect_subject_v2_8194 мужские кеды и кроссовки"),
+        Build("Красота", "Органическая косметика", "menu_redirect_subject_v2_10012 органическая косметика")
     ];
 
     public static IReadOnlyList<PublicMarketIntelligenceQuery> All => Contexts;
@@ -27,12 +26,12 @@ public static class PublicMarketIntelligenceContextCatalog
         return Contexts.FirstOrDefault(x => string.Equals(x.SourceSubcategory, sourceSubcategory, StringComparison.Ordinal));
     }
 
-    private static PublicMarketIntelligenceQuery Build(string sourceSubcategory) =>
+    private static PublicMarketIntelligenceQuery Build(string sourceCategory, string sourceSubcategory, string query) =>
         new()
         {
-            SourceCategory = SourceCategory,
+            SourceCategory = sourceCategory,
             SourceSubcategory = sourceSubcategory,
-            Query = sourceSubcategory,
+            Query = query,
             SourceRegionDest = SourceRegionDest,
             Sort = Sort,
             TopN = TopN

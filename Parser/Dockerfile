@@ -45,12 +45,8 @@ RUN apt-get update \
 COPY Parser/requirements.txt Parser/requirements.txt
 RUN python3 -m venv /opt/ashmes-parser-venv \
     && pip install --upgrade pip \
-    && pip install -r Parser/requirements.txt
-
-RUN wget -q -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends /tmp/google-chrome-stable_current_amd64.deb \
-    && rm -f /tmp/google-chrome-stable_current_amd64.deb \
+    && pip install -r Parser/requirements.txt \
+    && python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
 COPY Backend/AshmesMarketplaces.sln Backend/
@@ -67,4 +63,4 @@ RUN dotnet build Backend/AshmesMarketplaces.ParserIngestionCli/AshmesMarketplace
     -c Release \
     --no-restore
 
-CMD ["python", "Parser/app/market_refresh.py", "--help"]
+CMD ["python", "Parser/app/cycle_runner.py", "--help"]

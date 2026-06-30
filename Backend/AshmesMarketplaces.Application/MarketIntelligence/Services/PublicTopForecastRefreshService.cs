@@ -89,7 +89,7 @@ public sealed class PublicTopForecastRefreshService : IPublicTopForecastRefreshS
             DateTime.UtcNow,
             "wildberries",
             new HotProductsIntelligenceScope(
-                PublicMarketIntelligenceContextCatalog.SourceCategory,
+                SourceCategory: null,
                 contexts.Select(x => x.SourceSubcategory!).ToList(),
                 ParserRunId: null,
                 RankRunId: null,

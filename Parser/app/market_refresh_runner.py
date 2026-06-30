@@ -18,6 +18,13 @@ from typing import Any, Callable
 from config import BASE_DIR
 from manifest import get_git_commit, utc_now_iso
 
+try:
+    from app.proxy_mapping import ProxyMapping, ProxyScheduler
+    from app.proxy_transport import http_proxy_url_from_definition
+except ImportError:  # pragma: no cover - direct script execution from Parser/app
+    from proxy_mapping import ProxyMapping, ProxyScheduler
+    from proxy_transport import http_proxy_url_from_definition
+
 
 STEP_ORDER = ["rank", "products", "logistics", "reviews", "product_details"]
 TERMINAL_SUCCESS = {"succeeded", "skipped"}
@@ -379,9 +386,13 @@ def _build_rank_plan(mode_config: dict[str, Any], *, repo_root: Path, python_exe
         command.extend(["--max-pages", str(rank["max_pages"])])
     if rank.get("smoke_only"):
         command.append("--smoke-only")
+    env_overrides: dict[str, str] = {}
+    if mode_config.get("proxy_mapping_file"):
+        env_overrides["PARSER_PROXY_MAPPING_FILE"] = str(_to_abs(mode_config["proxy_mapping_file"], base_dir=repo_root))
     return PipelineStepPlan(
         step_name="rank",
         commands=[command],
+        env_overrides=env_overrides,
         enabled=bool(rank),
         timeout_seconds=rank.get("timeout_seconds"),
     )
@@ -398,6 +409,8 @@ def _build_products_plan(mode_config: dict[str, Any], *, repo_root: Path, python
     if product.get("smoke_only"):
         command.append("--smoke-only")
     env_overrides = {str(key): str(value) for key, value in dict(product.get("env") or {}).items()}
+    if mode_config.get("proxy_mapping_file"):
+        env_overrides["PARSER_PROXY_MAPPING_FILE"] = str(_to_abs(mode_config["proxy_mapping_file"], base_dir=repo_root))
     return PipelineStepPlan(
         step_name="products",
         commands=[command],
@@ -543,6 +556,8 @@ def _build_reviews_plan(
             str(_to_abs(reviews.get("config") or "Parser/.env", base_dir=repo_root)),
             "--products-run-dir",
             str(product_run_dir),
+            "--output-base-dir",
+            str(product_run_dir.parent),
         ]
         if reviews.get("limit_products") is not None:
             command.extend(["--limit-products", str(reviews["limit_products"])])
@@ -979,6 +994,107 @@ def _product_run_source_subcategories(product_run_dir: Path) -> list[str]:
             values.append(value)
             seen.add(value)
     return values
+
+
+def _product_run_source_categories(product_run_dir: Path) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for row in _read_jsonl(product_run_dir / "products.jsonl"):
+        value = str(row.get("source_category") or "").strip()
+        if value and value not in seen:
+            values.append(value)
+            seen.add(value)
+    return values
+
+
+def _batch_source_category(parent_manifest: dict[str, Any], config: PipelineConfig) -> str:
+    requested_scope = dict(parent_manifest.get("requested_scope") or {})
+    return str(
+        requested_scope.get("parent_category")
+        or (config.payload.get("parser") or {}).get("parent_category")
+        or config.payload.get("parent_category")
+        or "unknown"
+    )
+
+
+def _batch_source_subcategory(product_run_dir: Path) -> str:
+    subcategories = _product_run_source_subcategories(product_run_dir)
+    if len(subcategories) == 1:
+        return subcategories[0]
+    return ", ".join(subcategories) if subcategories else "unknown"
+
+
+def _batch_product_source_category(product_run_dir: Path, parent_manifest: dict[str, Any], config: PipelineConfig) -> str:
+    categories = _product_run_source_categories(product_run_dir)
+    if len(categories) == 1:
+        return categories[0]
+    if categories:
+        return ", ".join(categories)
+    return _batch_source_category(parent_manifest, config)
+
+
+def _batch_outbox_payload(
+    *,
+    pipeline_run_id: str,
+    batch: ProductBatchRun,
+    batch_record: dict[str, Any],
+    batch_manifest: dict[str, Any],
+    parent_product_run_dir: Path | None,
+) -> dict[str, Any]:
+    artifacts: dict[str, str] = {}
+    for path in sorted(batch.batch_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".json", ".jsonl"}:
+            continue
+        artifacts[path.relative_to(batch.batch_dir).as_posix()] = path.read_text(encoding="utf-8")
+
+    return {
+        "schemaVersion": 1,
+        "pipelineRunId": pipeline_run_id,
+        "batchId": batch.batch_id,
+        "batchIndex": batch.batch_index,
+        "batchSize": batch.size,
+        "batchRecord": batch_record,
+        "batchManifest": batch_manifest,
+        "parentProductRunDir": str(parent_product_run_dir) if parent_product_run_dir else None,
+        "batchDir": str(batch.batch_dir),
+        "artifacts": artifacts,
+    }
+
+
+def _batch_outbox_from_env(*, output_base_dir: Path, parser_instance_id: str) -> Any | None:
+    server_base_url = os.environ.get("PARSER_BATCH_QUEUE_URL")
+    if not server_base_url:
+        return None
+
+    outbox_dir = Path(os.environ.get("PARSER_OUTBOX_DIR") or output_base_dir / "outbox")
+    instance_id = os.environ.get("PARSER_INSTANCE_ID") or parser_instance_id
+    from app.durable_outbox import DurableBatchOutbox
+
+    return DurableBatchOutbox(
+        root_dir=outbox_dir,
+        parser_instance_id=instance_id,
+        server_base_url=server_base_url,
+    )
+
+
+def _proxy_mapping_path(config: PipelineConfig, mode_config: dict[str, Any], repo_root: Path) -> Path | None:
+    configured = (
+        os.environ.get("PARSER_PROXY_MAPPING_FILE")
+        or mode_config.get("proxy_mapping_file")
+        or (mode_config.get("proxy_mapping") or {}).get("file")
+        or config.payload.get("proxy_mapping_file")
+        or (config.payload.get("proxy_mapping") or {}).get("file")
+    )
+    if not configured:
+        return None
+    return _to_abs(str(configured), base_dir=repo_root)
+
+
+def _load_proxy_mapping(config: PipelineConfig, mode_config: dict[str, Any], repo_root: Path) -> ProxyMapping:
+    mapping_path = _proxy_mapping_path(config, mode_config, repo_root)
+    if mapping_path:
+        return ProxyMapping.load_with_local_override(mapping_path)
+    return ProxyMapping.local_default(os.environ.get("PARSER_PROXY_KEY") or "local")
 
 
 def _product_ids_from_run(product_run_dir: Path) -> set[str]:
@@ -1715,16 +1831,25 @@ def _run_batched_pipeline(
     executor: Callable[..., CommandResult],
     staging_executor: Callable[..., CommandResult],
     streaming_product_runner: Callable[..., Path] | None = None,
+    batch_outbox: Any | None = None,
 ) -> None:
     batching_config = dict(mode_config.get("batching") or {})
-    batch_size = int(batching_config.get("batch_size") or 100)
+    batch_size = int(os.environ.get("PARSER_STREAM_BATCH_SIZE") or batching_config.get("batch_size") or 100)
     max_batches_raw = batching_config.get("max_batches") or os.environ.get("PARSER_MAX_STREAM_BATCHES")
     max_batches = int(max_batches_raw) if max_batches_raw else None
     if max_batches is not None and max_batches <= 0:
         max_batches = None
     worker_id = str(batching_config.get("worker_id") or os.environ.get("PARSER_WORKER_ID") or "local-worker")
     shard_key = str(batching_config.get("shard_key") or os.environ.get("PARSER_SHARD_KEY") or "default")
+    effective_batch_outbox = batch_outbox or _batch_outbox_from_env(
+        output_base_dir=output_base_dir,
+        parser_instance_id=worker_id,
+    )
+    proxy_mapping = _load_proxy_mapping(config, mode_config, repo_root)
+    proxy_scheduler = ProxyScheduler()
     existing_batching = manifest.get("batching") or {}
+    existing_outbox = dict(existing_batching.get("outbox") or {})
+    existing_proxy = dict(existing_batching.get("proxy") or {})
     manifest["batching"] = {
         "enabled": True,
         "batch_size": batch_size,
@@ -1739,8 +1864,38 @@ def _run_batched_pipeline(
         "batches": list(existing_batching.get("batches") or []),
         "quarantine": list(existing_batching.get("quarantine") or []),
         "complete_pipeline": existing_batching.get("complete_pipeline"),
+        "outbox": {
+            "enabled": bool(effective_batch_outbox),
+            "enqueued_batches": int(existing_outbox.get("enqueued_batches") or 0),
+            "send_attempts": int(existing_outbox.get("send_attempts") or 0),
+            "poll_attempts": int(existing_outbox.get("poll_attempts") or 0),
+            "last_error": existing_outbox.get("last_error"),
+        },
+        "proxy": {
+            "mapping_file": str(
+                ProxyMapping.effective_path(_proxy_mapping_path(config, mode_config, repo_root))
+                if _proxy_mapping_path(config, mode_config, repo_root)
+                else existing_proxy.get("mapping_file") or ""
+            ),
+            "default_proxy_key": proxy_mapping.default_proxy.key,
+            "deferred_batches": int(existing_proxy.get("deferred_batches") or 0),
+            "disabled_batches": int(existing_proxy.get("disabled_batches") or 0),
+            "cooldown_batches": int(existing_proxy.get("cooldown_batches") or 0),
+            "last_error": existing_proxy.get("last_error"),
+        },
     }
     _write_manifest(pipeline_run_dir, manifest)
+    if effective_batch_outbox:
+        try:
+            effective_batch_outbox.send_pending_once()
+            effective_batch_outbox.poll_active_once()
+            manifest["batching"]["outbox"]["send_attempts"] += 1
+            manifest["batching"]["outbox"]["poll_attempts"] += 1
+            _write_manifest(pipeline_run_dir, manifest)
+        except Exception as exception:
+            manifest["batching"]["outbox"]["last_error"] = str(exception)
+            _emit_pipeline(pipeline_run_dir, f"OUTBOX PREFLIGHT FAILED: {exception}")
+            _write_manifest(pipeline_run_dir, manifest)
 
     rank_plan = _with_env_overrides(
         _build_rank_plan(mode_config, repo_root=repo_root, python_executable=python_executable),
@@ -1819,6 +1974,98 @@ def _run_batched_pipeline(
                 return
 
         parent_product_run_dir: Path | None = None
+        proxy_run_state: dict[tuple[str, str, str], dict[str, Any]] = {}
+
+        def proxy_run_key(proxy_key: str, source_category: str, source_subcategory: str) -> tuple[str, str, str]:
+            return (proxy_key, source_category, source_subcategory)
+
+        def proxy_run_id(proxy_key: str, source_category: str, source_subcategory: str) -> str:
+            return f"{pipeline_run_id}:{proxy_key}:{source_category}:{source_subcategory}"
+
+        def notify_proxy_run_start(
+            *,
+            proxy_key: str,
+            source_category: str,
+            source_subcategory: str,
+            planned_products_count: int,
+        ) -> dict[str, Any]:
+            key = proxy_run_key(proxy_key, source_category, source_subcategory)
+            state = proxy_run_state.get(key)
+            if state is not None:
+                return state
+
+            state = {
+                "external_proxy_run_id": proxy_run_id(proxy_key, source_category, source_subcategory),
+                "proxy_key": proxy_key,
+                "source_category": source_category,
+                "source_subcategory": source_subcategory,
+                "planned": max(0, int(planned_products_count)),
+                "downloaded": 0,
+                "status": "running",
+                "error": None,
+            }
+            proxy_run_state[key] = state
+            if effective_batch_outbox:
+                try:
+                    effective_batch_outbox.start_proxy_run(
+                        external_proxy_run_id=state["external_proxy_run_id"],
+                        proxy_key=proxy_key,
+                        source_category=source_category,
+                        source_subcategory=source_subcategory,
+                        planned_products_count=state["planned"],
+                        downloaded_products_count=state["downloaded"],
+                    )
+                except Exception as exception:
+                    manifest["batching"]["outbox"]["last_error"] = str(exception)
+                    _emit_pipeline(pipeline_run_dir, f"PROXY RUN START FAILED: proxy={proxy_key} error={exception}")
+            return state
+
+        def notify_proxy_run_progress(state: dict[str, Any], *, downloaded_delta: int, planned: int | None = None) -> None:
+            state["downloaded"] = max(0, int(state.get("downloaded") or 0) + max(0, int(downloaded_delta)))
+            if planned is not None:
+                state["planned"] = max(int(state.get("planned") or 0), max(0, int(planned)))
+            state["planned"] = max(int(state.get("planned") or 0), int(state.get("downloaded") or 0))
+            if effective_batch_outbox:
+                try:
+                    effective_batch_outbox.update_proxy_run_progress(
+                        external_proxy_run_id=state["external_proxy_run_id"],
+                        planned_products_count=state["planned"],
+                        downloaded_products_count=state["downloaded"],
+                    )
+                except Exception as exception:
+                    manifest["batching"]["outbox"]["last_error"] = str(exception)
+                    _emit_pipeline(
+                        pipeline_run_dir,
+                        f"PROXY RUN PROGRESS FAILED: proxy={state['proxy_key']} error={exception}",
+                    )
+
+        def notify_proxy_run_finish(state: dict[str, Any], *, status: str, error: str | None = None) -> None:
+            if state.get("status") in {"completed", "failed"}:
+                return
+            normalized_status = "failed" if status == "failed" else "completed"
+            state["status"] = normalized_status
+            state["error"] = error
+            state["planned"] = max(int(state.get("planned") or 0), int(state.get("downloaded") or 0))
+            if effective_batch_outbox:
+                try:
+                    effective_batch_outbox.finish_proxy_run(
+                        external_proxy_run_id=state["external_proxy_run_id"],
+                        status=normalized_status,
+                        planned_products_count=state["planned"],
+                        downloaded_products_count=state["downloaded"],
+                        error=error,
+                    )
+                except Exception as exception:
+                    manifest["batching"]["outbox"]["last_error"] = str(exception)
+                    _emit_pipeline(
+                        pipeline_run_dir,
+                        f"PROXY RUN FINISH FAILED: proxy={state['proxy_key']} error={exception}",
+                    )
+
+        def finish_open_proxy_runs(*, status: str, error: str | None = None) -> None:
+            for state in list(proxy_run_state.values()):
+                if state.get("status") == "running":
+                    notify_proxy_run_finish(state, status=status, error=error)
 
         def handle_streaming_batch(discovery_batch: Any) -> SimpleNamespace:
             nonlocal parent_product_run_dir
@@ -1870,13 +2117,59 @@ def _run_batched_pipeline(
                 if product_manifest_path.exists()
                 else {}
             )
+            source_category = _batch_product_source_category(batch.product_run_dir, parent_manifest, config)
+            source_subcategory = _batch_source_subcategory(batch.product_run_dir)
+            resolved_proxy = proxy_mapping.resolve(source_category, source_subcategory)
+            proxy_key = resolved_proxy.proxy.key
             batch_created_at_utc = str(product_manifest.get("started_at_utc") or batch_record["started_at_utc"])
+            batch_record["proxy"] = {
+                "key": proxy_key,
+                "type": resolved_proxy.proxy.type,
+                "source_category": source_category,
+                "source_subcategory": source_subcategory,
+                "assignment_enabled": resolved_proxy.enabled,
+            }
             _emit_pipeline(
                 pipeline_run_dir,
                 (
                     f"STREAM BATCH {batch.batch_index} START: {batch.batch_id} "
-                    f"size={batch.size} batch_created_at_utc={batch_created_at_utc}"
+                    f"size={batch.size} proxy={proxy_key} proxy_type={resolved_proxy.proxy.type} "
+                    f"batch_created_at_utc={batch_created_at_utc}"
                 ),
+            )
+
+            if not resolved_proxy.enabled:
+                batch_record["status"] = "deferred_proxy_disabled"
+                batch_record["finished_at_utc"] = utc_now_iso()
+                manifest["batching"]["proxy"]["disabled_batches"] += 1
+                _emit_pipeline(
+                    pipeline_run_dir,
+                    f"STREAM BATCH {batch.batch_index} DEFERRED: proxy assignment disabled for {source_subcategory}",
+                )
+                _write_manifest(pipeline_run_dir, manifest)
+                return SimpleNamespace(status="deferred", reason="proxy assignment disabled")
+
+            proxy_status = proxy_scheduler.status(proxy_key)
+            if proxy_status != "ready":
+                batch_record["status"] = f"deferred_proxy_{proxy_status}"
+                batch_record["finished_at_utc"] = utc_now_iso()
+                manifest["batching"]["proxy"]["deferred_batches"] += 1
+                if proxy_status == "cooldown":
+                    manifest["batching"]["proxy"]["cooldown_batches"] += 1
+                _emit_pipeline(
+                    pipeline_run_dir,
+                    f"STREAM BATCH {batch.batch_index} DEFERRED: proxy={proxy_key} status={proxy_status}",
+                )
+                _write_manifest(pipeline_run_dir, manifest)
+                return SimpleNamespace(status="deferred", reason=f"proxy {proxy_status}")
+
+            proxy_scheduler.mark_started(proxy_key)
+            estimated_planned = max(batch.size, (max_batches or 0) * batch_size if max_batches else 0)
+            proxy_run = notify_proxy_run_start(
+                proxy_key=proxy_key,
+                source_category=source_category,
+                source_subcategory=source_subcategory,
+                planned_products_count=estimated_planned,
             )
 
             batch_manifest = {
@@ -1902,7 +2195,12 @@ def _run_batched_pipeline(
                     shard_key=shard_key,
                     source_niche=", ".join(_product_run_source_subcategories(batch.product_run_dir)),
                 ),
+                "PARSER_PROXY_KEY": proxy_key,
+                "PARSER_PROXY_TYPE": resolved_proxy.proxy.type,
             }
+            proxy_url = http_proxy_url_from_definition(resolved_proxy.proxy)
+            if proxy_url:
+                batch_env["PARSER_HTTP_PROXY_URL"] = proxy_url
 
             batch_steps_failed = False
             for step_name in ("logistics", "reviews", "product_details"):
@@ -1978,14 +2276,58 @@ def _run_batched_pipeline(
 
             if batch_steps_failed or not validation_ok:
                 reason = "mandatory enrichment step failed" if batch_steps_failed else validation_reason or "batch completeness validation failed"
+                proxy_scheduler.mark_failed(resolved_proxy.proxy)
                 batch_record["status"] = "quarantined"
                 batch_record["quarantine_reason"] = reason
                 manifest["batching"]["quarantine"].append({"batch_id": batch.batch_id, "reason": reason})
                 manifest["batching"]["quarantined_batches"] = int(manifest["batching"].get("quarantined_batches") or 0) + 1
                 manifest["batching"]["quarantined_products"] = int(manifest["batching"].get("quarantined_products") or 0) + batch.size
+                manifest["batching"]["proxy"]["last_error"] = reason
                 batch_record["finished_at_utc"] = utc_now_iso()
+                notify_proxy_run_finish(proxy_run, status="failed", error=reason)
                 _write_manifest(pipeline_run_dir, manifest)
+                if max_batches is not None and batch.batch_index >= max_batches:
+                    _emit_pipeline(
+                        pipeline_run_dir,
+                        f"STREAM BATCH LIMIT REACHED AFTER QUARANTINE: max_batches={max_batches}",
+                    )
+                    return SimpleNamespace(status="stopped", reason=reason)
                 return SimpleNamespace(status="quarantined", reason=reason)
+
+            if effective_batch_outbox:
+                try:
+                    payload = _batch_outbox_payload(
+                        pipeline_run_id=pipeline_run_id,
+                        batch=batch,
+                        batch_record=batch_record,
+                        batch_manifest=batch_manifest,
+                        parent_product_run_dir=parent_product_run_dir,
+                    )
+                    effective_batch_outbox.enqueue_batch(
+                        external_batch_id=batch.batch_id,
+                        source_category=source_category,
+                        source_subcategory=source_subcategory,
+                        proxy_key=proxy_key,
+                        batch_kind="complete_card_batch",
+                        payload=payload,
+                    )
+                    manifest["batching"]["outbox"]["enqueued_batches"] += 1
+                    effective_batch_outbox.send_pending_once()
+                    effective_batch_outbox.poll_active_once()
+                    manifest["batching"]["outbox"]["send_attempts"] += 1
+                    manifest["batching"]["outbox"]["poll_attempts"] += 1
+                    _emit_pipeline(
+                        pipeline_run_dir,
+                        f"STREAM BATCH {batch.batch_index} OUTBOX ENQUEUED: {batch.batch_id}",
+                    )
+                    _write_manifest(pipeline_run_dir, manifest)
+                except Exception as exception:
+                    manifest["batching"]["outbox"]["last_error"] = str(exception)
+                    _emit_pipeline(
+                        pipeline_run_dir,
+                        f"STREAM BATCH {batch.batch_index} OUTBOX FAILED: {exception}",
+                    )
+                    _write_manifest(pipeline_run_dir, manifest)
 
             if stage_to_db:
                 command = _complete_batch_staging_command(
@@ -2011,17 +2353,20 @@ def _run_batched_pipeline(
                     manifest["staging"]["status"] = "failed"
                     manifest["staging"]["skip_reason"] = "complete batch staging failed"
                     batch_record["finished_at_utc"] = utc_now_iso()
+                    proxy_scheduler.mark_finished(proxy_key)
                     _write_manifest(pipeline_run_dir, manifest)
                     return SimpleNamespace(status="failed", reason="complete batch staging failed")
                 batch_record["status"] = "staged"
                 manifest["batching"]["staged_batches"] = int(manifest["batching"].get("staged_batches") or 0) + 1
                 manifest["batching"]["staged_products"] = int(manifest["batching"].get("staged_products") or 0) + batch.size
+                notify_proxy_run_progress(proxy_run, downloaded_delta=batch.size, planned=estimated_planned)
                 _emit_pipeline(
                     pipeline_run_dir,
                     f"STREAM BATCH {batch.batch_index} STAGED: {batch.batch_id} staged_at_utc={utc_now_iso()}",
                 )
                 if max_batches is not None and int(manifest["batching"].get("staged_batches") or 0) >= max_batches:
                     batch_record["finished_at_utc"] = utc_now_iso()
+                    proxy_scheduler.mark_finished(proxy_key)
                     _write_manifest(pipeline_run_dir, manifest)
                     _emit_pipeline(
                         pipeline_run_dir,
@@ -2030,8 +2375,19 @@ def _run_batched_pipeline(
                     return SimpleNamespace(status="stopped", reason="batch limit reached")
             else:
                 batch_record["status"] = "ready"
+                notify_proxy_run_progress(proxy_run, downloaded_delta=batch.size, planned=estimated_planned)
+                if max_batches is not None and batch.batch_index >= max_batches:
+                    batch_record["finished_at_utc"] = utc_now_iso()
+                    proxy_scheduler.mark_finished(proxy_key)
+                    _write_manifest(pipeline_run_dir, manifest)
+                    _emit_pipeline(
+                        pipeline_run_dir,
+                        f"STREAM BATCH LIMIT REACHED: max_batches={max_batches}",
+                    )
+                    return SimpleNamespace(status="stopped", reason="batch limit reached")
 
             batch_record["finished_at_utc"] = utc_now_iso()
+            proxy_scheduler.mark_finished(proxy_key)
             _write_manifest(pipeline_run_dir, manifest)
             return SimpleNamespace(status=batch_record["status"], reason=None)
 
@@ -2063,13 +2419,19 @@ def _run_batched_pipeline(
 
         runner_fn = streaming_product_runner or default_streaming_product_runner
         resume_seen_product_ids = _resume_seen_product_ids_from_batches(manifest)
-        parent_product_run_dir = runner_fn(
-            config=mode_config,
-            streaming_batch_size=batch_size,
-            batch_handler=handle_streaming_batch,
-            smoke_only=False,
-            resume_seen_product_ids=resume_seen_product_ids,
-        )
+        try:
+            parent_product_run_dir = runner_fn(
+                config=mode_config,
+                streaming_batch_size=batch_size,
+                batch_handler=handle_streaming_batch,
+                smoke_only=False,
+                resume_seen_product_ids=resume_seen_product_ids,
+            )
+        except Exception as exception:
+            finish_open_proxy_runs(status="failed", error=str(exception))
+            raise
+        else:
+            finish_open_proxy_runs(status="completed")
         products_record = _record_for(manifest, "products")
         products_record["status"] = "succeeded"
         products_record["output_run_dirs"] = [str(parent_product_run_dir)]
@@ -2425,6 +2787,7 @@ def run_pipeline(
     executor: Callable[..., CommandResult] = _execute_subprocess,
     staging_executor: Callable[..., CommandResult] = _execute_subprocess_capture,
     streaming_product_runner: Callable[..., Path] | None = None,
+    batch_outbox: Any | None = None,
 ) -> Path:
     if stage_to_db and not connection_string:
         raise ValueError(
@@ -2501,6 +2864,7 @@ def run_pipeline(
                 executor=executor,
                 staging_executor=staging_executor,
                 streaming_product_runner=streaming_product_runner,
+                batch_outbox=batch_outbox,
             )
         except KeyboardInterrupt:
             interrupted = True

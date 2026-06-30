@@ -27,7 +27,7 @@ services:
       - ashmes_public
       - ashmes_internal
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null --header=\"Host: $${ASHMES_PUBLIC_HOST}\" http://127.0.0.1/health"]
+      test: ["CMD-SHELL", "host=\"$${ASHMES_PUBLIC_HOST}\"; case \"$$host\" in :*) host=localhost ;; http://*) host=\"$${host#http://}\" ;; https://*) host=\"$${host#https://}\" ;; esac; wget -q -O /dev/null --header=\"Host: $$host\" http://127.0.0.1/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -217,20 +217,19 @@ services:
     restart: on-failure
     stop_grace_period: 60s
     environment:
-      PARSER_POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      ASHMES_POSTGRES_CONNECTION: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      PARSER_BATCH_QUEUE_URL: http://api:8080/api/v1/parser
+      PARSER_INSTANCE_ID: parser-home-goods-01
+      PARSER_OUTBOX_DIR: /parser-data/outbox
     volumes:
       - /var/lib/ashmes/parser:/parser-data
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
     working_dir: /app
     command: >
-      /bin/sh -c "python Parser/app/market_refresh.py
+      /bin/sh -c "python Parser/app/cycle_runner.py
       --config Parser/presets/production/market_refresh_selected_niches_batched.prod.json
-      --mode batched_full_enrichment
-      --stage-to-db
-      --connection-string \"$${PARSER_POSTGRES_CONNECTION}\""
+      --mode batched_full_enrichment"
     networks:
       - ashmes_public
       - ashmes_internal

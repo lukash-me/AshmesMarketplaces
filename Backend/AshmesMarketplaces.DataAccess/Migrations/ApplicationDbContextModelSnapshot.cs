@@ -1147,20 +1147,554 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.ToTable("Orders", (string)null);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserBatchArtifact", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ArtifactKind")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("artifact_kind");
+
+                    b.Property<Guid>("BatchSubmissionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_submission_id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<JsonDocument>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload_json");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchSubmissionId");
+
+                    b.HasIndex("BatchSubmissionId", "ArtifactKind")
+                        .IsUnique();
+
+                    b.ToTable("ParserBatchArtifacts", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserBatchSubmission", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("AcceptedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("accepted_at_utc");
+
+                    b.Property<DateTime?>("AcknowledgedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("acknowledged_at_utc");
+
+                    b.Property<int>("AttemptsCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts_count");
+
+                    b.Property<string>("BatchKind")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("batch_kind");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("completed_at_utc");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("content_hash");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text")
+                        .HasColumnName("error");
+
+                    b.Property<string>("ExternalBatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("external_batch_id");
+
+                    b.Property<string>("ParserInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("parser_instance_id");
+
+                    b.Property<DateTime?>("ProcessingStartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processing_started_at_utc");
+
+                    b.Property<string>("ProxyKey")
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("proxy_key");
+
+                    b.Property<string>("SourceCategory")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcceptedAtUtc");
+
+                    b.HasIndex("ExternalBatchId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("ParserInstanceId", "ExternalBatchId")
+                        .IsUnique();
+
+                    b.HasIndex("SourceCategory", "SourceSubcategory");
+
+                    b.ToTable("ParserBatchSubmissions", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserBatchSubmissionEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("BatchSubmissionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("batch_submission_id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("event_type");
+
+                    b.Property<string>("Message")
+                        .HasColumnType("text")
+                        .HasColumnName("message");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BatchSubmissionId");
+
+                    b.HasIndex("CreatedAtUtc");
+
+                    b.ToTable("ParserBatchSubmissionEvents", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserCurrentProductDetail", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("DetailsHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("details_hash");
+
+                    b.Property<string>("DetailsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("details_json");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<string>("SourceCategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WbProductId")
+                        .IsUnique();
+
+                    b.ToTable("ParserCurrentProductDetails", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserCurrentProductLogistics", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("LogisticsHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("logistics_hash");
+
+                    b.Property<string>("LogisticsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("logistics_json");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<string>("SourceCategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WbProductId")
+                        .IsUnique();
+
+                    b.HasIndex("SourceCategory", "SourceSubcategory");
+
+                    b.ToTable("ParserCurrentProductLogistics", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserCurrentProductRank", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("batch_id");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<string>("RankHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("rank_hash");
+
+                    b.Property<string>("RankJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("rank_json");
+
+                    b.Property<string>("SourceCategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WbProductId")
+                        .IsUnique();
+
+                    b.ToTable("ParserCurrentProductRanks", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserCurrentProductReviewEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("batch_id");
+
+                    b.Property<DateTime?>("CreatedAtOnMp")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_on_mp");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("integer")
+                        .HasColumnName("rating");
+
+                    b.Property<string>("ReviewHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("review_hash");
+
+                    b.Property<string>("ReviewIdOnMp")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("review_id_on_mp");
+
+                    b.Property<string>("ReviewJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("review_json");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ObservedAtUtc");
+
+                    b.HasIndex("WbProductId");
+
+                    b.HasIndex("WbProductId", "ReviewIdOnMp")
+                        .IsUnique();
+
+                    b.ToTable("ParserCurrentProductReviewEvidence", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserCurrentProductReviewsSummary", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<decimal?>("AverageRating")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("average_rating");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("batch_id");
+
+                    b.Property<DateTime?>("LastReviewDateUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_review_date_utc");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<int>("RecentNegativeCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("recent_negative_count");
+
+                    b.Property<int>("ReviewsCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("reviews_count");
+
+                    b.Property<string>("ReviewsHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("reviews_hash");
+
+                    b.Property<string>("ReviewsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("reviews_json");
+
+                    b.Property<string>("SourceCategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WbProductId")
+                        .IsUnique();
+
+                    b.ToTable("ParserCurrentProductReviewsSummaries", (string)null);
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserCurrentProductRow", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<long?>("BrandIdOnMp")
+                        .HasColumnType("bigint")
+                        .HasColumnName("brand_id_on_mp");
+
                     b.Property<string>("BrandName")
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("brand_name");
 
+                    b.Property<decimal?>("DiscountPercent")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("discount_percent");
+
                     b.Property<int?>("FeedbackCount")
                         .HasColumnType("integer")
                         .HasColumnName("feedback_count");
+
+                    b.Property<string>("FeedbackCountSource")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("feedback_count_source");
+
+                    b.Property<string>("IdentityHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("identity_hash");
+
+                    b.Property<int?>("ImageCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("image_count");
+
+                    b.Property<string>("ImageUrlsJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("image_urls_json");
+
+                    b.Property<string>("MediaHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("media_hash");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1205,6 +1739,11 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("numeric(18,2)")
                         .HasColumnName("price_discounted");
 
+                    b.Property<string>("PriceHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("price_hash");
+
                     b.Property<decimal?>("PriceRegular")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
@@ -1219,10 +1758,34 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("product_row_id");
 
+                    b.Property<string>("RatingHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("rating_hash");
+
+                    b.Property<decimal?>("RatingRounded")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)")
+                        .HasColumnName("rating_rounded");
+
                     b.Property<decimal?>("ReviewRating")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)")
                         .HasColumnName("review_rating");
+
+                    b.Property<string>("ReviewsHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("reviews_hash");
+
+                    b.Property<string>("SellerBrandHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("seller_brand_hash");
+
+                    b.Property<long?>("SellerIdOnMp")
+                        .HasColumnType("bigint")
+                        .HasColumnName("seller_id_on_mp");
 
                     b.Property<string>("SellerName")
                         .HasMaxLength(512)
@@ -1248,6 +1811,11 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("source_subcategory");
+
+                    b.Property<string>("StockHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("stock_hash");
 
                     b.Property<int?>("TotalQuantity")
                         .HasColumnType("integer")
@@ -1457,6 +2025,53 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("IdParserRun");
 
                     b.ToTable("ParserImportExecutions", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserInstance", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("display_name");
+
+                    b.Property<DateTime>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at_utc");
+
+                    b.Property<string>("ParserInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("parser_instance_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastSeenAtUtc");
+
+                    b.HasIndex("ParserInstanceId")
+                        .IsUnique();
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("ParserInstances", (string)null);
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserLogisticsSnapshotRow", b =>
@@ -1693,6 +2308,150 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("DeliveryProfileKey", "SourceRegionDest", "ObservedAtUtc");
 
                     b.ToTable("ParserLogisticsSnapshotRows", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserNicheAssignment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_enabled");
+
+                    b.Property<string>("ParserInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("parser_instance_id");
+
+                    b.Property<string>("ProxyKey")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("proxy_key");
+
+                    b.Property<string>("SourceCategory")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsEnabled");
+
+                    b.HasIndex("ProxyKey");
+
+                    b.HasIndex("ParserInstanceId", "SourceCategory", "SourceSubcategory")
+                        .IsUnique();
+
+                    b.ToTable("ParserNicheAssignments", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductChangeEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("BatchId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("batch_id");
+
+                    b.Property<string>("ChangeType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("change_type");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("FieldGroup")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("field_group");
+
+                    b.Property<string>("NewHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("new_hash");
+
+                    b.Property<string>("NewValueJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("new_value_json");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<string>("OldHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("old_hash");
+
+                    b.Property<string>("OldValueJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("old_value_json");
+
+                    b.Property<string>("SourceCategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<string>("WbProductId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_product_id");
+
+                    b.Property<string>("WbRootId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("wb_root_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ObservedAtUtc");
+
+                    b.HasIndex("WbProductId");
+
+                    b.HasIndex("SourceCategory", "SourceSubcategory");
+
+                    b.HasIndex("SourceSubcategory", "FieldGroup", "ObservedAtUtc");
+
+                    b.HasIndex("WbProductId", "FieldGroup", "ObservedAtUtc");
+
+                    b.HasIndex("BatchId", "WbProductId", "FieldGroup", "NewHash")
+                        .IsUnique();
+
+                    b.ToTable("ParserProductChangeEvents", (string)null);
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductDetailRow", b =>
@@ -2036,6 +2795,98 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasDatabaseName("IX_ParserProductRows_wb_product_id_parsed_at_utc_id");
 
                     b.ToTable("ParserProductRows", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProxyRun", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<int>("DownloadedProductsCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("downloaded_products_count");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text")
+                        .HasColumnName("error");
+
+                    b.Property<string>("ExternalProxyRunId")
+                        .IsRequired()
+                        .HasMaxLength(220)
+                        .HasColumnType("character varying(220)")
+                        .HasColumnName("external_proxy_run_id");
+
+                    b.Property<DateTime?>("FinishedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at_utc");
+
+                    b.Property<DateTime>("LastHeartbeatAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_heartbeat_at_utc");
+
+                    b.Property<string>("ParserInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("parser_instance_id");
+
+                    b.Property<int>("PlannedProductsCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("planned_products_count");
+
+                    b.Property<string>("ProxyKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("proxy_key");
+
+                    b.Property<string>("SourceCategory")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FinishedAtUtc");
+
+                    b.HasIndex("StartedAtUtc");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("ParserInstanceId", "ExternalProxyRunId")
+                        .IsUnique();
+
+                    b.HasIndex("ParserInstanceId", "StartedAtUtc");
+
+                    b.HasIndex("ProxyKey", "Status");
+
+                    b.ToTable("ParserProxyRuns", (string)null);
                 });
 
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserRankPageFetch", b =>

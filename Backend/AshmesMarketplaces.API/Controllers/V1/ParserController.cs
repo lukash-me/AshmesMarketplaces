@@ -21,6 +21,7 @@ public sealed class ParserController : ControllerBase
     private readonly IParserObservedMarketEventReadService _observedMarketEventReadService;
     private readonly IPublicProductAvailabilityReadService _productAvailabilityReadService;
     private readonly IParserBatchQueueService _parserBatchQueueService;
+    private readonly IParserProxyRunService _parserProxyRunService;
 
     public ParserController(
         IParserProductReadService productReadService,
@@ -29,7 +30,8 @@ public sealed class ParserController : ControllerBase
         IParserObservedStockDecreaseReadService observedStockDecreaseReadService,
         IParserObservedMarketEventReadService observedMarketEventReadService,
         IPublicProductAvailabilityReadService productAvailabilityReadService,
-        IParserBatchQueueService parserBatchQueueService)
+        IParserBatchQueueService parserBatchQueueService,
+        IParserProxyRunService parserProxyRunService)
     {
         _productReadService = productReadService;
         _reviewReadService = reviewReadService;
@@ -38,6 +40,56 @@ public sealed class ParserController : ControllerBase
         _observedMarketEventReadService = observedMarketEventReadService;
         _productAvailabilityReadService = productAvailabilityReadService;
         _parserBatchQueueService = parserBatchQueueService;
+        _parserProxyRunService = parserProxyRunService;
+    }
+
+    [HttpPost("proxy-runs/start")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserProxyRunResponse), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserProxyRunResponse>> StartProxyRun(
+        [FromBody] ParserProxyRunStartRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserProxyRunService.StartAsync(request, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return Accepted(result.Value);
+    }
+
+    [HttpPatch("proxy-runs/{externalProxyRunId}/progress")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserProxyRunResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserProxyRunResponse>> UpdateProxyRunProgress(
+        string externalProxyRunId,
+        [FromBody] ParserProxyRunProgressRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserProxyRunService.UpdateProgressAsync(
+            externalProxyRunId,
+            request,
+            cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("proxy-runs/{externalProxyRunId}/finish")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserProxyRunResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserProxyRunResponse>> FinishProxyRun(
+        string externalProxyRunId,
+        [FromBody] ParserProxyRunFinishRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserProxyRunService.FinishAsync(
+            externalProxyRunId,
+            request,
+            cancellationToken);
+        return ToActionResult(result);
     }
 
     [HttpPost("batches")]

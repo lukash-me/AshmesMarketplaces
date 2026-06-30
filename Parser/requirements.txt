@@ -4,4 +4,4 @@ httpx
 pydantic
 pyexcel
 pyexcel-xlsx
-seleniumbase
+playwright

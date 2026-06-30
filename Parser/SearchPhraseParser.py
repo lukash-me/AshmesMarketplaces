@@ -3,10 +3,10 @@ from loguru import logger
 import json
 from dto import DataPage
 from common_data import HEADERS
-from get_token import get_token
 import time
 import random
 from typing import Callable
+from app.proxy_transport import requests_proxy_kwargs
 
 
 # Парсинг на основе поисковых запросов
@@ -21,7 +21,8 @@ class SearchPhraseParser:
             request_delay_bounds: tuple[float, float] = (0.4, 1.2),
             event_recorder: Callable | None = None,
             source_category: str | None = None,
-            source_subcategory: str | None = None):
+            source_subcategory: str | None = None,
+            proxy_url: str | None = None):
         self.search_phrase = search_phrase
         self.cookies = cookies
         self.dest = dest
@@ -31,6 +32,7 @@ class SearchPhraseParser:
         self.event_recorder = event_recorder
         self.source_category = source_category
         self.source_subcategory = source_subcategory
+        self.proxy_url = proxy_url
 
         self.default_step = 500 * 100
         self.max_count_of_good = 5000
@@ -103,7 +105,8 @@ class SearchPhraseParser:
                     params=params,
                     cookies=self.cookies,
                     headers=HEADERS,
-                    timeout=self.timeout)
+                    timeout=self.timeout,
+                    **requests_proxy_kwargs(self.proxy_url))
             except requests.RequestException as err:
                 logger.warning(f"WB filters request failed: {err}")
                 self._record_error(message=str(err), attempt=attempt, action="retry")
@@ -267,7 +270,9 @@ class SearchPhraseParser:
         return result
 
 if __name__ == "__main__":
-    wb_token = get_token()
+    from app.browser_sessions import get_token_for_proxy
+
+    wb_token = get_token_for_proxy("direct")
     cookies = {
         'x_wbaas_token': wb_token,
     }

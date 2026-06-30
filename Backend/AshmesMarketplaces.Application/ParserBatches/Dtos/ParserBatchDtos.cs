@@ -37,3 +37,39 @@ public sealed record ParserBatchStatusResponse(
     string? Error);
 
 public sealed record ParserPendingAckResponse(IReadOnlyList<ParserBatchStatusResponse> Items);
+
+public sealed record ParserProxyRunStartRequest(
+    string ParserInstanceId,
+    string ExternalProxyRunId,
+    string ProxyKey,
+    string SourceCategory,
+    string SourceSubcategory,
+    int PlannedProductsCount,
+    int DownloadedProductsCount);
+
+public sealed record ParserProxyRunProgressRequest(
+    string ParserInstanceId,
+    int PlannedProductsCount,
+    int DownloadedProductsCount);
+
+public sealed record ParserProxyRunFinishRequest(
+    string ParserInstanceId,
+    string Status,
+    int PlannedProductsCount,
+    int DownloadedProductsCount,
+    string? Error);
+
+public sealed record ParserProxyRunResponse(
+    Guid Id,
+    string ParserInstanceId,
+    string ExternalProxyRunId,
+    string ProxyKey,
+    string SourceCategory,
+    string SourceSubcategory,
+    string Status,
+    int PlannedProductsCount,
+    int DownloadedProductsCount,
+    DateTime StartedAtUtc,
+    DateTime LastHeartbeatAtUtc,
+    DateTime? FinishedAtUtc,
+    string? Error);

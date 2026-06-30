@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import requests
 
+from app.proxy_transport import requests_proxy_kwargs
 from common_data import HEADERS
 from logistics_contracts import WB_CARD_DETAIL_ENDPOINT, build_card_detail_params, products_from_payload, request_fingerprint
 from visible_delivery import VisibleDeliveryEvidence, build_visible_delivery_evidence
@@ -40,12 +41,14 @@ class WbLogisticsClient:
         retries: int = 2,
         delay_ms: int = 500,
         delay_provider: Callable[[], None] | None = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.endpoint = endpoint
         self.timeout_sec = timeout_sec
         self.retries = retries
         self.delay_ms = delay_ms
         self.delay_provider = delay_provider
+        self.proxy_url = proxy_url
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
 
@@ -62,7 +65,12 @@ class WbLogisticsClient:
             attempts_made = attempt
             self._delay()
             try:
-                response = self.session.get(self.endpoint, params=params, timeout=self.timeout_sec)
+                response = self.session.get(
+                    self.endpoint,
+                    params=params,
+                    timeout=self.timeout_sec,
+                    **requests_proxy_kwargs(self.proxy_url),
+                )
                 last_status = response.status_code
                 last_transient = self._is_retryable_status(response.status_code)
                 if response.status_code == 200:
@@ -187,6 +195,7 @@ class WbLogisticsClient:
                 WB_SUPPLIER_SHIPMENT_ENDPOINT.format(supplier_id=supplier_id_text),
                 headers={"X-Client-Name": "site"},
                 timeout=self.timeout_sec,
+                **requests_proxy_kwargs(self.proxy_url),
             )
             if response.status_code != 200:
                 return None

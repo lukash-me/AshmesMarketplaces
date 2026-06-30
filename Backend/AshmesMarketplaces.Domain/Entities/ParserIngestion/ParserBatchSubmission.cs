@@ -71,11 +71,23 @@ public sealed class ParserBatchSubmission
         UpdatedAtUtc = nowUtc;
     }
 
+    public void Retry(DateTime nowUtc)
+    {
+        EnsureUtc(nowUtc);
+        Status = ParserBatchStatuses.Queued;
+        ProcessingStartedAtUtc = null;
+        CompletedAtUtc = null;
+        Error = null;
+        UpdatedAtUtc = nowUtc;
+    }
+
     public void MarkProcessing(DateTime nowUtc)
     {
         EnsureUtc(nowUtc);
         Status = ParserBatchStatuses.Processing;
-        ProcessingStartedAtUtc ??= nowUtc;
+        ProcessingStartedAtUtc = nowUtc;
+        CompletedAtUtc = null;
+        Error = null;
         AttemptsCount++;
         UpdatedAtUtc = nowUtc;
     }

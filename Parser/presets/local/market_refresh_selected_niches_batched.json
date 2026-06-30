@@ -12,6 +12,7 @@
                                                                    "worker_id":  "local-worker-1",
                                                                    "shard_key":  "selected-niches"
                                                                },
+                                                  "proxy_mapping_file":  "Parser/presets/production/proxy_mapping.json",
                                                   "product":  {
                                                                   "config":  "Parser/presets/home_goods_demo.env",
                                                                   "timeout_seconds":  86400,

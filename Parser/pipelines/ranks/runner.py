@@ -2,6 +2,7 @@
 
 import argparse
 import math
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -23,7 +24,6 @@ except ModuleNotFoundError as exception:
     raise SystemExit(1) from exception
 
 from config import BASE_DIR
-from get_token import get_token
 from manifest import get_git_commit, utc_now_iso
 from rank_config import RankContextConfig, RankParserConfig, SUPPORTED_RANK_CONTEXT_TYPES
 from rank_contracts import (
@@ -35,6 +35,9 @@ from rank_exporters import append_jsonl, append_many_jsonl
 from rank_manifest import RankContextResult, RankRunManifest
 from run_scope import parser_run_scope_from_env
 from wb_rank_fetcher import WbRankFetcher
+from app.browser_sessions import COOKIE_NAME, get_token_for_proxy
+from app.proxy_mapping import ProxyMapping
+from app.proxy_transport import http_proxy_url_from_definition
 
 
 def _make_run_id() -> str:
@@ -83,29 +86,40 @@ def _make_manifest(config: RankParserConfig, run_dir: Path, parser_run_id: str) 
     return manifest
 
 
-def _acquire_token(config: RankParserConfig, manifest: RankRunManifest) -> str | None:
+def _acquire_cookies(
+    config: RankParserConfig,
+    manifest: RankRunManifest,
+    *,
+    proxy_key: str,
+    proxy,
+    context: RankContextConfig | None = None,
+) -> dict[str, str] | None:
     if config.wb_token_secret:
-        manifest.token_acquisition_status = {"status": "provided_by_config"}
-        return config.wb_token_secret
+        manifest.token_acquisition_status = {"status": "provided_by_config", "proxyKey": proxy_key}
+        return {COOKIE_NAME: config.wb_token_secret}
 
     if not config.acquire_token:
-        manifest.token_acquisition_status = {"status": "disabled"}
+        manifest.token_acquisition_status = {"status": "disabled", "proxyKey": proxy_key}
         return None
 
     try:
-        token = get_token()
+        token = get_token_for_proxy(proxy_key, proxy)
     except Exception as exception:
-        manifest.token_acquisition_status = {"status": "failed", "error": str(exception)}
+        manifest.token_acquisition_status = {"status": "failed", "proxyKey": proxy_key, "error": str(exception)}
         manifest.record_error(
             phase="token",
             message="Token acquisition failed.",
-            action="stopped",
-            details={"exception": str(exception)},
+            action="skipped",
+            rank_context_id=context.id if context else None,
+            source_category=context.source_category if context else None,
+            source_subcategory=context.source_subcategory if context else None,
+            query=context.query if context else None,
+            details={"exception": str(exception), "proxyKey": proxy_key},
         )
         return None
 
-    manifest.token_acquisition_status = {"status": "ok" if token else "empty"}
-    return token
+    manifest.token_acquisition_status = {"status": "ok" if token else "empty", "proxyKey": proxy_key}
+    return {COOKIE_NAME: token} if token else None
 
 
 def _selected_contexts(config: RankParserConfig, context_id: str | None) -> list[RankContextConfig]:
@@ -116,6 +130,26 @@ def _selected_contexts(config: RankParserConfig, context_id: str | None) -> list
     if not selected:
         raise ValueError(f"Rank context was not found in preset: {context_id}")
     return selected
+
+
+def _load_proxy_mapping() -> ProxyMapping | None:
+    path = os.environ.get("PARSER_PROXY_MAPPING_FILE")
+    if not path:
+        return None
+    return ProxyMapping.load_with_local_override(path)
+
+
+def _proxy_url_for_context(mapping: ProxyMapping | None, context: RankContextConfig) -> str | None:
+    if mapping is None:
+        return None
+    resolved = mapping.resolve(context.source_category, context.source_subcategory)
+    return http_proxy_url_from_definition(resolved.proxy)
+
+
+def _resolved_proxy_for_context(mapping: ProxyMapping | None, context: RankContextConfig):
+    if mapping is None:
+        return None
+    return mapping.resolve(context.source_category, context.source_subcategory)
 
 
 def _safe_status(manifest: RankRunManifest, interrupted: bool) -> str:
@@ -153,24 +187,58 @@ def run_rank_parser(
 
     try:
         selected_contexts = _selected_contexts(config, context_id)
-        token = _acquire_token(config, manifest)
-        cookies = {"x_wbaas_token": token} if token else None
-        fetcher = WbRankFetcher(
-            cookies=cookies,
-            timeout=config.timeout_seconds,
-            max_retries=config.max_retries,
-            request_delay_bounds=(
-                config.request_delay_min_seconds,
-                config.request_delay_max_seconds,
-            ),
-            attempt_recorder=manifest.record_attempt,
-            retry_recorder=manifest.record_retry,
-            backoff_recorder=manifest.record_backoff,
-        )
+        proxy_mapping = _load_proxy_mapping()
 
         manifest.write()
 
         for context in selected_contexts:
+            resolved_proxy = _resolved_proxy_for_context(proxy_mapping, context)
+            cookies = _acquire_cookies(
+                config,
+                manifest,
+                proxy_key=resolved_proxy.proxy.key if resolved_proxy else "direct",
+                proxy=resolved_proxy.proxy if resolved_proxy else None,
+                context=context,
+            )
+            if config.acquire_token and not cookies:
+                context_result = RankContextResult(
+                    rank_context_id=context.id,
+                    rank_context_type=context.type,
+                    query=context.query,
+                    source_category=context.source_category,
+                    source_subcategory=context.source_subcategory,
+                    status="failed",
+                    error_count=1,
+                )
+                manifest.record_error(
+                    phase="token",
+                    rank_context_id=context.id,
+                    source_category=context.source_category,
+                    source_subcategory=context.source_subcategory,
+                    query=context.query,
+                    message="Proxy-scoped token was not acquired.",
+                    action="skipped",
+                    details={"proxyKey": resolved_proxy.proxy.key if resolved_proxy else "direct"},
+                )
+                manifest.add_context_result(context_result)
+                manifest.write()
+                if config.fail_fast:
+                    break
+                continue
+
+            fetcher = WbRankFetcher(
+                cookies=cookies,
+                timeout=config.timeout_seconds,
+                max_retries=config.max_retries,
+                request_delay_bounds=(
+                    config.request_delay_min_seconds,
+                    config.request_delay_max_seconds,
+                ),
+                attempt_recorder=manifest.record_attempt,
+                retry_recorder=manifest.record_retry,
+                backoff_recorder=manifest.record_backoff,
+                proxy_url=http_proxy_url_from_definition(resolved_proxy.proxy) if resolved_proxy else None,
+            )
             context_result = RankContextResult(
                 rank_context_id=context.id,
                 rank_context_type=context.type,

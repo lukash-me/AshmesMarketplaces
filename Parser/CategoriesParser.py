@@ -23,18 +23,21 @@ HOME_GOODS_FALLBACK_CATEGORIES = [
         "name": "Органайзеры для хранения вещей",
         "searchQuery": "menu_redirect_subject_v2_62514 органайзеры для хранения",
         "parent": "Товары для дома",
+        "path": "Товары для дома / Органайзеры для хранения вещей",
     },
     {
         "id": 261,
         "name": "Коврики для ванной",
         "searchQuery": "menu_v3_261 коврики для ванной",
         "parent": "Товары для дома",
+        "path": "Товары для дома / Коврики для ванной",
     },
     {
         "id": 130194,
         "name": "Светильники бра",
         "searchQuery": "menu_v3_130194 бра",
         "parent": "Товары для дома",
+        "path": "Товары для дома / Светильники бра",
     },
 ]
 
@@ -65,23 +68,40 @@ class CategoriesParser:
         }
         return bool(labels & target_names)
 
-    def dfs(self, node: dict, target_names: set | None = None, in_target_category: bool = False) -> None:
+    def dfs(
+        self,
+        node: dict,
+        target_names: set | None = None,
+        in_target_category: bool = False,
+        path: list[str] | None = None,
+    ) -> None:
+        name = str(node.get("name") or node.get("seo") or "").strip()
+        if not name:
+            return
+
+        current_path = [*(path or []), name]
         current_in_target = in_target_category or self.matches_target(node, target_names)
         childs = node.get("childs")
 
         if not childs:
             if current_in_target and node.get("searchQuery"):
+                leaf_name = str(node.get("seo") or name).strip()
+                source_path = " / ".join([*(current_path[:-1] if current_path else []), leaf_name])
                 self.result.append(
                     {
                         "id": node.get("id"),
-                        "name": node.get("seo") or node.get("name"),
+                        "name": leaf_name,
+                        "seo": node.get("seo"),
                         "searchQuery": node.get("searchQuery"),
+                        "sourceCategory": current_path[0] if current_path else name,
+                        "sourceSubcategory": leaf_name,
+                        "sourcePath": source_path,
                     }
                 )
             return
 
         for child in childs:
-            self.dfs(child, target_names, current_in_target)
+            self.dfs(child, target_names, current_in_target, current_path)
 
     def _append_fallback_categories(self, target_set: set[str] | None) -> None:
         if not target_set or self.result:
@@ -92,6 +112,9 @@ class CategoriesParser:
                 "id": item["id"],
                 "name": item["name"],
                 "searchQuery": item["searchQuery"],
+                "sourceCategory": item["parent"],
+                "sourceSubcategory": item["name"],
+                "sourcePath": item["path"],
             }
             for item in HOME_GOODS_FALLBACK_CATEGORIES
             if str(item["parent"]).casefold() in target_set

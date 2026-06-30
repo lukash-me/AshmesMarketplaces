@@ -221,7 +221,7 @@ Do not enable development seed in production unless explicitly approved.
 
 ## 11. Parser Worker
 
-The production parser is a private Docker worker under the `worker` profile. It publishes no ports, reaches PostgreSQL through the internal Compose network, and writes artifacts/checkpoints to `/var/lib/ashmes/parser`.
+The production parser is a private Docker worker under the `worker` profile. It publishes no ports, sends completed batches to the API queue, and writes artifacts/checkpoints/outbox files to `/var/lib/ashmes/parser`. Normal production parser ingestion does not use a direct PostgreSQL connection.
 
 ```bash
 ./deploy/docker/scripts/parser-start.sh
@@ -229,6 +229,29 @@ The production parser is a private Docker worker under the `worker` profile. It 
 ./deploy/docker/scripts/parser-logs.sh
 ./deploy/docker/scripts/parser-stop.sh
 ```
+
+The parser uses `Parser/presets/production/proxy_mapping.local.json` when that
+file exists next to the tracked fallback `proxy_mapping.json`. Keep the local
+file out of git because it can contain real proxy credentials.
+
+One-batch production smoke command inside the parser image:
+
+```bash
+docker compose -f deploy/docker/compose.prod.yml --env-file deploy/docker/.env --profile worker run --rm parser \
+  python Parser/app/cycle_runner.py \
+  --config Parser/presets/production/market_refresh_selected_niches_batched.prod.json \
+  --mode batched_full_enrichment \
+  --smoke-max-batches 1 \
+  --smoke-source-subcategory "Коврики для ванной"
+```
+
+Smoke acceptance:
+
+- a row appears in `ParserBatchSubmissions`;
+- raw artifacts appear and are removed after successful server processing;
+- local outbox payload is removed only after server status `completed`;
+- current rows and CDC events are written by `analytics-worker`;
+- admin parser monitoring shows instance id, niche, proxy key, batch status and errors.
 
 ## 12. Manual Backup
 

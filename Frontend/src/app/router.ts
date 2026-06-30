@@ -6,6 +6,7 @@ import MarketConcentrationPage from '@/features/market-intelligence/MarketConcen
 import MarketIntelligencePage from '@/features/market-intelligence/MarketIntelligencePage.vue';
 import MarketTopForecastPage from '@/features/market-intelligence/MarketTopForecastPage.vue';
 import MarketOpportunitiesPage from '@/features/market-opportunities/MarketOpportunitiesPage.vue';
+import ParserAdminMonitoringPage from '@/features/parser-admin-monitoring/ParserAdminMonitoringPage.vue';
 import ParserTestingPage from '@/features/parser-testing/ParserTestingPage.vue';
 import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vue';
 import ParserReviewsPage from '@/features/parser-reviews/ParserReviewsPage.vue';
@@ -63,6 +64,7 @@ export const router = createRouter({
         { path: 'parser/reviews', name: 'parser-reviews', component: ParserReviewsPage },
         { path: 'expenses', name: 'expenses', component: ExpensesPage },
         { path: 'management/workspaces', name: 'management-workspaces', component: WorkspaceManagementPage },
+        { path: 'admin/parser', name: 'admin-parser-monitoring', component: ParserAdminMonitoringPage },
         { path: 'settings/access', redirect: { name: 'management-workspaces' } }
       ]
     },

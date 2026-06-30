@@ -1,0 +1,28 @@
+{
+  "defaultProxy": {
+    "key": "local-proxy",
+    "type": "direct",
+    "cooldownSeconds": 300
+  },
+  "proxies": [],
+  "niches": [
+    {
+      "sourceCategory": "Женщинам",
+      "sourceSubcategory": "Платья и сарафаны",
+      "proxyKey": "local-proxy",
+      "enabled": true
+    },
+    {
+      "sourceCategory": "Обувь",
+      "sourceSubcategory": "Кеды и кроссовки",
+      "proxyKey": "local-proxy",
+      "enabled": true
+    },
+    {
+      "sourceCategory": "Красота",
+      "sourceSubcategory": "Органическая косметика",
+      "proxyKey": "local-proxy",
+      "enabled": true
+    }
+  ]
+}

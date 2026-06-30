@@ -19,10 +19,12 @@ public sealed partial class ParserIngestionService : IParserIngestionService
     private const string LogisticsRunKind = "wb_logistics";
     private const string ProductDetailsKind = "product_details";
     private readonly ApplicationDbContext _dbContext;
+    private readonly ParserProductCdcService _cdcService;
 
     public ParserIngestionService(ApplicationDbContext dbContext)
     {
         _dbContext = dbContext;
+        _cdcService = new ParserProductCdcService(dbContext);
     }
 
     public Task<ParserIngestionResult> ValidateProductsAsync(
@@ -984,6 +986,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserProductRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await _cdcService.ApplyProductRowsAsync(newRows, BatchId(newRows), cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1116,6 +1119,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserLogisticsSnapshotRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await _cdcService.ApplyLogisticsRowsAsync(newRows, BatchId(newRows), cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1412,6 +1416,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserReviewRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await _cdcService.ApplyReviewRowsAsync(candidateRows, BatchId(candidateRows), cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1713,6 +1718,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserRankSnapshotRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await _cdcService.ApplyRankRowsAsync(newRows, BatchId(newRows), cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -2133,10 +2139,26 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserProductDetailRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        await _cdcService.ApplyProductDetailRowsAsync(newRows, BatchId(newRows), cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
     }
+
+    private static string BatchId(IReadOnlyCollection<ParserProductRow> rows) =>
+        rows.FirstOrDefault()?.ParserRunId ?? "unknown";
+
+    private static string BatchId(IReadOnlyCollection<ParserLogisticsSnapshotRow> rows) =>
+        rows.FirstOrDefault()?.ParserRunId ?? "unknown";
+
+    private static string BatchId(IReadOnlyCollection<ParserReviewRow> rows) =>
+        rows.FirstOrDefault()?.ParserRunId ?? "unknown";
+
+    private static string BatchId(IReadOnlyCollection<ParserRankSnapshotRow> rows) =>
+        rows.FirstOrDefault()?.ParserRunId ?? "unknown";
+
+    private static string BatchId(IReadOnlyCollection<ParserProductDetailRow> rows) =>
+        rows.FirstOrDefault()?.ParserRunId ?? "unknown";
 
     private static ManifestInfo LoadManifest(string runDirectory, string kind)
     {

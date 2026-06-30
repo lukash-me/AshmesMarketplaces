@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import re
 import sys
@@ -39,13 +40,15 @@ from add_price_wb_wallet import add_price_with_wb_wallet
 from CategoriesParser import CategoriesParser
 from config import BASE_DIR, ParserConfig
 from exporters import append_jsonl, product_to_canonical_row, write_csv, write_xlsx
-from get_token import get_token
 from images_parser import add_images
 from manifest import CategoryResult, RunManifest, get_git_commit, utc_now_iso
 from models import Items
 from run_scope import parser_run_scope_from_env
 from SearchPhraseParser import SearchPhraseParser
 from WbCatalogFetcher import WbCatalogFetcher
+from app.browser_sessions import COOKIE_NAME, get_token_for_proxy
+from app.proxy_mapping import ProxyMapping
+from app.proxy_transport import http_proxy_url_from_definition, requests_proxy_kwargs
 
 
 STATIC_MENU_URL = "https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json"
@@ -65,9 +68,120 @@ class ProductDiscoveryBatchResult:
     reason: str | None = None
 
 
+def _load_proxy_mapping() -> ProxyMapping | None:
+    path = os.environ.get("PARSER_PROXY_MAPPING_FILE")
+    if not path:
+        return None
+    return ProxyMapping.load_with_local_override(path)
+
+
+def _proxy_url_for(mapping: ProxyMapping | None, *, source_category: str, source_subcategory: str | None) -> str | None:
+    if mapping is None:
+        return None
+    resolved = mapping.resolve(source_category, source_subcategory)
+    return http_proxy_url_from_definition(resolved.proxy)
+
+
+def _resolved_proxy_for(mapping: ProxyMapping | None, *, source_category: str, source_subcategory: str | None):
+    if mapping is None:
+        return None
+    return mapping.resolve(source_category, source_subcategory)
+
+
 def _slug(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-zА-Яа-я0-9_-]+", "_", value, flags=re.UNICODE).strip("_")
+    cleaned = re.sub(r"[^A-Za-zА-Яа-яЁё0-9_-]+", "_", value, flags=re.UNICODE).strip("_")
     return cleaned[:80] or "subcategory"
+
+
+def _explicit_niches_file() -> Path | None:
+    configured = os.environ.get("PARSER_EXPLICIT_NICHES_FILE")
+    if not configured:
+        return None
+
+    path = Path(configured)
+    return path if path.is_absolute() else PARSER_ROOT.parent / path
+
+
+def _load_explicit_niches() -> list[dict[str, Any]]:
+    path = _explicit_niches_file()
+    if path is None:
+        return []
+    if not path.exists():
+        raise FileNotFoundError(f"Explicit niches file was not found: {path}")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    items = payload.get("niches") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        raise ValueError("Explicit niches file must contain a JSON array or an object with 'niches' array.")
+
+    selected: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("Explicit niche item must be an object.")
+
+        wb_category_id = str(item.get("wbCategoryId") or item.get("id") or "").strip()
+        source_category = str(item.get("sourceCategory") or "").strip()
+        source_subcategory = str(item.get("sourceSubcategory") or "").strip()
+        search_query = str(item.get("searchQuery") or "").strip()
+        source_path = str(item.get("sourcePath") or "").strip()
+
+        if not wb_category_id:
+            raise ValueError("Explicit niche wbCategoryId is required.")
+        if wb_category_id in seen_ids:
+            raise ValueError(f"Duplicate explicit niche wbCategoryId: {wb_category_id}")
+        if not source_category or not source_subcategory or not search_query:
+            raise ValueError(f"Explicit niche {wb_category_id} requires sourceCategory, sourceSubcategory and searchQuery.")
+
+        seen_ids.add(wb_category_id)
+        selected.append(
+            {
+                "id": int(wb_category_id),
+                "name": source_subcategory,
+                "searchQuery": search_query,
+                "sourceCategory": source_category,
+                "sourcePath": source_path,
+            }
+        )
+
+    return selected
+
+
+def _resolve_explicit_niches_against_wb_menu(selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not selected:
+        return selected
+
+    wb_leaves = CategoriesParser().parse()
+    available = {(str(item.get("id") or "").strip(), str(item.get("searchQuery") or "").strip()): item for item in wb_leaves}
+    missing = [
+        f"{item.get('id')}:{item.get('searchQuery')}"
+        for item in selected
+        if (str(item.get("id") or "").strip(), str(item.get("searchQuery") or "").strip()) not in available
+    ]
+    if missing:
+        raise ValueError(f"Explicit niches were not found in Wildberries catalog menu: {missing}")
+
+    resolved: list[dict[str, Any]] = []
+    for item in selected:
+        wb_leaf = available[(str(item.get("id") or "").strip(), str(item.get("searchQuery") or "").strip())]
+        source_category = str(wb_leaf.get("sourceCategory") or item.get("sourceCategory") or "").strip()
+        source_subcategory = str(wb_leaf.get("sourceSubcategory") or wb_leaf.get("name") or item.get("name") or "").strip()
+        source_path = str(wb_leaf.get("sourcePath") or item.get("sourcePath") or source_subcategory).strip()
+        resolved.append(
+            {
+                **item,
+                "name": source_subcategory,
+                "sourceCategory": source_category,
+                "sourceSubcategory": source_subcategory,
+                "sourcePath": source_path,
+            }
+        )
+
+    return resolved
+
+
+def _category_source_category(config: ParserConfig, selected_category: dict[str, Any]) -> str:
+    return str(selected_category.get("sourceCategory") or config.parent_category).strip()
 
 
 def _make_run_id() -> str:
@@ -87,6 +201,7 @@ def _make_manifest(config: ParserConfig, run_dir: Path, parser_run_id: str) -> R
         requested_scope={
             "parent_category": config.parent_category,
             "subcategory_allowlist": config.subcategory_allowlist,
+            "explicit_niches_file": str(_explicit_niches_file()) if _explicit_niches_file() else None,
             "product_fetch_mode": config.product_fetch_mode,
             **parser_run_scope_from_env(),
         },
@@ -105,6 +220,38 @@ def _make_manifest(config: ParserConfig, run_dir: Path, parser_run_id: str) -> R
 
 
 def _selected_subcategories(config: ParserConfig) -> list[dict]:
+    explicit = _load_explicit_niches()
+    if explicit:
+        resolved = _resolve_explicit_niches_against_wb_menu(explicit)
+        allowlist = (
+            [str(value).strip() for value in config.subcategory_allowlist if str(value).strip()]
+            if os.environ.get("PARSER_SUBCATEGORY_ALLOWLIST")
+            else []
+        )
+        if not allowlist:
+            return resolved
+
+        matched: set[str] = set()
+        selected: list[dict] = []
+        for item in resolved:
+            names = {
+                str(item.get("id") or "").casefold(),
+                str(item.get("name") or "").casefold(),
+                str(item.get("sourceSubcategory") or "").casefold(),
+                str(item.get("sourcePath") or "").casefold(),
+            }
+            for allowed in allowlist:
+                allowed_key = allowed.casefold()
+                if allowed_key in names:
+                    selected.append(item)
+                    matched.add(allowed_key)
+                    break
+
+        missing = sorted({name.casefold() for name in allowlist} - matched)
+        if missing:
+            raise ValueError(f"Configured explicit niches were not found: {missing}")
+        return selected
+
     categories = CategoriesParser().parse([config.parent_category])
     selected: list[dict] = []
     matched: set[str] = set()
@@ -137,8 +284,7 @@ def _selected_subcategories(config: ParserConfig) -> list[dict]:
 def _network_smoke_check(
         config: ParserConfig,
         manifest: RunManifest,
-        selected: list[dict],
-        cookies: dict | None) -> dict:
+        selected: list[dict]) -> dict:
     result = {
         "status": "not_attempted",
         "static_menu": {"status": "not_attempted"},
@@ -146,22 +292,41 @@ def _network_smoke_check(
     }
 
     try:
-        response = requests.get(STATIC_MENU_URL, timeout=config.timeout_seconds)
-        result["static_menu"] = {
-            "status": "ok" if response.status_code == 200 else "failed",
-            "http_status": response.status_code,
-        }
-        if response.status_code != 200:
+        first = selected[0]
+        source_category = _category_source_category(config, first)
+        proxy_mapping = _load_proxy_mapping()
+        resolved_proxy = _resolved_proxy_for(
+            proxy_mapping,
+            source_category=source_category,
+            source_subcategory=first.get("name"),
+        )
+        proxy_url = http_proxy_url_from_definition(resolved_proxy.proxy) if resolved_proxy else None
+        cookies = _acquire_cookies(
+            config,
+            manifest,
+            proxy_key=resolved_proxy.proxy.key if resolved_proxy else "direct",
+            proxy=resolved_proxy.proxy if resolved_proxy else None,
+            source_category=source_category,
+            source_subcategory=first.get("name"),
+        )
+        try:
+            response = requests.get(STATIC_MENU_URL, timeout=config.timeout_seconds, **requests_proxy_kwargs(proxy_url))
+            result["static_menu"] = {
+                "status": "ok" if response.status_code == 200 else "warning",
+                "http_status": response.status_code,
+            }
+        except Exception as exception:
+            result["static_menu"] = {
+                "status": "warning",
+                "error": str(exception),
+            }
             manifest.record_error(
                 phase="network",
-                message="Static menu smoke check failed.",
-                http_status=response.status_code,
-                action="stopped",
+                message="Static menu smoke check failed, continuing with catalog probe.",
+                action="continued",
+                details={"exception": str(exception)},
             )
-            result["status"] = "failed"
-            return result
 
-        first = selected[0]
         query = first.get("name") or first.get("searchQuery")
         parser = SearchPhraseParser(
             search_phrase=query,
@@ -174,8 +339,9 @@ def _network_smoke_check(
                 config.request_delay_max_seconds,
             ),
             event_recorder=manifest.record_error,
-            source_category=config.parent_category,
+            source_category=source_category,
             source_subcategory=first.get("name"),
+            proxy_url=proxy_url,
         )
         probe = parser.fetch_data()
         result["filters_probe"] = {
@@ -196,29 +362,39 @@ def _network_smoke_check(
     return result
 
 
-def _acquire_token(config: ParserConfig, manifest: RunManifest) -> str | None:
+def _acquire_cookies(
+    config: ParserConfig,
+    manifest: RunManifest,
+    *,
+    proxy_key: str,
+    proxy: Any | None,
+    source_category: str | None = None,
+    source_subcategory: str | None = None,
+) -> dict[str, str] | None:
     if config.wb_token_secret:
-        manifest.token_acquisition_status = {"status": "provided_by_env"}
-        return config.wb_token_secret
+        manifest.token_acquisition_status = {"status": "provided_by_env", "proxyKey": proxy_key}
+        return {COOKIE_NAME: config.wb_token_secret}
 
     if not config.acquire_token:
-        manifest.token_acquisition_status = {"status": "disabled"}
+        manifest.token_acquisition_status = {"status": "disabled", "proxyKey": proxy_key}
         return None
 
     try:
-        token = get_token()
+        token = get_token_for_proxy(proxy_key, proxy)
     except Exception as exception:
-        manifest.token_acquisition_status = {"status": "failed", "error": str(exception)}
+        manifest.token_acquisition_status = {"status": "failed", "proxyKey": proxy_key, "error": str(exception)}
         manifest.record_error(
             phase="token",
             message="Token acquisition failed.",
-            action="stopped",
-            details={"exception": str(exception)},
+            action="skipped",
+            source_category=source_category,
+            source_subcategory=source_subcategory,
+            details={"exception": str(exception), "proxyKey": proxy_key},
         )
         return None
 
-    manifest.token_acquisition_status = {"status": "ok" if token else "empty"}
-    return token
+    manifest.token_acquisition_status = {"status": "ok" if token else "empty", "proxyKey": proxy_key}
+    return {COOKIE_NAME: token} if token else None
 
 
 def _write_raw_samples(run_dir: Path, subcategory_name: str, results: list[dict], limit: int) -> None:
@@ -300,10 +476,9 @@ def _run_parser_core(
 
     try:
         selected = _selected_subcategories(config)
-        token = _acquire_token(config, manifest)
-        cookies = {"x_wbaas_token": token} if token else None
+        proxy_mapping = _load_proxy_mapping()
 
-        manifest.network_check_result = _network_smoke_check(config, manifest, selected, cookies)
+        manifest.network_check_result = _network_smoke_check(config, manifest, selected)
         manifest.write()
 
         if manifest.network_check_result.get("status") != "ok":
@@ -315,7 +490,9 @@ def _run_parser_core(
 
         for selected_category in selected:
             subcategory_name = selected_category.get("name")
+            source_category = _category_source_category(config, selected_category)
             source_query = subcategory_name or selected_category.get("searchQuery")
+            source_query = selected_category.get("searchQuery") or source_query
             category_result = CategoryResult(
                 source_subcategory=subcategory_name,
                 source_query=source_query,
@@ -324,7 +501,45 @@ def _run_parser_core(
 
             try:
                 logger.info("Parsing subcategory: {}", subcategory_name)
-                price_split_enabled = config.product_fetch_mode == "price_split"
+                resolved_proxy = _resolved_proxy_for(
+                    proxy_mapping,
+                    source_category=source_category,
+                    source_subcategory=subcategory_name,
+                )
+                proxy_url = http_proxy_url_from_definition(resolved_proxy.proxy) if resolved_proxy else None
+                cookies = _acquire_cookies(
+                    config,
+                    manifest,
+                    proxy_key=resolved_proxy.proxy.key if resolved_proxy else "direct",
+                    proxy=resolved_proxy.proxy if resolved_proxy else None,
+                    source_category=source_category,
+                    source_subcategory=subcategory_name,
+                )
+                if config.acquire_token and not cookies:
+                    category_result.status = "failed"
+                    manifest.record_error(
+                        phase="token",
+                        source_category=source_category,
+                        source_subcategory=subcategory_name,
+                        source_query=source_query,
+                        message="Proxy-scoped token was not acquired.",
+                        action="skipped",
+                        details={"proxyKey": resolved_proxy.proxy.key if resolved_proxy else "direct"},
+                    )
+                    manifest.add_category_result(category_result)
+                    if config.fail_fast:
+                        break
+                    continue
+                smoke_direct_discovery = os.environ.get("PARSER_SMOKE_DIRECT_DISCOVERY", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "y",
+                    "on",
+                }
+                price_split_enabled = config.product_fetch_mode == "price_split" and not smoke_direct_discovery
+                if smoke_direct_discovery and config.product_fetch_mode == "price_split":
+                    logger.info("Smoke direct discovery enabled: skipping price split for {}", subcategory_name)
                 if price_split_enabled:
                     price_ranges = SearchPhraseParser(
                         search_phrase=source_query,
@@ -337,15 +552,16 @@ def _run_parser_core(
                             config.request_delay_max_seconds,
                         ),
                         event_recorder=manifest.record_error,
-                        source_category=config.parent_category,
+                        source_category=source_category,
                         source_subcategory=subcategory_name,
+                        proxy_url=proxy_url,
                     ).parse()
 
                     if not price_ranges:
                         category_result.status = "failed"
                         manifest.record_error(
                             phase="filters",
-                            source_category=config.parent_category,
+                            source_category=source_category,
                             source_subcategory=subcategory_name,
                             source_query=source_query,
                             message="No price ranges were discovered.",
@@ -383,8 +599,9 @@ def _run_parser_core(
                     attempt_recorder=manifest.record_attempt,
                     retry_recorder=manifest.record_retry,
                     backoff_recorder=manifest.record_backoff,
-                    source_category=config.parent_category,
+                    source_category=source_category,
                     source_subcategory=subcategory_name,
+                    proxy_url=proxy_url,
                 )
                 raw_samples: list[dict] = []
 
@@ -399,7 +616,7 @@ def _run_parser_core(
                         if "products" not in raw_data:
                             manifest.record_error(
                                 phase="catalog",
-                                source_category=config.parent_category,
+                                source_category=source_category,
                                 source_subcategory=subcategory_name,
                                 source_query=source_query,
                                 message="Response without products was skipped.",
@@ -444,7 +661,7 @@ def _run_parser_core(
                             parser_run_id=parser_run_id,
                             parsed_at_utc=utc_now_iso(),
                             marketplace=config.marketplace,
-                            source_category=config.parent_category,
+                            source_category=source_category,
                             source_subcategory=subcategory_name,
                             source_query=source_query,
                             source_region_dest=config.source_region_dest,
@@ -505,7 +722,7 @@ def _run_parser_core(
                 category_result.error_count += 1
                 manifest.record_error(
                     phase="subcategory",
-                    source_category=config.parent_category,
+                    source_category=source_category,
                     source_subcategory=subcategory_name,
                     source_query=source_query,
                     message="Subcategory parsing failed.",

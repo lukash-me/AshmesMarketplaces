@@ -7,10 +7,10 @@ from loguru import logger
 from common_data import HEADERS
 from dto import DataPage
 from typing import List
-from get_token import get_token
 from SearchPhraseParser import SearchPhraseParser
 import random
 from typing import Callable
+from app.proxy_transport import httpx_proxy_kwargs
 
 class WbCatalogFetcher:
     def __init__(self,
@@ -32,7 +32,8 @@ class WbCatalogFetcher:
                  retry_recorder: Callable | None=None,
                  backoff_recorder: Callable | None=None,
                  source_category: str | None=None,
-                 source_subcategory: str | None=None):
+                 source_subcategory: str | None=None,
+                 proxy_url: str | None=None):
 
         self.pages = pages
         self.search_phrase = search_phrase
@@ -55,6 +56,7 @@ class WbCatalogFetcher:
         self.backoff_recorder = backoff_recorder
         self.source_category = source_category
         self.source_subcategory = source_subcategory
+        self.proxy_url = proxy_url
         self.limit_signals = 0
         self.stop_requested = False
 
@@ -247,7 +249,7 @@ class WbCatalogFetcher:
         tasks = self._build_tasks()
         total_results = 0
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**httpx_proxy_kwargs(self.proxy_url)) as client:
             for i in range(0, len(tasks), self.batch_size):
                 if self.stop_requested:
                     logger.warning("Catalog fetching stopped after repeated WB limit signals")
@@ -284,7 +286,7 @@ class WbCatalogFetcher:
         tasks = self._build_tasks()
         results: list[dict] = []
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**httpx_proxy_kwargs(self.proxy_url)) as client:
             for i in range(0, len(tasks), self.batch_size):
                 if self.stop_requested:
                     logger.warning("Catalog fetching stopped after repeated WB limit signals")
@@ -315,7 +317,9 @@ class WbCatalogFetcher:
         return results
 
 if __name__ == "__main__":
-    wb_token = get_token()
+    from app.browser_sessions import get_token_for_proxy
+
+    wb_token = get_token_for_proxy("direct")
     cookies = {
         'x_wbaas_token': wb_token,
     }

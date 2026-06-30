@@ -234,6 +234,25 @@ class FakeStagingExecutor:
         return "unknown"
 
 
+class FakeBatchOutbox:
+    def __init__(self) -> None:
+        self.enqueued: list[dict[str, Any]] = []
+        self.send_calls = 0
+        self.poll_calls = 0
+
+    def enqueue_batch(self, **kwargs: Any) -> SimpleNamespace:
+        self.enqueued.append(kwargs)
+        return SimpleNamespace(local_batch_id=f"local-{len(self.enqueued)}")
+
+    def send_pending_once(self) -> int:
+        self.send_calls += 1
+        return 1
+
+    def poll_active_once(self) -> int:
+        self.poll_calls += 1
+        return 0
+
+
 class MarketRefreshRunnerTests(unittest.TestCase):
     def _config(
         self,
@@ -506,8 +525,27 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             config.payload["modes"]["batched_full_enrichment"] = {
                 **config.payload["modes"]["smoke"],
                 "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "proxy_mapping_file": str(temp_dir / "proxy_mapping.json"),
                 "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
             }
+            (temp_dir / "proxy_mapping.json").write_text(
+                json.dumps(
+                    {
+                        "defaultProxy": {"key": "local", "type": "direct"},
+                        "proxies": [{"key": "bath-proxy", "type": "direct"}],
+                        "niches": [
+                            {
+                                "sourceCategory": "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
+                                "sourceSubcategory": "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
+                                "proxyKey": "bath-proxy",
+                                "enabled": True,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
             config.modes = dict(config.payload["modes"])
             events: list[str] = []
             fake = FakeExecutor(output_base_dir=config.output_base_dir, events=events)
@@ -565,6 +603,92 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertLess(events.index("stage:complete_batch"), events.index("discover:batch2"))
         self.assertEqual(manifest["batching"]["total_batches"], 2)
         self.assertEqual([batch["status"] for batch in manifest["batching"]["batches"]], ["staged", "staged"])
+
+    def test_batched_full_enrichment_enqueues_valid_batch_to_durable_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "proxy_mapping_file": str(temp_dir / "proxy_mapping.json"),
+                "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
+            }
+            (temp_dir / "proxy_mapping.json").write_text(
+                json.dumps(
+                    {
+                        "defaultProxy": {"key": "local", "type": "direct"},
+                        "proxies": [{"key": "bath-proxy", "type": "direct"}],
+                        "niches": [
+                            {
+                                "sourceCategory": "Товары для дома",
+                                "sourceSubcategory": "Коврики для ванной",
+                                "proxyKey": "bath-proxy",
+                                "enabled": True,
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            config.modes = dict(config.payload["modes"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            staging = FakeStagingExecutor()
+            outbox = FakeBatchOutbox()
+
+            def streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {"parent_category": "Товары для дома"},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 2, "unique_rows": 2, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                rows = [
+                    {"wb_product_id": "9001", "wb_root_id": "9101", "marketplace": "wildberries", "source_subcategory": "Коврики для ванной"},
+                    {"wb_product_id": "9002", "wb_root_id": "9102", "marketplace": "wildberries", "source_subcategory": "Коврики для ванной"},
+                ]
+                (parent_dir / "products.jsonl").write_text(
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                kwargs["batch_handler"](SimpleNamespace(batch_index=1, rows=rows, parent_run_dir=parent_dir))
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=False,
+                executor=fake,
+                staging_executor=staging,
+                streaming_product_runner=streaming_runner,
+                batch_outbox=outbox,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(len(outbox.enqueued), 1)
+        self.assertEqual(outbox.send_calls, 2)
+        self.assertEqual(outbox.poll_calls, 2)
+        enqueued = outbox.enqueued[0]
+        self.assertEqual(enqueued["external_batch_id"], manifest["batching"]["batches"][0]["batch_id"])
+        self.assertEqual(enqueued["source_category"], "Товары для дома")
+        self.assertEqual(enqueued["source_subcategory"], "Коврики для ванной")
+        self.assertEqual(enqueued["proxy_key"], "bath-proxy")
+        self.assertEqual(enqueued["batch_kind"], "complete_card_batch")
+        self.assertIn("products/products.jsonl", enqueued["payload"]["artifacts"])
+        self.assertIn("batch_manifest.json", enqueued["payload"]["artifacts"])
+        self.assertEqual(manifest["batching"]["outbox"]["enabled"], True)
+        self.assertEqual(manifest["batching"]["outbox"]["enqueued_batches"], 1)
 
     def test_batched_full_enrichment_stops_after_configured_batch_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

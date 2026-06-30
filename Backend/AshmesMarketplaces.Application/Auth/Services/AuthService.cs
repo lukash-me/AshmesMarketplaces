@@ -257,6 +257,11 @@ public sealed class AuthService : IAuthService
     private async Task<AuthUserResponse> MapToAuthUserResponseAsync(User user, CancellationToken cancellationToken)
     {
         var analysisSchedule = await _analysisScheduleService.EnsureScheduleAsync(user.Id, cancellationToken);
+        var roleName = await _dbContext.Roles
+            .AsNoTracking()
+            .Where(x => x.Id == user.IdRole)
+            .Select(x => x.Name)
+            .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
         var workspaces = await _dbContext.UserWorkspaces
             .AsNoTracking()
             .Where(x => x.IdUser == user.Id)
@@ -290,6 +295,7 @@ public sealed class AuthService : IAuthService
         return new AuthUserResponse(
             user.Id,
             user.IdRole,
+            roleName,
             user.Login,
             user.Email,
             user.Phone,

@@ -26,6 +26,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<ParserRun> ParserRuns => Set<ParserRun>();
     public DbSet<ParserInstance> ParserInstances => Set<ParserInstance>();
+    public DbSet<ParserProxyRun> ParserProxyRuns => Set<ParserProxyRun>();
     public DbSet<ParserNicheAssignment> ParserNicheAssignments => Set<ParserNicheAssignment>();
     public DbSet<ParserBatchSubmission> ParserBatchSubmissions => Set<ParserBatchSubmission>();
     public DbSet<ParserBatchSubmissionEvent> ParserBatchSubmissionEvents => Set<ParserBatchSubmissionEvent>();
@@ -35,6 +36,12 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserImportError> ParserImportErrors => Set<ParserImportError>();
     public DbSet<ParserProductRow> ParserProductRows => Set<ParserProductRow>();
     public DbSet<ParserCurrentProductRow> ParserCurrentProductRows => Set<ParserCurrentProductRow>();
+    public DbSet<ParserCurrentProductDetail> ParserCurrentProductDetails => Set<ParserCurrentProductDetail>();
+    public DbSet<ParserCurrentProductLogistics> ParserCurrentProductLogistics => Set<ParserCurrentProductLogistics>();
+    public DbSet<ParserCurrentProductRank> ParserCurrentProductRanks => Set<ParserCurrentProductRank>();
+    public DbSet<ParserCurrentProductReviewEvidence> ParserCurrentProductReviewEvidence => Set<ParserCurrentProductReviewEvidence>();
+    public DbSet<ParserCurrentProductReviewsSummary> ParserCurrentProductReviewsSummaries => Set<ParserCurrentProductReviewsSummary>();
+    public DbSet<ParserProductChangeEvent> ParserProductChangeEvents => Set<ParserProductChangeEvent>();
     public DbSet<ParserProductDetailRow> ParserProductDetailRows => Set<ParserProductDetailRow>();
     public DbSet<ParserReviewRootFetch> ParserReviewRootFetches => Set<ParserReviewRootFetch>();
     public DbSet<ParserReviewRow> ParserReviewRows => Set<ParserReviewRow>();

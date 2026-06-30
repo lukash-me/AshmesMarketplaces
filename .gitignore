@@ -18,6 +18,7 @@ Backend/AshmesMarketplaces.API/wwwroot/uploads/
 # Production Docker deployment local state
 deploy/docker/.env
 deploy/docker/backups/
+Parser/presets/production/proxy_mapping.local.json
 
 # User-specific files
 *.rsuser

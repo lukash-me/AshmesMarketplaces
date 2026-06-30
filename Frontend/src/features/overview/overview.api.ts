@@ -15,9 +15,9 @@ import type {
 } from './overview.types';
 
 const MARKET_INTELLIGENCE_DEFAULT_PARAMS = {
-  sourceCategory: 'Товары для дома',
-  sourceSubcategory: 'Светильники бра',
-  query: 'Светильники бра',
+  sourceCategory: 'Женщинам',
+  sourceSubcategory: 'Платья и сарафаны',
+  query: 'menu_v3_8137 платье женские',
   sourceRegionDest: '12354108',
   sort: 'popular',
   topN: 100

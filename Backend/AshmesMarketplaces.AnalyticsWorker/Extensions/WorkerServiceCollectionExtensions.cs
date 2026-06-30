@@ -3,6 +3,8 @@ using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
 using AshmesMarketplaces.Application.MarketRecommendations.Options;
 using AshmesMarketplaces.Application.MarketRecommendations.Services;
+using AshmesMarketplaces.Application.ParserBatches.Services;
+using AshmesMarketplaces.Application.ParserIngestion.Services;
 using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.DataAccess;
@@ -63,6 +65,9 @@ public static class WorkerServiceCollectionExtensions
     public static IServiceCollection AddWorkerApplicationServices(this IServiceCollection services)
     {
         services.AddScoped<ICurrentUser, WorkerCurrentUser>();
+        services.AddScoped<IParserIngestionService, ParserIngestionService>();
+        services.AddScoped<IParserBatchPayloadProcessor, ParserCompleteBatchPayloadProcessor>();
+        services.AddScoped<IParserBatchProcessingService, ParserBatchProcessingService>();
         services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
         services.AddScoped<IPublicMarketIntelligenceRefreshService, PublicMarketIntelligenceRefreshService>();
         services.AddScoped<IPublicMarketConcentrationRefreshService, PublicMarketConcentrationRefreshService>();

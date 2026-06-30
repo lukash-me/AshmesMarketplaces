@@ -6,22 +6,22 @@ export const marketIntelligenceTopN = 1000;
 
 export const marketIntelligenceContexts = [
   {
-    label: 'Светильники бра',
-    sourceCategory: 'Товары для дома',
-    sourceSubcategory: 'Светильники бра',
-    query: 'Светильники бра'
+    label: 'Платья и сарафаны',
+    sourceCategory: 'Женщинам',
+    sourceSubcategory: 'Платья и сарафаны',
+    query: 'menu_v3_8137 платье женские'
   },
   {
-    label: 'Коврики для ванной',
-    sourceCategory: 'Товары для дома',
-    sourceSubcategory: 'Коврики для ванной',
-    query: 'Коврики для ванной'
+    label: 'Кеды и кроссовки',
+    sourceCategory: 'Обувь',
+    sourceSubcategory: 'Кеды и кроссовки',
+    query: 'menu_redirect_subject_v2_8194 мужские кеды и кроссовки'
   },
   {
-    label: 'Органайзеры для хранения вещей',
-    sourceCategory: 'Товары для дома',
-    sourceSubcategory: 'Органайзеры для хранения вещей',
-    query: 'Органайзеры для хранения вещей'
+    label: 'Органическая косметика',
+    sourceCategory: 'Красота',
+    sourceSubcategory: 'Органическая косметика',
+    query: 'menu_redirect_subject_v2_10012 органическая косметика'
   }
 ] as const;
 

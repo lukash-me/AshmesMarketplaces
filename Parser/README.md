@@ -2,8 +2,8 @@
 
 ## Current production flow
 
-Production parsing is a batched market refresh pipeline. The Docker service starts
-`Parser/app/market_refresh.py` with
+Production parsing is a one-cycle worker process. The Docker service starts
+`Parser/app/cycle_runner.py` with
 `Parser/presets/production/market_refresh_selected_niches_batched.prod.json`.
 The old root-level runners are kept as compatibility modules while the new
 package layout makes the pipeline shape explicit:
@@ -21,18 +21,76 @@ package layout makes the pipeline shape explicit:
 
 The production flow is:
 
-1. discover product cards for the configured niches;
-2. process cards in batches of about 100 unique WB products;
-3. enrich each batch with rank, details, reviews and logistics evidence;
-4. write JSONL manifests and artifacts under `Parser/output/runs/`;
-5. call the .NET parser ingestion CLI, which stages artifacts and promotes them
-   into parser ingestion tables;
-6. backend read-models and analytics-worker snapshots prepare data for UI pages.
+1. flush and poll unfinished local outbox batches from previous parser cycles;
+2. discover product cards for the configured niches;
+3. process cards in batches of about 100 unique WB products;
+4. enrich each batch with rank, details, reviews and logistics evidence;
+5. save completed batch payloads to local durable outbox when queue delivery is enabled;
+6. write JSONL manifests and artifacts under `Parser/output/runs/`;
+7. send completed batch payloads to the backend server queue when
+   `PARSER_BATCH_QUEUE_URL` is configured;
+8. flush/poll outbox again, cleanup server-confirmed payloads and write a cycle
+   report;
+9. exit. The next launch is controlled by Docker restart policy, cron or another scheduler.
 
 The parser process does not serve HTTP traffic. API, analytics worker and parser
 remain separate processes.
 
-This parser stage is an isolated, manual WB product-card data pipeline. It does not write to the backend database, does not run migrations, and does not start any scheduler or worker.
+For smoke checks, limit one cycle without changing presets:
+
+```powershell
+& .\Parser\.venv\Scripts\python.exe .\Parser\app\cycle_runner.py `
+  --config .\Parser\presets\production\market_refresh_selected_niches_batched.prod.json `
+  --mode batched_full_enrichment `
+  --smoke-source-subcategory "Коврики для ванной" `
+  --smoke-max-batches 1
+```
+
+`Parser/app/market_refresh.py` remains the lower-level pipeline entrypoint used
+by the cycle runner and by legacy manual diagnostics.
+
+## Proxy mapping and niche scheduling
+
+Production presets point to `Parser/presets/production/proxy_mapping.json`.
+If `Parser/presets/production/proxy_mapping.local.json` exists, it is used
+instead. The tracked file is a safe fallback without credentials; the local file
+may contain real `http-proxy` definitions with `baseUrl`, `socks5Url` and
+credentials. Version 1 uses only HTTP proxy transport.
+
+During batched processing every complete-card batch records the selected
+`proxyKey` in the pipeline manifest and passes proxy transport to child steps
+through environment variables. Passwords are not written to logs or manifests.
+If a niche is disabled in the mapping, or if its proxy is in cooldown after an
+error, that batch is deferred and the rest of the parser cycle continues. This
+keeps a broken niche/proxy from stopping unrelated niches.
+
+## Durable batch outbox
+
+The batched enrichment pipeline persists each completed batch locally before the
+batch is handed to the backend queue. Docker production enables this mode with:
+
+```powershell
+$env:PARSER_BATCH_QUEUE_URL = "http://localhost:5000/api/v1/parser"
+$env:PARSER_OUTBOX_DIR = "E:\AshmesMarketplaces\Parser\output\outbox"
+$env:PARSER_INSTANCE_ID = "parser-home-goods-01"
+```
+
+When enabled, the parser:
+
+1. saves batch metadata in `outbox.sqlite3`;
+2. saves the full batch payload as JSON under `payloads/`;
+3. sends `POST /api/v1/parser/batches`;
+4. polls `/api/v1/parser/batches/{externalBatchId}/status`;
+5. deletes the payload file only after the server reports `completed`.
+
+On restart the parser first retries and polls active local batches, then starts
+new marketplace collection. The `(parserInstanceId, externalBatchId)` key keeps
+server submission idempotent.
+
+This parser stage does not run migrations and does not serve user traffic.
+Production Docker delivery to the backend is performed through the durable batch
+queue. The old `--stage-to-db` path remains only for manual development
+diagnostics.
 
 ## Network Strategy
 
@@ -40,9 +98,32 @@ Run the parser from an environment where WB is reachable without the project dev
 
 - preferred: separate runner environment without VPN;
 - acceptable: separate Windows profile or VM;
-- conditional: VPN split tunneling for Python, Chrome/Selenium, ChromeDriver/SeleniumBase, and WB/static basket domains.
+- conditional: VPN split tunneling for Python, Playwright Chromium, and WB/static basket domains.
 
 Backend and frontend development can continue with VPN enabled; parser execution is a separate manual operation.
+
+## Browser Sessions
+
+WB browser cookies are acquired through Playwright persistent contexts. Sessions
+are scoped by `proxyKey`: every proxy has its own browser profile, cookie jar,
+`x_wbaas_token`, cooldown and error state. Credentials are read from
+`proxy_mapping.local.json` and must not be committed.
+
+Local setup:
+
+```powershell
+& .\Parser\.venv\Scripts\python.exe -m pip install -r .\Parser\requirements.txt
+& .\Parser\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+Useful diagnostics:
+
+- `PARSER_BROWSER_HEADED=1` opens the browser locally;
+- `PARSER_SESSION_TTL_MINUTES=60` controls token cache TTL;
+- `PARSER_FORCE_REFRESH_TOKEN=1` refreshes the current proxy session.
+
+By default profiles are stored under `Parser/output/browser_profiles/{proxyKey}`
+and session metadata under `Parser/output/browser_sessions/{proxyKey}.json`.
 
 ## Configuration
 
@@ -66,11 +147,14 @@ The default example keeps the footwear validation scope. For the Market Analytic
 
 That preset selects:
 
-- `РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№`;
-- `РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№`;
-- `РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°`.
+- `Органайзеры для хранения вещей`;
+- `Коврики для ванной`;
+- `Светильники бра`.
 
-The preset uses seller-facing parent category label `РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°`. WB static menu currently exposes that parent through the menu name `Р”РѕРј` and SEO label `РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°`; the runner accepts either parent label during category discovery while writing the configured parent value into run metadata.
+The preset uses seller-facing parent category label `Товары для дома`. WB static
+menu currently exposes that parent through the menu name `Дом`; the runner
+accepts either parent label during category discovery while writing the
+configured parent value into run metadata.
 
 ## Commands
 
