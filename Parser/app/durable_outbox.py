@@ -11,6 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 from urllib import request
+from urllib.parse import quote
 
 
 class OutboxStatus(StrEnum):
@@ -375,11 +376,20 @@ class DurableBatchOutbox:
         self,
         *,
         external_proxy_run_id: str,
+        parser_cycle_id: str | None = None,
+        cycle_kind: str | None = None,
         proxy_key: str,
         source_category: str,
         source_subcategory: str,
         planned_products_count: int,
         downloaded_products_count: int,
+        egress_ip: str | None = None,
+        token_ref: str | None = None,
+        session_status: str | None = None,
+        phase: str | None = None,
+        planned_ranges_count: int | None = None,
+        completed_ranges_count: int | None = None,
+        range_progress_percent: float | None = None,
     ) -> None:
         if not self.server_base_url:
             return
@@ -387,11 +397,20 @@ class DurableBatchOutbox:
         payload = {
             "parserInstanceId": self.parser_instance_id,
             "externalProxyRunId": external_proxy_run_id,
+            "parserCycleId": parser_cycle_id,
+            "cycleKind": cycle_kind,
             "proxyKey": proxy_key,
             "sourceCategory": source_category,
             "sourceSubcategory": source_subcategory,
             "plannedProductsCount": max(0, int(planned_products_count)),
             "downloadedProductsCount": max(0, int(downloaded_products_count)),
+            "egressIp": egress_ip,
+            "tokenRef": token_ref,
+            "sessionStatus": session_status,
+            "phase": phase,
+            "plannedRangesCount": planned_ranges_count,
+            "completedRangesCount": completed_ranges_count,
+            "rangeProgressPercent": range_progress_percent,
         }
         response = self.post_json(f"{self.server_base_url}/proxy-runs/start", payload)
         if int(getattr(response, "status_code", 0)) >= 400:
@@ -403,6 +422,10 @@ class DurableBatchOutbox:
         external_proxy_run_id: str,
         planned_products_count: int,
         downloaded_products_count: int,
+        phase: str | None = None,
+        planned_ranges_count: int | None = None,
+        completed_ranges_count: int | None = None,
+        range_progress_percent: float | None = None,
     ) -> None:
         if not self.server_base_url:
             return
@@ -411,9 +434,14 @@ class DurableBatchOutbox:
             "parserInstanceId": self.parser_instance_id,
             "plannedProductsCount": max(0, int(planned_products_count)),
             "downloadedProductsCount": max(0, int(downloaded_products_count)),
+            "phase": phase,
+            "plannedRangesCount": planned_ranges_count,
+            "completedRangesCount": completed_ranges_count,
+            "rangeProgressPercent": range_progress_percent,
         }
+        encoded_run_id = quote(external_proxy_run_id, safe="")
         response = self.patch_json(
-            f"{self.server_base_url}/proxy-runs/{external_proxy_run_id}/progress",
+            f"{self.server_base_url}/proxy-runs/{encoded_run_id}/progress",
             payload,
         )
         if int(getattr(response, "status_code", 0)) >= 400:
@@ -438,8 +466,9 @@ class DurableBatchOutbox:
             "downloadedProductsCount": max(0, int(downloaded_products_count)),
             "error": error,
         }
+        encoded_run_id = quote(external_proxy_run_id, safe="")
         response = self.post_json(
-            f"{self.server_base_url}/proxy-runs/{external_proxy_run_id}/finish",
+            f"{self.server_base_url}/proxy-runs/{encoded_run_id}/finish",
             payload,
         )
         if int(getattr(response, "status_code", 0)) >= 400:

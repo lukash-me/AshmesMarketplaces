@@ -59,6 +59,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IProductHistoryService, ProductHistoryService>();
         services.AddScoped<IParserBatchQueueService, ParserBatchQueueService>();
         services.AddScoped<IParserProxyRunService, ParserProxyRunService>();
+        services.AddScoped<IParserPriceSplitQueueService, ParserPriceSplitQueueService>();
         services.AddScoped<IParserAdminMonitoringService, ParserAdminMonitoringService>();
         services.AddScoped<IParserProductReadService, ParserProductReadService>();
         services.AddScoped<IParserObservedStockDecreaseReadService, CachedParserObservedStockDecreaseReadService>();

@@ -39,7 +39,6 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             .OrderByDescending(x => x.StartedAtUtc)
             .ThenByDescending(x => x.Id)
             .ToListAsync(cancellationToken);
-
         var runsByInstance = runs
             .GroupBy(x => x.ParserInstanceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.OrdinalIgnoreCase);
@@ -49,13 +48,12 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             {
                 runsByInstance.TryGetValue(instance.ParserInstanceId, out var instanceRuns);
                 instanceRuns ??= [];
-                var latestStartedAt = instanceRuns.Count > 0
-                    ? instanceRuns.Max(x => x.StartedAtUtc)
-                    : (DateTime?)null;
-                var latestRuns = latestStartedAt.HasValue
+                var latestRunKey = LatestMonitoringCycleId(instanceRuns);
+                var latestRuns = latestRunKey is not null
                     ? instanceRuns
-                        .Where(x => x.StartedAtUtc >= latestStartedAt.Value.AddMinutes(-5) ||
-                                    x.Status == ParserProxyRunStatuses.Running)
+                        .Where(x => x.ParserCycleId == latestRunKey ||
+                                    (x.Status == ParserProxyRunStatuses.Running &&
+                                     x.CycleKind == ParserProxyRunCycleKinds.Production))
                         .OrderBy(x => x.ProxyKey)
                         .ThenBy(x => x.SourceSubcategory)
                         .ToList()
@@ -109,13 +107,22 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             .Select(x => new ParserAdminProxyRunJournalDto(
                 x.Id,
                 x.ParserInstanceId,
+                x.ParserCycleId,
+                x.CycleKind,
                 x.ExternalProxyRunId,
                 x.ProxyKey,
                 x.SourceCategory,
                 x.SourceSubcategory,
+                x.EgressIp,
+                x.TokenRef,
+                x.SessionStatus,
                 x.Status,
+                x.Phase,
                 x.PlannedProductsCount,
                 x.DownloadedProductsCount,
+                x.PlannedRangesCount,
+                x.CompletedRangesCount,
+                x.RangeProgressPercent,
                 x.StartedAtUtc,
                 x.FinishedAtUtc,
                 RuntimeMinutes(x.StartedAtUtc, x.FinishedAtUtc, now),
@@ -368,17 +375,28 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             batch.CompletedAtUtc,
             batch.Error);
 
-    private static ParserAdminProxyRunDto MapProxyRun(ParserProxyRun run, DateTime now)
+    private static ParserAdminProxyRunDto MapProxyRun(
+        ParserProxyRun run,
+        DateTime now)
     {
         return new ParserAdminProxyRunDto(
             run.Id,
             run.ExternalProxyRunId,
+            run.ParserCycleId,
+            run.CycleKind,
             run.ProxyKey,
             run.SourceCategory,
             run.SourceSubcategory,
+            run.EgressIp,
+            run.TokenRef,
+            run.SessionStatus,
             run.Status,
+            run.Phase,
             run.PlannedProductsCount,
             run.DownloadedProductsCount,
+            run.PlannedRangesCount,
+            run.CompletedRangesCount,
+            run.RangeProgressPercent,
             Percent(run.DownloadedProductsCount, run.PlannedProductsCount),
             run.StartedAtUtc,
             run.LastHeartbeatAtUtc,
@@ -404,4 +422,13 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
 
     private static string NicheKey(string sourceCategory, string sourceSubcategory) =>
         $"{sourceCategory}\u001f{sourceSubcategory}";
+
+    private static string? LatestMonitoringCycleId(IReadOnlyList<ParserProxyRun> runs)
+    {
+        if (runs.Count == 0)
+            return null;
+
+        return runs.OrderByDescending(x => x.StartedAtUtc).First().ParserCycleId;
+    }
+
 }

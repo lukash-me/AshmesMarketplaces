@@ -2,11 +2,13 @@ import requests
 from loguru import logger
 import json
 from dto import DataPage
-from common_data import HEADERS
+from common_data import headers_with_wbaas_token
 import time
-import random
+import os
 from typing import Callable
 from app.proxy_transport import requests_proxy_kwargs
+from app.proxy_rate_limiter import SyncProxyRateLimiter, global_filter_sync_proxy_rate_limiter
+from app.browser_sessions import invalidate_proxy_session
 
 
 # Парсинг на основе поисковых запросов
@@ -22,7 +24,11 @@ class SearchPhraseParser:
             event_recorder: Callable | None = None,
             source_category: str | None = None,
             source_subcategory: str | None = None,
-            proxy_url: str | None = None):
+            proxy_url: str | None = None,
+            proxy_key: str | None = None,
+            rate_limiter: SyncProxyRateLimiter | None = None,
+            split_progress_recorder: Callable | None = None,
+            max_retryable_statuses: int | None = None):
         self.search_phrase = search_phrase
         self.cookies = cookies
         self.dest = dest
@@ -33,6 +39,14 @@ class SearchPhraseParser:
         self.source_category = source_category
         self.source_subcategory = source_subcategory
         self.proxy_url = proxy_url
+        self.proxy_key = proxy_key or "direct"
+        self.rate_limiter = rate_limiter or global_filter_sync_proxy_rate_limiter()
+        self.split_progress_recorder = split_progress_recorder
+        self.max_retryable_statuses = max_retryable_statuses or _env_int("PARSER_FILTERS_MAX_RETRYABLE_STATUSES", 5)
+        self.retryable_statuses_count = 0
+        self.aborted_by_rate_limit = False
+        self._split_processed_ranges = 0
+        self._split_pending_ranges = 0
 
         self.default_step = 500 * 100
         self.max_count_of_good = 5000
@@ -42,6 +56,29 @@ class SearchPhraseParser:
 
         self.max_split_depth = 10
         self.low_goods_threshold = 500
+
+    def _emit_split_progress(self) -> None:
+        if not self.split_progress_recorder:
+            return
+
+        processed = max(0, int(self._split_processed_ranges))
+        pending = max(0, int(self._split_pending_ranges))
+        denominator = max(1, processed + pending)
+        progress = min(99.0, (processed / denominator) * 100.0)
+        self.split_progress_recorder(
+            processed_ranges=processed,
+            pending_ranges=pending,
+            progress_percent=progress,
+        )
+
+    def _begin_split_unit(self) -> None:
+        self._split_pending_ranges += 1
+        self._emit_split_progress()
+
+    def _finish_split_unit(self) -> None:
+        self._split_pending_ranges = max(0, self._split_pending_ranges - 1)
+        self._split_processed_ranges += 1
+        self._emit_split_progress()
 
     def _record_error(
             self,
@@ -95,16 +132,14 @@ class SearchPhraseParser:
             logger.debug(add_params)
 
         for attempt in range(1, self.max_retries + 2):
-            delay_min, delay_max = self.request_delay_bounds
-            if delay_max > 0:
-                time.sleep(random.uniform(delay_min, delay_max))
+            self.rate_limiter.wait(self.proxy_key)
 
             try:
                 response = requests.get(
                     "https://search.wb.ru/exactmatch/ru/common/v18/search",
                     params=params,
                     cookies=self.cookies,
-                    headers=HEADERS,
+                    headers=headers_with_wbaas_token(self.cookies),
                     timeout=self.timeout,
                     **requests_proxy_kwargs(self.proxy_url))
             except requests.RequestException as err:
@@ -137,6 +172,13 @@ class SearchPhraseParser:
 
             logger.error(f"WB status: {response.status_code}")
             action = "retry" if self._is_retryable_status(response.status_code) and attempt <= self.max_retries else "stopped"
+            if response.status_code in {401, 403, 498}:
+                invalidate_proxy_session(self.proxy_key, reason=f"WB filters HTTP status {response.status_code}")
+            if self._is_retryable_status(response.status_code):
+                self.retryable_statuses_count += 1
+                if self.retryable_statuses_count >= self.max_retryable_statuses or attempt > self.max_retries:
+                    self.aborted_by_rate_limit = True
+                    action = "stopped"
             self._record_error(
                 message=f"WB filters HTTP status {response.status_code}",
                 http_status=response.status_code,
@@ -160,17 +202,24 @@ class SearchPhraseParser:
         filters = data.get("data", {}).get("filters", [])
 
         for _filter in filters:
-            if _filter.get("name") == "Цена":
+            if _filter.get("name") in {"Цена", "Р¦РµРЅР°"}:
                 return _filter.get("minPriceU"), _filter.get("maxPriceU")
         return None, None
 
-    def get_price_range(self, data: json) -> DataPage | None:
+    def get_price_range(
+            self,
+            data: json,
+            fallback_min_price: int | None = None,
+            fallback_max_price: int | None = None) -> DataPage | None:
         if not data:
             logger.error("No data")
             return None
 
         total = self._get_total(data=data)
         min_price, max_price = self._get_min_max_price(data=data)
+
+        if total == 0 and fallback_min_price is not None and fallback_max_price is not None:
+            return DataPage(min_price=fallback_min_price, max_price=fallback_max_price, total=0)
 
         if total is None or min_price is None or max_price is None:
             logger.error("No enough data")
@@ -180,19 +229,33 @@ class SearchPhraseParser:
         return DataPage(min_price=min_price, max_price=max_price, total=total)
 
     def split_price_range(self, min_price, max_price, depth=0) -> list[DataPage]:
+        if self.aborted_by_rate_limit:
+            logger.warning("WB filters split stopped because proxy is rate limited")
+            return []
+
         if depth > self.max_split_depth:
             logger.warning("Превышена глубина дробления")
             return []
 
         if max_price - min_price <= self.min_step:
             logger.warning("Минимальный шаг достигнут")
+            self._begin_split_unit()
             res = self.fetch_data(add_params={"priceU": f'{min_price};{max_price}'})
-            data = self.get_price_range(res)
+            data = self.get_price_range(res, min_price, max_price)
+            self._finish_split_unit()
+
+            if self.aborted_by_rate_limit:
+                return []
 
             return [DataPage(min_price, max_price, data.total) if data else 0]
 
+        self._begin_split_unit()
         res = self.fetch_data(add_params={"priceU": f'{min_price};{max_price}'})
-        data = self.get_price_range(res)
+        data = self.get_price_range(res, min_price, max_price)
+        self._finish_split_unit()
+
+        if self.aborted_by_rate_limit:
+            return []
 
         if not data:
             logger.error("Нет данных")
@@ -215,6 +278,10 @@ class SearchPhraseParser:
         logger.info(f"Начало парсинга <{self.search_phrase}>")
 
         base_data = self.get_price_range(data=self.fetch_data())
+        if self.aborted_by_rate_limit:
+            logger.warning("WB filters parsing stopped because proxy is rate limited")
+            return []
+
         if not base_data:
             logger.error("Не удалось получить данные")
             return None
@@ -228,10 +295,16 @@ class SearchPhraseParser:
 
             logger.info(f"Диапазон: {start_price / 100} - {finish_price / 100}. Шаг {step / 100}")
 
+            self._begin_split_unit()
             res = self.fetch_data(
                 add_params={"priceU": f'{start_price};{finish_price}'}
             )
-            data = self.get_price_range(data=res)
+            data = self.get_price_range(data=res, fallback_min_price=start_price, fallback_max_price=finish_price)
+            self._finish_split_unit()
+
+            if self.aborted_by_rate_limit:
+                logger.warning("WB filters parsing stopped because proxy is rate limited")
+                return []
 
             if not data:
                 logger.warning("Нет данных")
@@ -268,6 +341,19 @@ class SearchPhraseParser:
         logger.info(f"Всего {len(result)} диапазонов")
         logger.info(result[1:5])
         return result
+
+
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError:
+        logger.warning(f"Invalid integer value for {name}: {raw_value!r}; using {default}")
+        return default
+    return value if value > 0 else default
+
 
 if __name__ == "__main__":
     from app.browser_sessions import get_token_for_proxy

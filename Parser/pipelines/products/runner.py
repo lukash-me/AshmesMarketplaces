@@ -46,8 +46,9 @@ from models import Items
 from run_scope import parser_run_scope_from_env
 from SearchPhraseParser import SearchPhraseParser
 from WbCatalogFetcher import WbCatalogFetcher
-from app.browser_sessions import COOKIE_NAME, get_token_for_proxy
+from app.browser_sessions import COOKIE_NAME, get_cookies_for_proxy
 from app.proxy_mapping import ProxyMapping
+from app.proxy_rate_limiter import global_sync_proxy_rate_limiter
 from app.proxy_transport import http_proxy_url_from_definition, requests_proxy_kwargs
 
 
@@ -165,7 +166,7 @@ def _resolve_explicit_niches_against_wb_menu(selected: list[dict[str, Any]]) -> 
     for item in selected:
         wb_leaf = available[(str(item.get("id") or "").strip(), str(item.get("searchQuery") or "").strip())]
         source_category = str(wb_leaf.get("sourceCategory") or item.get("sourceCategory") or "").strip()
-        source_subcategory = str(wb_leaf.get("sourceSubcategory") or wb_leaf.get("name") or item.get("name") or "").strip()
+        source_subcategory = str(item.get("name") or item.get("sourceSubcategory") or wb_leaf.get("sourceSubcategory") or wb_leaf.get("name") or "").strip()
         source_path = str(wb_leaf.get("sourcePath") or item.get("sourcePath") or source_subcategory).strip()
         resolved.append(
             {
@@ -187,7 +188,35 @@ def _category_source_category(config: ParserConfig, selected_category: dict[str,
 def _make_run_id() -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     commit = get_git_commit(BASE_DIR.parent)
+    proxy_scope = os.environ.get("PARSER_ONLY_PROXY", "").strip()
+    if proxy_scope:
+        safe_proxy_scope = re.sub(r"[^A-Za-z0-9]+", "_", proxy_scope).strip("_") or "proxy"
+        return f"wb_products_{timestamp}_{safe_proxy_scope}_{os.getpid()}_{commit}"
     return f"wb_products_{timestamp}_{commit}"
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _wait_after_price_split_before_catalog_fetch(proxy_key: str) -> float:
+    seconds = _env_float("PARSER_PRICE_SPLIT_TO_CATALOG_DELAY_SECONDS", 0.0)
+    jitter = _env_float("PARSER_PRICE_SPLIT_TO_CATALOG_JITTER_SECONDS", 0.0)
+    delay = max(0.0, seconds) + random.uniform(0.0, max(0.0, jitter))
+    if delay > 0:
+        logger.info(
+            "Waiting after price split before catalog fetch proxy={} delay_seconds={:.1f}",
+            proxy_key,
+            delay,
+        )
+        time.sleep(delay)
+    return delay
 
 
 def _make_manifest(config: ParserConfig, run_dir: Path, parser_run_id: str) -> RunManifest:
@@ -309,7 +338,9 @@ def _network_smoke_check(
             source_category=source_category,
             source_subcategory=first.get("name"),
         )
+        proxy_key = resolved_proxy.proxy.key if resolved_proxy else "direct"
         try:
+            global_sync_proxy_rate_limiter().wait(proxy_key)
             response = requests.get(STATIC_MENU_URL, timeout=config.timeout_seconds, **requests_proxy_kwargs(proxy_url))
             result["static_menu"] = {
                 "status": "ok" if response.status_code == 200 else "warning",
@@ -327,6 +358,14 @@ def _network_smoke_check(
                 details={"exception": str(exception)},
             )
 
+        if os.environ.get("PARSER_PROXY_PREFLIGHT_ENABLED", "").strip().lower() in {"1", "true", "yes", "y", "on"}:
+            result["filters_probe"] = {
+                "status": "skipped",
+                "reason": "Proxy preflight already validates marketplace access.",
+            }
+            result["status"] = "ok"
+            return result
+
         query = first.get("name") or first.get("searchQuery")
         parser = SearchPhraseParser(
             search_phrase=query,
@@ -342,6 +381,7 @@ def _network_smoke_check(
             source_category=source_category,
             source_subcategory=first.get("name"),
             proxy_url=proxy_url,
+            proxy_key=proxy_key,
         )
         probe = parser.fetch_data()
         result["filters_probe"] = {
@@ -380,7 +420,7 @@ def _acquire_cookies(
         return None
 
     try:
-        token = get_token_for_proxy(proxy_key, proxy)
+        cookies = get_cookies_for_proxy(proxy_key, proxy)
     except Exception as exception:
         manifest.token_acquisition_status = {"status": "failed", "proxyKey": proxy_key, "error": str(exception)}
         manifest.record_error(
@@ -393,8 +433,8 @@ def _acquire_cookies(
         )
         return None
 
-    manifest.token_acquisition_status = {"status": "ok" if token else "empty", "proxyKey": proxy_key}
-    return {COOKIE_NAME: token} if token else None
+    manifest.token_acquisition_status = {"status": "ok" if cookies and cookies.get(COOKIE_NAME) else "empty", "proxyKey": proxy_key}
+    return cookies
 
 
 def _write_raw_samples(run_dir: Path, subcategory_name: str, results: list[dict], limit: int) -> None:
@@ -422,6 +462,7 @@ def _run_parser_core(
     streaming_batch_size: int | None = None,
     batch_handler: Callable[[ProductDiscoveryBatch], ProductDiscoveryBatchResult | None] | None = None,
     resume_seen_product_ids: set[str] | None = None,
+    category_lifecycle_handler: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
     if streaming_batch_size is not None and streaming_batch_size <= 0:
         raise ValueError("streaming_batch_size must be positive.")
@@ -445,6 +486,58 @@ def _run_parser_core(
     streaming_batch_index = 0
     stop_discovery = False
     interrupted = False
+
+    def monitoring_planned_products(discovered_total: int | None) -> int:
+        total = max(0, int(discovered_total or 0))
+        raw_max_batches = os.environ.get("PARSER_MAX_STREAM_BATCHES")
+        try:
+            max_batches = int(raw_max_batches) if raw_max_batches else 0
+        except ValueError:
+            max_batches = 0
+        if max_batches > 0 and streaming_batch_size:
+            return max_batches * streaming_batch_size
+        return total
+
+    def emit_category_lifecycle(
+            *,
+            event: str,
+            proxy_key: str,
+            source_category: str,
+            source_subcategory: str,
+            status: str | None = None,
+            error: str | None = None,
+            planned_products_count: int = 0,
+            phase: str | None = None,
+            planned_ranges_count: int | None = None,
+            completed_ranges_count: int | None = None,
+            range_progress_percent: float | None = None) -> None:
+        if category_lifecycle_handler is None:
+            return
+        try:
+            category_lifecycle_handler(
+                {
+                    "event": event,
+                    "proxy_key": proxy_key,
+                    "source_category": source_category,
+                    "source_subcategory": source_subcategory,
+                    "status": status,
+                    "error": error,
+                    "planned_products_count": planned_products_count,
+                    "phase": phase,
+                    "planned_ranges_count": planned_ranges_count,
+                    "completed_ranges_count": completed_ranges_count,
+                    "range_progress_percent": range_progress_percent,
+                }
+            )
+        except Exception as exception:
+            manifest.record_error(
+                phase="category_lifecycle",
+                source_category=source_category,
+                source_subcategory=source_subcategory,
+                message="Category lifecycle handler failed.",
+                action="ignored",
+                details={"exception": str(exception), "event": event, "proxyKey": proxy_key},
+            )
 
     def flush_streaming_batch() -> bool:
         nonlocal pending_streaming_rows, streaming_batch_index
@@ -498,6 +591,7 @@ def _run_parser_core(
                 source_query=source_query,
                 status="running",
             )
+            proxy_key = "direct"
 
             try:
                 logger.info("Parsing subcategory: {}", subcategory_name)
@@ -506,17 +600,43 @@ def _run_parser_core(
                     source_category=source_category,
                     source_subcategory=subcategory_name,
                 )
+                proxy_key = resolved_proxy.proxy.key if resolved_proxy else "direct"
+                only_proxy = os.environ.get("PARSER_ONLY_PROXY", "").strip()
+                if only_proxy and proxy_key != only_proxy:
+                    raise RuntimeError(
+                        "Selected subcategory resolved to unexpected proxy "
+                        f"{proxy_key!r}; expected {only_proxy!r}."
+                    )
+                emit_category_lifecycle(
+                    event="start",
+                    proxy_key=proxy_key,
+                    source_category=source_category,
+                    source_subcategory=subcategory_name,
+                    planned_products_count=monitoring_planned_products(None),
+                    phase="ranges",
+                    planned_ranges_count=0,
+                    completed_ranges_count=0,
+                    range_progress_percent=0.0,
+                )
                 proxy_url = http_proxy_url_from_definition(resolved_proxy.proxy) if resolved_proxy else None
                 cookies = _acquire_cookies(
                     config,
                     manifest,
-                    proxy_key=resolved_proxy.proxy.key if resolved_proxy else "direct",
+                    proxy_key=proxy_key,
                     proxy=resolved_proxy.proxy if resolved_proxy else None,
                     source_category=source_category,
                     source_subcategory=subcategory_name,
                 )
                 if config.acquire_token and not cookies:
                     category_result.status = "failed"
+                    emit_category_lifecycle(
+                        event="finish",
+                        proxy_key=proxy_key,
+                        source_category=source_category,
+                        source_subcategory=subcategory_name,
+                        status="failed",
+                        error="Proxy-scoped token was not acquired.",
+                    )
                     manifest.record_error(
                         phase="token",
                         source_category=source_category,
@@ -524,7 +644,7 @@ def _run_parser_core(
                         source_query=source_query,
                         message="Proxy-scoped token was not acquired.",
                         action="skipped",
-                        details={"proxyKey": resolved_proxy.proxy.key if resolved_proxy else "direct"},
+                        details={"proxyKey": proxy_key},
                     )
                     manifest.add_category_result(category_result)
                     if config.fail_fast:
@@ -541,7 +661,25 @@ def _run_parser_core(
                 if smoke_direct_discovery and config.product_fetch_mode == "price_split":
                     logger.info("Smoke direct discovery enabled: skipping price split for {}", subcategory_name)
                 if price_split_enabled:
-                    price_ranges = SearchPhraseParser(
+                    def record_split_progress(
+                            *,
+                            processed_ranges: int,
+                            pending_ranges: int,
+                            progress_percent: float) -> None:
+                        planned_ranges = max(0, int(processed_ranges) + int(pending_ranges))
+                        emit_category_lifecycle(
+                            event="progress",
+                            proxy_key=proxy_key,
+                            source_category=source_category,
+                            source_subcategory=subcategory_name,
+                            planned_products_count=monitoring_planned_products(None),
+                            phase="ranges",
+                            planned_ranges_count=planned_ranges,
+                            completed_ranges_count=max(0, int(processed_ranges)),
+                            range_progress_percent=float(progress_percent),
+                        )
+
+                    price_split_parser = SearchPhraseParser(
                         search_phrase=source_query,
                         cookies=cookies,
                         dest=config.source_region_dest,
@@ -555,32 +693,65 @@ def _run_parser_core(
                         source_category=source_category,
                         source_subcategory=subcategory_name,
                         proxy_url=proxy_url,
-                    ).parse()
+                        proxy_key=proxy_key,
+                        split_progress_recorder=record_split_progress,
+                    )
+                    price_ranges = price_split_parser.parse()
 
                     if not price_ranges:
+                        no_ranges_error = "No price ranges were discovered."
+                        if price_split_parser.aborted_by_rate_limit:
+                            no_ranges_error = "WB filters rate limit while processing full price split."
                         category_result.status = "failed"
+                        emit_category_lifecycle(
+                            event="finish",
+                            proxy_key=proxy_key,
+                            source_category=source_category,
+                            source_subcategory=subcategory_name,
+                            status="failed",
+                            error=no_ranges_error,
+                        )
                         manifest.record_error(
                             phase="filters",
                             source_category=source_category,
                             source_subcategory=subcategory_name,
                             source_query=source_query,
-                            message="No price ranges were discovered.",
+                            message=no_ranges_error,
                             action="skipped",
                         )
                         manifest.add_category_result(category_result)
                         if config.fail_fast:
                             break
                         continue
+                    discovered_total = sum(
+                        max(0, int(getattr(price_range, "total", 0) or 0))
+                        for price_range in price_ranges
+                    )
+                    monitored_total = monitoring_planned_products(discovered_total)
+                    emit_category_lifecycle(
+                        event="progress",
+                        proxy_key=proxy_key,
+                        source_category=source_category,
+                        source_subcategory=subcategory_name,
+                        planned_products_count=monitored_total,
+                        phase="download",
+                        planned_ranges_count=len(price_ranges),
+                        completed_ranges_count=len(price_ranges),
+                        range_progress_percent=100.0,
+                    )
                 else:
                     price_ranges = []
                     manifest.record_warning("price_discovery_skipped")
+
+                if price_split_enabled and price_ranges:
+                    _wait_after_price_split_before_catalog_fetch(proxy_key)
 
                 fetcher = WbCatalogFetcher(
                     pages=price_ranges,
                     search_phrase=source_query,
                     cookies=cookies or {},
                     dest=config.source_region_dest,
-                    batch_size=config.batch_size,
+                    batch_size=config.catalog_request_group_size,
                     max_concurrent=config.max_concurrent,
                     timeout=config.timeout_seconds,
                     max_retries=config.max_retries,
@@ -602,6 +773,7 @@ def _run_parser_core(
                     source_category=source_category,
                     source_subcategory=subcategory_name,
                     proxy_url=proxy_url,
+                    proxy_key=proxy_key,
                 )
                 raw_samples: list[dict] = []
 
@@ -611,7 +783,7 @@ def _run_parser_core(
                         remaining = config.raw_sample_limit - len(raw_samples)
                         raw_samples.extend(result_batch[:remaining])
 
-                    product_models = []
+                    product_entries = []
                     for raw_data in result_batch:
                         if "products" not in raw_data:
                             manifest.record_error(
@@ -624,15 +796,44 @@ def _run_parser_core(
                             )
                             continue
 
-                        items_info = Items.model_validate(raw_data)
+                        range_id = raw_data.get("__parser_range_id")
+                        page_number = int(raw_data.get("__parser_page") or 1)
+                        page_count = int(raw_data.get("__parser_page_count") or page_number)
+                        start_offset = max(0, int(raw_data.get("__parser_start_offset") or 0))
+                        raw_products = list(raw_data.get("products") or [])
+                        raw_data_for_items = {
+                            **raw_data,
+                            "products": raw_products[start_offset:],
+                        }
+                        items_info = Items.model_validate(raw_data_for_items)
                         if items_info.products:
-                            product_models.extend(items_info.products)
+                            product_entries.extend(
+                                {
+                                    "product": product,
+                                    "range_id": range_id,
+                                    "page_number": page_number,
+                                    "page_count": page_count,
+                                    "absolute_offset": start_offset + index,
+                                    "raw_page_size": len(raw_products),
+                                }
+                                for index, product in enumerate(items_info.products)
+                            )
 
-                    product_models = add_images(product_models)
+                    product_models = add_images([item["product"] for item in product_entries])
                     if config.include_wb_wallet_prices:
                         product_models = add_price_with_wb_wallet(product_models)
 
-                    for product in product_models:
+                    for item_index, product in enumerate(product_models):
+                        metadata = product_entries[item_index]
+                        range_id = metadata.get("range_id")
+                        page_number = int(metadata.get("page_number") or 1)
+                        page_count = int(metadata.get("page_count") or page_number)
+                        absolute_offset = int(metadata.get("absolute_offset") or 0)
+                        raw_page_size = int(metadata.get("raw_page_size") or 0)
+
+                        def remember_cursor() -> None:
+                            return
+
                         if stop_discovery:
                             return False
                         if (
@@ -646,10 +847,12 @@ def _run_parser_core(
                         product_id = str(product.id)
                         key = (config.marketplace, product_id)
                         if key in seen_keys:
+                            remember_cursor()
                             category_result.duplicate_rows += 1
                             manifest.row_counts["duplicate_rows"] += 1
                             continue
                         if product_id in resume_seen:
+                            remember_cursor()
                             seen_keys.add(key)
                             category_result.duplicate_rows += 1
                             manifest.row_counts["duplicate_rows"] += 1
@@ -670,6 +873,7 @@ def _run_parser_core(
                         rows.append(row)
                         category_result.unique_rows += 1
                         manifest.row_counts["unique_rows"] += 1
+                        remember_cursor()
                         if streaming_batch_size is not None:
                             pending_streaming_rows.append(row)
                             if len(pending_streaming_rows) >= streaming_batch_size:
@@ -703,10 +907,31 @@ def _run_parser_core(
                     results = asyncio.run(fetcher.fetch_all())
                     process_result_batch(results)
 
+                if getattr(fetcher, "stop_requested", False):
+                    raise RuntimeError("WB catalog rate limit while fetching price ranges.")
+
+                if streaming_batch_size is not None and pending_streaming_rows:
+                    logger.info(
+                        "STREAM DISCOVERY category boundary flush products_seen={} pending_batch={}",
+                        manifest.row_counts["unique_rows"],
+                        len(pending_streaming_rows),
+                    )
+                    if not flush_streaming_batch():
+                        stop_discovery = True
+                    manifest.write()
+
                 if config.enable_raw_samples and raw_samples:
                     _write_raw_samples(run_dir, subcategory_name, raw_samples, config.raw_sample_limit)
 
                 category_result.status = "succeeded" if category_result.unique_rows else "partial"
+                emit_category_lifecycle(
+                    event="finish",
+                    proxy_key=proxy_key,
+                    source_category=source_category,
+                    source_subcategory=subcategory_name,
+                    status="completed" if category_result.unique_rows else "failed",
+                    error=None if category_result.unique_rows else "No products were discovered.",
+                )
                 manifest.add_category_result(category_result)
                 manifest.write()
                 if stop_discovery:
@@ -715,11 +940,30 @@ def _run_parser_core(
             except KeyboardInterrupt:
                 interrupted = True
                 category_result.status = "interrupted"
+                try:
+                    emit_category_lifecycle(
+                        event="finish",
+                        proxy_key=locals().get("proxy_key", "direct"),
+                        source_category=source_category,
+                        source_subcategory=subcategory_name,
+                        status="failed",
+                        error="Parser interrupted.",
+                    )
+                except Exception:
+                    pass
                 manifest.add_category_result(category_result)
                 raise
             except Exception as exception:
                 category_result.status = "failed"
                 category_result.error_count += 1
+                emit_category_lifecycle(
+                    event="finish",
+                    proxy_key=locals().get("proxy_key", "direct"),
+                    source_category=source_category,
+                    source_subcategory=subcategory_name,
+                    status="failed",
+                    error=str(exception),
+                )
                 manifest.record_error(
                     phase="subcategory",
                     source_category=source_category,
@@ -771,6 +1015,7 @@ def run_parser_streaming(
     *,
     smoke_only: bool = False,
     resume_seen_product_ids: set[str] | None = None,
+    category_lifecycle_handler: Callable[[dict[str, Any]], None] | None = None,
 ) -> Path:
     return _run_parser_core(
         config,
@@ -778,6 +1023,7 @@ def run_parser_streaming(
         streaming_batch_size=streaming_batch_size,
         batch_handler=batch_handler,
         resume_seen_product_ids=resume_seen_product_ids,
+        category_lifecycle_handler=category_lifecycle_handler,
     )
 
 

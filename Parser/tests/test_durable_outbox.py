@@ -205,7 +205,7 @@ class DurableBatchOutboxTests(unittest.TestCase):
             )
 
             outbox.start_proxy_run(
-                external_proxy_run_id="run-1",
+                external_proxy_run_id="market_refresh:proxy-1:Товары:Платья и сарафаны",
                 proxy_key="proxy-1",
                 source_category="category",
                 source_subcategory="niche",
@@ -213,12 +213,12 @@ class DurableBatchOutboxTests(unittest.TestCase):
                 downloaded_products_count=0,
             )
             outbox.update_proxy_run_progress(
-                external_proxy_run_id="run-1",
+                external_proxy_run_id="market_refresh:proxy-1:Товары:Платья и сарафаны",
                 planned_products_count=100,
                 downloaded_products_count=10,
             )
             outbox.finish_proxy_run(
-                external_proxy_run_id="run-1",
+                external_proxy_run_id="market_refresh:proxy-1:Товары:Платья и сарафаны",
                 status="completed",
                 planned_products_count=100,
                 downloaded_products_count=10,
@@ -226,8 +226,14 @@ class DurableBatchOutboxTests(unittest.TestCase):
 
         self.assertEqual([call[0] for call in calls], ["POST", "PATCH", "POST"])
         self.assertTrue(calls[0][1].endswith("/proxy-runs/start"))
-        self.assertTrue(calls[1][1].endswith("/proxy-runs/run-1/progress"))
-        self.assertTrue(calls[2][1].endswith("/proxy-runs/run-1/finish"))
+        self.assertIn(
+            "/proxy-runs/market_refresh%3Aproxy-1%3A%D0%A2%D0%BE%D0%B2%D0%B0%D1%80%D1%8B%3A%D0%9F%D0%BB%D0%B0%D1%82%D1%8C%D1%8F%20%D0%B8%20%D1%81%D0%B0%D1%80%D0%B0%D1%84%D0%B0%D0%BD%D1%8B/progress",
+            calls[1][1],
+        )
+        self.assertIn(
+            "/proxy-runs/market_refresh%3Aproxy-1%3A%D0%A2%D0%BE%D0%B2%D0%B0%D1%80%D1%8B%3A%D0%9F%D0%BB%D0%B0%D1%82%D1%8C%D1%8F%20%D0%B8%20%D1%81%D0%B0%D1%80%D0%B0%D1%84%D0%B0%D0%BD%D1%8B/finish",
+            calls[2][1],
+        )
         self.assertEqual(calls[0][2]["parserInstanceId"], "parser-a")
 
 

@@ -67,6 +67,7 @@ class ParserConfig:
     product_fetch_mode: str = "price_split"
     max_concurrent: int = 1
     batch_size: int = 5
+    catalog_request_group_size: int = 5
     timeout_seconds: int = 10
     max_retries: int = 2
     request_delay_min_seconds: float = 2.0
@@ -101,6 +102,11 @@ class ParserConfig:
             product_fetch_mode=_env_value(env_values, "PARSER_PRODUCT_FETCH_MODE", cls.product_fetch_mode),
             max_concurrent=_env_int(env_values, "PARSER_MAX_CONCURRENT", 1),
             batch_size=_env_int(env_values, "PARSER_BATCH_SIZE", 5),
+            catalog_request_group_size=_env_int(
+                env_values,
+                "PARSER_CATALOG_REQUEST_GROUP_SIZE",
+                _env_int(env_values, "PARSER_BATCH_SIZE", 5),
+            ),
             timeout_seconds=_env_int(env_values, "PARSER_TIMEOUT_SECONDS", 10),
             max_retries=_env_int(env_values, "PARSER_MAX_RETRIES", 2),
             request_delay_min_seconds=_env_float(env_values, "PARSER_REQUEST_DELAY_MIN_SECONDS", 2.0),
@@ -139,11 +145,14 @@ class ParserConfig:
         if any(item.strip() == "*" for item in self.subcategory_allowlist):
             raise ValueError("Wildcard subcategory allowlists are not allowed.")
 
-        if self.max_concurrent < 1 or self.max_concurrent > 2:
-            raise ValueError("PARSER_MAX_CONCURRENT must be 1 or 2 for the safe debug runner.")
+        if self.max_concurrent < 1 or self.max_concurrent > 3:
+            raise ValueError("PARSER_MAX_CONCURRENT must be between 1 and 3 for proxy-scoped parser runs.")
 
-        if self.batch_size < 1 or self.batch_size > 10:
-            raise ValueError("PARSER_BATCH_SIZE must be between 1 and 10 for the safe debug runner.")
+        if self.batch_size < 1 or self.batch_size > 100:
+            raise ValueError("PARSER_BATCH_SIZE must be between 1 and 100.")
+
+        if self.catalog_request_group_size < 1 or self.catalog_request_group_size > 100:
+            raise ValueError("PARSER_CATALOG_REQUEST_GROUP_SIZE must be between 1 and 100.")
 
         if self.max_retries < 0 or self.max_retries > 3:
             raise ValueError("PARSER_MAX_RETRIES must be between 0 and 3.")

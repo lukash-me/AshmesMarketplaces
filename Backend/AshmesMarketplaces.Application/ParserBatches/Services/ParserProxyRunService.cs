@@ -25,6 +25,7 @@ public sealed class ParserProxyRunService : IParserProxyRunService
 
         var now = DateTime.UtcNow;
         var parserInstanceId = request.ParserInstanceId.Trim();
+        var proxyKey = request.ProxyKey.Trim();
         await UpsertParserInstanceAsync(parserInstanceId, now, cancellationToken);
 
         var externalProxyRunId = request.ExternalProxyRunId.Trim();
@@ -34,26 +35,66 @@ public sealed class ParserProxyRunService : IParserProxyRunService
                      x.ExternalProxyRunId == externalProxyRunId,
                 cancellationToken);
 
-        if (run is null)
+        var isNewRun = run is null;
+        if (isNewRun)
         {
+            var existingRunningRun = await _dbContext.ParserProxyRuns
+                .AsNoTracking()
+                .Where(x => x.ParserInstanceId == parserInstanceId &&
+                            x.ProxyKey == proxyKey &&
+                            x.Status == ParserProxyRunStatuses.Running)
+                .OrderByDescending(x => x.StartedAtUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (existingRunningRun is not null)
+            {
+                return ServiceResult<ParserProxyRunResponse>.Conflict(
+                    $"Parser proxy '{proxyKey}' already has running process '{existingRunningRun.ExternalProxyRunId}'.");
+            }
+
             run = new ParserProxyRun(
                 parserInstanceId,
                 externalProxyRunId,
+                request.ParserCycleId,
+                request.CycleKind,
                 request.ProxyKey,
                 request.SourceCategory,
                 request.SourceSubcategory,
                 request.PlannedProductsCount,
                 request.DownloadedProductsCount,
-                now);
+                request.EgressIp,
+                request.TokenRef,
+                request.SessionStatus,
+                now,
+                request.Phase,
+                request.PlannedRangesCount ?? 0,
+                request.CompletedRangesCount ?? 0,
+                request.RangeProgressPercent ?? 0);
             _dbContext.ParserProxyRuns.Add(run);
         }
         else
         {
-            run.UpdateProgress(request.PlannedProductsCount, request.DownloadedProductsCount, now);
+            run!.UpdateSession(request.EgressIp, request.TokenRef, request.SessionStatus, now);
+            run.UpdateProgress(
+                request.PlannedProductsCount,
+                request.DownloadedProductsCount,
+                now,
+                request.Phase,
+                request.PlannedRangesCount,
+                request.CompletedRangesCount,
+                request.RangeProgressPercent);
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        return ServiceResult<ParserProxyRunResponse>.Success(Map(run));
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (isNewRun && IsRunningProxyUniqueViolation(exception))
+        {
+            return ServiceResult<ParserProxyRunResponse>.Conflict(
+                $"Parser proxy '{proxyKey}' already has running process.");
+        }
+
+        return ServiceResult<ParserProxyRunResponse>.Success(Map(run!));
     }
 
     public async Task<ServiceResult<ParserProxyRunResponse>> UpdateProgressAsync(
@@ -71,7 +112,14 @@ public sealed class ParserProxyRunService : IParserProxyRunService
 
         var now = DateTime.UtcNow;
         await UpsertParserInstanceAsync(request.ParserInstanceId.Trim(), now, cancellationToken);
-        run.UpdateProgress(request.PlannedProductsCount, request.DownloadedProductsCount, now);
+        run.UpdateProgress(
+            request.PlannedProductsCount,
+            request.DownloadedProductsCount,
+            now,
+            request.Phase,
+            request.PlannedRangesCount,
+            request.CompletedRangesCount,
+            request.RangeProgressPercent);
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ServiceResult<ParserProxyRunResponse>.Success(Map(run));
     }
@@ -176,14 +224,30 @@ public sealed class ParserProxyRunService : IParserProxyRunService
             run.Id,
             run.ParserInstanceId,
             run.ExternalProxyRunId,
+            run.ParserCycleId,
+            run.CycleKind,
             run.ProxyKey,
             run.SourceCategory,
             run.SourceSubcategory,
+            run.EgressIp,
+            run.TokenRef,
+            run.SessionStatus,
             run.Status,
+            run.Phase,
             run.PlannedProductsCount,
             run.DownloadedProductsCount,
+            run.PlannedRangesCount,
+            run.CompletedRangesCount,
+            run.RangeProgressPercent,
             run.StartedAtUtc,
             run.LastHeartbeatAtUtc,
             run.FinishedAtUtc,
             run.Error);
+
+    private static bool IsRunningProxyUniqueViolation(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains("IX_ParserProxyRuns_parser_instance_id_proxy_key", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("ParserProxyRuns_parser_instance_id_proxy_key", StringComparison.OrdinalIgnoreCase);
+    }
 }

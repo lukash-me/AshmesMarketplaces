@@ -254,6 +254,19 @@ class FakeBatchOutbox:
 
 
 class MarketRefreshRunnerTests(unittest.TestCase):
+    def test_pipeline_run_id_uses_proxy_scope_to_avoid_parallel_child_collisions(self) -> None:
+        previous = os.environ.get("PARSER_ONLY_PROXY")
+        try:
+            os.environ["PARSER_ONLY_PROXY"] = "proxy-2"
+            pipeline_id = runner._make_pipeline_run_id()
+        finally:
+            if previous is None:
+                os.environ.pop("PARSER_ONLY_PROXY", None)
+            else:
+                os.environ["PARSER_ONLY_PROXY"] = previous
+
+        self.assertIn("_proxy_2_", pipeline_id)
+
     def _config(
         self,
         temp_dir: Path,
@@ -517,6 +530,53 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["staging"]["status"], "succeeded")
         self.assertEqual([step["step"] for step in first_batch_manifest["steps"]], ["logistics", "reviews", "product_details"])
         self.assertTrue(all(step["output_run_dirs"] for step in first_batch_manifest["steps"]))
+
+    def test_batched_full_enrichment_propagates_failed_product_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 100, "worker_id": "worker-a", "shard_key": "three-niches"},
+            }
+            config.modes = dict(config.payload["modes"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+
+            def streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream_failed"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream_failed",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "failed",
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 0, "unique_rows": 0, "duplicate_rows": 0},
+                    "error_counts": {"filters": 1},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                (parent_dir / "products.jsonl").write_text("", encoding="utf-8")
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=False,
+                skip_rank=True,
+                executor=fake,
+                streaming_product_runner=streaming_runner,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+            products_record = next(step for step in manifest["steps"] if step["step_name"] == "products")
+
+        self.assertEqual(products_record["status"], "failed")
+        self.assertEqual(manifest["status"], "failed")
+        self.assertEqual(manifest["batching"]["total_batches"], 0)
 
     def test_batched_full_enrichment_streams_first_batch_before_discovery_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

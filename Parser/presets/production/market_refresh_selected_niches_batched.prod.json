@@ -1,75 +1,86 @@
 {
-  "pipeline_name": "selected_niches_market_refresh_batched",
-  "output_base_dir": "/parser-data/output",
-  "defaults": {
-    "fail_fast": false,
-    "ingestion": "disabled"
-  },
-  "modes": {
-    "batched_full_enrichment": {
-      "batching": {
-        "batch_size": 100,
-        "worker_id": "production-worker-1",
-        "shard_key": "production-selected-niches"
-      },
-      "proxy_mapping_file": "Parser/presets/production/proxy_mapping.json",
-      "product": {
-        "config": "Parser/presets/home_goods_demo.env",
-        "timeout_seconds": 86400,
-        "env": {
-          "PARSER_PRODUCT_FETCH_MODE": "price_split",
-          "PARSER_EXPLICIT_NICHES_FILE": "Parser/presets/production/wb_explicit_niches.prod.json",
-          "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "0",
-          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334",
-          "PARSER_INCLUDE_XLSX": "false",
-          "PARSER_MAX_CONCURRENT": "2",
-          "PARSER_BATCH_SIZE": "10",
-          "PARSER_REQUEST_DELAY_MIN_SECONDS": "0.3",
-          "PARSER_REQUEST_DELAY_MAX_SECONDS": "0.9",
-          "PARSER_BATCH_DELAY_MIN_SECONDS": "2",
-          "PARSER_BATCH_DELAY_MAX_SECONDS": "5",
-          "PARSER_OUTPUT_BASE_DIR": "/parser-data/output"
-        }
-      },
-      "rank": {
-        "config": "Parser/presets/production/home_goods_search_rank_demo.prod.json",
-        "timeout_seconds": 10800
-      },
-      "reviews": {
-        "config": "Parser/presets/home_goods_demo.env",
-        "timeout_seconds": 172800,
-        "max_concurrent": 5,
-        "source_subcategories": [
-          "Платья и сарафаны",
-          "Кеды и кроссовки",
-          "Органическая косметика"
-        ]
-      },
-      "logistics": {
-        "enabled": true,
-        "dest": "12354108",
-        "delay_ms": 300,
-        "timeout_sec": 10,
-        "retries": 1,
-        "max_concurrent": 6,
-        "checkpoint_interval": 100,
-        "retry_queue_passes": 1,
-        "adaptive_delay": true,
-        "timeout_seconds": 172800,
-        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
-        "delivery_profile": "nationwide_v1"
-      },
-      "product_details": {
-        "enabled": true,
-        "delay_ms": 250,
-        "timeout_sec": 10,
-        "retries": 1,
-        "max_concurrent": 6,
-        "checkpoint_interval": 100,
-        "retry_queue_passes": 1,
-        "adaptive_delay": true,
-        "timeout_seconds": 172800
-      }
-    }
-  }
+    "pipeline_name":  "selected_niches_market_refresh_batched",
+    "output_base_dir":  "/parser-data/output",
+    "defaults":  {
+                     "fail_fast":  false,
+                     "ingestion":  "disabled"
+                 },
+    "modes":  {
+                  "batched_full_enrichment":  {
+                                                  "batching":  {
+                                                                   "batch_size":  100,
+                                                                   "worker_id":  "production-worker-1",
+                                                                   "shard_key":  "production-selected-niches"
+                                                               },
+                                                  "proxy_mapping_file":  "Parser/presets/production/proxy_mapping.json",
+                                                  "product":  {
+                                                                  "config":  "Parser/presets/home_goods_demo.env",
+                                                                  "timeout_seconds":  86400,
+                                                                  "env":  {
+                                                                              "PARSER_PRODUCT_FETCH_MODE":  "price_split",
+                                                                              "PARSER_REQUIRE_PROXY_FOR_MARKETPLACE":  "true",
+                                                                              "PARSER_EXPLICIT_NICHES_FILE":  "Parser/presets/production/wb_explicit_niches.prod.json",
+                                                                              "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY":  "0",
+                                                                              "PARSER_MAX_ITEMS_PER_SUBCATEGORY":  "33334",
+                                                                              "PARSER_INCLUDE_XLSX":  "false",
+                                                                              "PARSER_MAX_CONCURRENT":  "2",
+                                                                              "PARSER_MAX_RETRIES":  "3",
+                                                                              "PARSER_CATALOG_REQUEST_GROUP_SIZE":  "10",
+                                                                              "PARSER_PROXY_MIN_REQUEST_GAP_SECONDS":  "0.3",
+                                                                              "PARSER_PROXY_REQUEST_JITTER_SECONDS":  "0.6",
+                                                                              "PARSER_FILTER_MIN_REQUEST_GAP_SECONDS":  "0.3",
+                                                                              "PARSER_FILTER_JITTER_SECONDS":  "0.6",
+                                                                              "PARSER_FILTERS_MAX_RETRYABLE_STATUSES":  "2",
+                                                                              "PARSER_RATE_LIMIT_STATE_DIR":  "/parser-data/output/rate_limits",
+                                                                              "PARSER_REQUEST_DELAY_MIN_SECONDS":  "0.3",
+                                                                              "PARSER_REQUEST_DELAY_MAX_SECONDS":  "0.9",
+                                                                              "PARSER_BATCH_DELAY_MIN_SECONDS":  "2",
+                                                                              "PARSER_BATCH_DELAY_MAX_SECONDS":  "5",
+                                                                              "PARSER_OUTPUT_BASE_DIR":  "/parser-data/output",
+                                                                              "PARSER_PRICE_SPLIT_TO_CATALOG_DELAY_SECONDS":  "10",
+                                                                              "PARSER_PRICE_SPLIT_TO_CATALOG_JITTER_SECONDS":  "0",
+                                                                              "PARSER_BATCH_QUEUE_URL":  "http://localhost:5019/api/v1/parser"
+                                                                          }
+                                                              },
+                                                  "rank":  {
+                                                               "config":  "Parser/presets/production/home_goods_search_rank_demo.prod.json",
+                                                               "timeout_seconds":  10800
+                                                           },
+                                                  "reviews":  {
+                                                                  "config":  "Parser/presets/home_goods_demo.env",
+                                                                  "timeout_seconds":  172800,
+                                                                  "max_concurrent":  5,
+                                                                  "source_subcategories":  [
+                                                                                               "Платья и сарафаны",
+                                                                                               "Мужские кеды и кроссовки",
+                                                                                               "Органическая косметика"
+                                                                                           ]
+                                                              },
+                                                  "logistics":  {
+                                                                    "enabled":  true,
+                                                                    "dest":  "12354108",
+                                                                    "delay_ms":  300,
+                                                                    "timeout_sec":  10,
+                                                                    "retries":  1,
+                                                                    "max_concurrent":  6,
+                                                                    "checkpoint_interval":  100,
+                                                                    "retry_queue_passes":  1,
+                                                                    "adaptive_delay":  true,
+                                                                    "timeout_seconds":  172800,
+                                                                    "delivery_profile_config":  "Parser/presets/delivery_profiles.json",
+                                                                    "delivery_profile":  "nationwide_v1"
+                                                                },
+                                                  "product_details":  {
+                                                                          "enabled":  true,
+                                                                          "delay_ms":  250,
+                                                                          "timeout_sec":  10,
+                                                                          "retries":  1,
+                                                                          "max_concurrent":  6,
+                                                                          "checkpoint_interval":  100,
+                                                                          "retry_queue_passes":  1,
+                                                                          "adaptive_delay":  true,
+                                                                          "timeout_seconds":  172800
+                                                                      }
+                                              }
+              }
 }

@@ -50,15 +50,27 @@ def current_http_proxy_url() -> str | None:
     return value.strip() if value and value.strip() else None
 
 
-def requests_proxy_kwargs(proxy_url: str | None = None) -> dict:
+def _require_proxy_for_marketplace() -> bool:
+    value = os.environ.get("PARSER_REQUIRE_PROXY_FOR_MARKETPLACE", "")
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _resolved_proxy_url(proxy_url: str | None, *, caller: str) -> str | None:
     url = proxy_url or current_http_proxy_url()
+    if not url and _require_proxy_for_marketplace():
+        raise RuntimeError(f"Marketplace proxy is required for {caller}, but no proxy URL is configured.")
+    return url
+
+
+def requests_proxy_kwargs(proxy_url: str | None = None) -> dict:
+    url = _resolved_proxy_url(proxy_url, caller="requests")
     if not url:
         return {}
     return {"proxies": {"http": url, "https": url}}
 
 
 def httpx_proxy_kwargs(proxy_url: str | None = None) -> dict:
-    url = proxy_url or current_http_proxy_url()
+    url = _resolved_proxy_url(proxy_url, caller="httpx")
     if not url:
         return {}
     return {"proxy": url}

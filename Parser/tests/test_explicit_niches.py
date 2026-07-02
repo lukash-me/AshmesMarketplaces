@@ -70,7 +70,7 @@ class ExplicitNichesTests(unittest.TestCase):
                 selected = runner._selected_subcategories(ParserConfig())
 
         self.assertEqual([item["sourceCategory"] for item in selected], ["Женщинам", "Обувь"])
-        self.assertEqual([item["name"] for item in selected], ["Платья и сарафаны", "Кеды и кроссовки"])
+        self.assertEqual([item["name"] for item in selected], ["Женские платья и сарафаны", "Мужские кеды и кроссовки"])
         self.assertEqual(
             [item["sourcePath"] for item in selected],
             ["Женщинам / Платья и сарафаны", "Обувь / Мужская / Кеды и кроссовки"],

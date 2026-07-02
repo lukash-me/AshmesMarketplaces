@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-vue-next';
 import PageHeader from '@/widgets/PageHeader.vue';
 
 import { getParserAdminInstances, getParserAdminJournal } from './parserAdminMonitoring.api';
-import type { ParserAdminInstance, ParserAdminProxyRunJournal } from './parserAdminMonitoring.types';
+import type { ParserAdminInstance, ParserAdminProxyRun, ParserAdminProxyRunJournal } from './parserAdminMonitoring.types';
 
 type ViewMode = 'instances' | 'journal';
 
@@ -89,25 +89,49 @@ function formatDuration(minutes: number | null | undefined): string {
 }
 
 function formatProgress(downloaded: number, planned: number): string {
-  return `${formatNumber(downloaded)}/${formatNumber(planned)}`;
+  const downloadedText = formatNumber(downloaded);
+  if (!planned || planned <= 0) {
+    return `${downloadedText}/—`;
+  }
+
+  return `${downloadedText}/${formatNumber(planned)}`;
 }
 
-function formatPercent(value: number): string {
-  return `${formatNumber(value, 1)}%`;
+function formatPercent(value: number | null | undefined): string {
+  return `${formatNumber(value ?? 0, 1)}%`;
 }
 
 function formatNumber(value: number, maximumFractionDigits = 0): string {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits }).format(value);
 }
 
-function statusLabel(status: string): string {
+function statusLabel(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'>): string {
+  if (item.status === 'running' && item.phase === 'ranges') {
+    return 'Диапазоны';
+  }
+  if (item.status === 'running' && item.phase === 'download') {
+    return 'Выгрузка';
+  }
+
   const labels: Record<string, string> = {
     running: 'Работает',
     completed: 'Закончил',
-    failed: 'Ошибка'
+    failed: 'Ошибка',
+    cooldown: 'Cooldown'
   };
 
-  return labels[status] ?? status;
+  return labels[item.status] ?? item.status;
+}
+
+function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'>): string {
+  if (item.status === 'running' && item.phase === 'ranges') {
+    return 'parser-admin__status--ranges';
+  }
+  if (item.status === 'running' && item.phase === 'download') {
+    return 'parser-admin__status--download';
+  }
+
+  return `parser-admin__status--${item.status}`;
 }
 </script>
 
@@ -177,13 +201,17 @@ function statusLabel(status: string): string {
               </span>
               <span class="parser-admin__metric">
                 <span>Статус</span>
-                <strong :class="`parser-admin__status parser-admin__status--${proxy.status}`">
-                  {{ statusLabel(proxy.status) }}
+                <strong :class="['parser-admin__status', statusClass(proxy)]">
+                  {{ statusLabel(proxy) }}
                 </strong>
               </span>
               <span class="parser-admin__metric">
                 <span>Прогресс</span>
                 <strong>{{ formatProgress(proxy.downloadedProductsCount, proxy.plannedProductsCount) }}</strong>
+              </span>
+              <span class="parser-admin__metric">
+                <span>Диапазоны</span>
+                <strong>{{ formatPercent(proxy.rangeProgressPercent) }}</strong>
               </span>
               <span class="parser-admin__metric">
                 <span>Выполнено</span>
@@ -192,6 +220,14 @@ function statusLabel(status: string): string {
               <span class="parser-admin__metric">
                 <span>Время работы</span>
                 <strong>{{ formatDuration(proxy.runtimeMinutes) }}</strong>
+              </span>
+              <span class="parser-admin__metric">
+                <span>IP</span>
+                <strong>{{ proxy.egressIp || '—' }}</strong>
+              </span>
+              <span class="parser-admin__metric">
+                <span>Последний запуск</span>
+                <strong>{{ formatDate(proxy.startedAtUtc) }}</strong>
               </span>
             </div>
           </div>
@@ -207,11 +243,13 @@ function statusLabel(status: string): string {
           <thead>
             <tr>
               <th>Прокси</th>
+              <th>Статус</th>
               <th>Начало</th>
               <th>Завершение</th>
               <th>Инстанс</th>
               <th>Выгружено</th>
               <th>Запланировано</th>
+              <th>IP</th>
               <th>Время</th>
               <th>Ошибка</th>
             </tr>
@@ -222,11 +260,17 @@ function statusLabel(status: string): string {
                 <strong>{{ item.proxyKey }}</strong>
                 <span>{{ item.sourceSubcategory }}</span>
               </td>
+              <td>
+                <strong :class="['parser-admin__status', statusClass(item)]">
+                  {{ statusLabel(item) }}
+                </strong>
+              </td>
               <td>{{ formatDate(item.startedAtUtc) }}</td>
               <td>{{ formatDate(item.finishedAtUtc) }}</td>
               <td>{{ item.parserInstanceId }}</td>
               <td>{{ formatNumber(item.downloadedProductsCount) }}</td>
               <td>{{ formatNumber(item.plannedProductsCount) }}</td>
+              <td>{{ item.egressIp || '—' }}</td>
               <td>{{ formatDuration(item.runtimeMinutes) }}</td>
               <td>{{ item.error || '—' }}</td>
             </tr>
@@ -376,7 +420,7 @@ function statusLabel(status: string): string {
 }
 
 .parser-admin__proxy {
-  grid-template-columns: minmax(220px, 1.3fr) repeat(4, minmax(130px, 1fr));
+  grid-template-columns: minmax(190px, 1.2fr) repeat(7, minmax(100px, 1fr));
   border-top: 1px solid var(--color-border-muted);
 }
 
@@ -403,7 +447,10 @@ function statusLabel(status: string): string {
   color: #9f1239;
 }
 
-.parser-admin__status--running {
+.parser-admin__status--running,
+.parser-admin__status--ranges,
+.parser-admin__status--download,
+.parser-admin__status--cooldown {
   background: rgba(217, 119, 6, 0.12);
   color: #9a3412;
 }
@@ -414,7 +461,7 @@ function statusLabel(status: string): string {
 
 .parser-admin__table {
   width: 100%;
-  min-width: 920px;
+  min-width: 1120px;
   border-collapse: collapse;
 }
 
@@ -435,6 +482,12 @@ function statusLabel(status: string): string {
 .parser-admin__empty,
 .parser-admin__empty-row {
   padding: var(--space-4);
+}
+
+@media (max-width: 1450px) {
+  .parser-admin__proxy {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
 }
 
 @media (max-width: 1100px) {

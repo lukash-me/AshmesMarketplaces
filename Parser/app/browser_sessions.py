@@ -215,7 +215,20 @@ def get_cookies_for_proxy(
     user_agent: str | None = None,
 ) -> dict[str, str] | None:
     token = get_token_for_proxy(proxy_key, proxy, user_agent=user_agent)
-    return {COOKIE_NAME: token} if token else None
+    if not token:
+        return None
+
+    cached = _read_cache(proxy_session_cache_path(proxy_key)) or {}
+    cookies: dict[str, str] = {}
+    for cookie in cached.get("cookies") or []:
+        if not isinstance(cookie, dict):
+            continue
+        name = str(cookie.get("name") or "").strip()
+        value = cookie.get("value")
+        if name and value is not None:
+            cookies[name] = str(value)
+    cookies[COOKIE_NAME] = token
+    return cookies
 
 
 def invalidate_proxy_session(proxy_key: str, *, reason: str | None = None) -> None:

@@ -227,7 +227,7 @@ services:
         condition: service_healthy
     working_dir: /app
     command: >
-      /bin/sh -c "python Parser/app/cycle_runner.py
+      /bin/sh -c "python Parser/app/proxy_supervisor.py
       --config Parser/presets/production/market_refresh_selected_niches_batched.prod.json
       --mode batched_full_enrichment"
     networks:

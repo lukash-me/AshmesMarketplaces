@@ -75,6 +75,8 @@ public sealed class ParserAdminMonitoringServiceTests
             new ParserProxyRunStartRequest(
                 "parser-1",
                 "run-1",
+                null,
+                null,
                 "proxy-1",
                 "category",
                 "niche",
@@ -85,15 +87,17 @@ public sealed class ParserAdminMonitoringServiceTests
             new ParserProxyRunStartRequest(
                 "parser-1",
                 "run-1",
+                null,
+                null,
                 "proxy-1",
                 "category",
                 "niche",
-                100,
+                300,
                 5),
             CancellationToken.None);
         var progress = await service.UpdateProgressAsync(
             "run-1",
-            new ParserProxyRunProgressRequest("parser-1", 100, 20),
+            new ParserProxyRunProgressRequest("parser-1", 300, 20),
             CancellationToken.None);
 
         Assert.True(first.IsSuccess);
@@ -101,6 +105,44 @@ public sealed class ParserAdminMonitoringServiceTests
         Assert.True(progress.IsSuccess);
         Assert.Equal(first.Value!.Id, duplicate.Value!.Id);
         Assert.Equal(20, progress.Value!.DownloadedProductsCount);
+        Assert.Equal(300, progress.Value!.PlannedProductsCount);
+        Assert.Equal(1, await context.ParserProxyRuns.CountAsync());
+    }
+
+    [Fact]
+    public async Task ProxyRunLifecycle_rejects_second_running_run_for_same_proxy()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProxyRunService(context);
+
+        var first = await service.StartAsync(
+            new ParserProxyRunStartRequest(
+                "parser-1",
+                "cycle-1:proxy-1:category:niche",
+                "cycle-1",
+                ParserProxyRunCycleKinds.Production,
+                "proxy-1",
+                "category",
+                "niche",
+                300,
+                0),
+            CancellationToken.None);
+        var second = await service.StartAsync(
+            new ParserProxyRunStartRequest(
+                "parser-1",
+                "cycle-2:proxy-1:category:niche",
+                "cycle-2",
+                ParserProxyRunCycleKinds.Production,
+                "proxy-1",
+                "category",
+                "niche",
+                300,
+                0),
+            CancellationToken.None);
+
+        Assert.True(first.IsSuccess);
+        Assert.False(second.IsSuccess);
+        Assert.Equal(ServiceErrorType.Conflict, second.Error?.Type);
         Assert.Equal(1, await context.ParserProxyRuns.CountAsync());
     }
 
@@ -111,7 +153,7 @@ public sealed class ParserAdminMonitoringServiceTests
         var adminRole = await SeedRoleAsync(context, "Admin");
         var lifecycle = new ParserProxyRunService(context);
         await lifecycle.StartAsync(
-            new ParserProxyRunStartRequest("parser-1", "run-1", "proxy-1", "category", "niche", 100, 10),
+            new ParserProxyRunStartRequest("parser-1", "run-1", null, null, "proxy-1", "category", "niche", 100, 10),
             CancellationToken.None);
         await lifecycle.FinishAsync(
             "run-1",
@@ -126,6 +168,88 @@ public sealed class ParserAdminMonitoringServiceTests
         Assert.Equal("proxy-1", item.ProxyKey);
         Assert.Equal(ParserProxyRunStatuses.Completed, item.Status);
         Assert.Equal(100, item.DownloadedProductsCount);
+    }
+
+    [Fact]
+    public async Task GetInstancesAsync_shows_latest_actual_cycle_without_preferring_full_old_cycle()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        context.ParserInstances.Add(new ParserInstance("parser-1", "parser-1", DateTime.UtcNow.AddMinutes(-20)));
+        var fullCycleStartedAt = DateTime.UtcNow.AddMinutes(-10);
+        var oldRun1 = new ParserProxyRun(
+            "parser-1",
+            "cycle-full:proxy-1:category:niche-1",
+            "cycle-full",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-1",
+            "category",
+            "niche-1",
+            100,
+            100,
+            null,
+            null,
+            null,
+            fullCycleStartedAt);
+        oldRun1.Complete(100, 100, fullCycleStartedAt.AddMinutes(1));
+        context.ParserProxyRuns.Add(oldRun1);
+        var oldRun2 = new ParserProxyRun(
+            "parser-1",
+            "cycle-full:proxy-2:category:niche-2",
+            "cycle-full",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-2",
+            "category",
+            "niche-2",
+            100,
+            100,
+            null,
+            null,
+            null,
+            fullCycleStartedAt.AddSeconds(1));
+        oldRun2.Complete(100, 100, fullCycleStartedAt.AddMinutes(1));
+        context.ParserProxyRuns.Add(oldRun2);
+        var oldRun3 = new ParserProxyRun(
+            "parser-1",
+            "cycle-full:proxy-3:category:niche-3",
+            "cycle-full",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-3",
+            "category",
+            "niche-3",
+            100,
+            100,
+            null,
+            null,
+            null,
+            fullCycleStartedAt.AddSeconds(2));
+        oldRun3.Complete(100, 100, fullCycleStartedAt.AddMinutes(1));
+        context.ParserProxyRuns.Add(oldRun3);
+        context.ParserProxyRuns.Add(new ParserProxyRun(
+            "parser-1",
+            "cycle-single:proxy-1:category:niche-1",
+            "cycle-single",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-1",
+            "category",
+            "niche-1",
+            100,
+            100,
+            null,
+            null,
+            null,
+            DateTime.UtcNow));
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetInstancesAsync(CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var instance = Assert.Single(result.Value!);
+        Assert.Equal(1, instance.TotalProxiesCount);
+        var proxy = Assert.Single(instance.Proxies);
+        Assert.Equal("proxy-1", proxy.ProxyKey);
+        Assert.Equal("cycle-single", proxy.ParserCycleId);
     }
 
     private static async Task<Role> SeedRoleAsync(ApplicationDbContext context, string name)
@@ -161,6 +285,9 @@ public sealed class ParserAdminMonitoringServiceTests
             "test-subcategory",
             10,
             10,
+            "203.0.113.10",
+            "token...ref",
+            "valid",
             DateTime.UtcNow));
         await context.SaveChangesAsync();
     }
@@ -201,6 +328,8 @@ public sealed class ParserAdminMonitoringServiceTests
                 typeof(ParserInstance),
                 typeof(ParserProxyRun),
                 typeof(ParserNicheAssignment),
+                typeof(ParserPriceSplitJob),
+                typeof(ParserPriceSplitRange),
                 typeof(ParserBatchSubmission),
                 typeof(ParserBatchArtifact),
                 typeof(ParserBatchSubmissionEvent)
@@ -228,6 +357,16 @@ public sealed class ParserAdminMonitoringServiceTests
                 builder.Property(x => x.Id).ValueGeneratedNever();
             });
             modelBuilder.Entity<ParserNicheAssignment>(builder =>
+            {
+                builder.HasKey(x => x.Id);
+                builder.Property(x => x.Id).ValueGeneratedNever();
+            });
+            modelBuilder.Entity<ParserPriceSplitJob>(builder =>
+            {
+                builder.HasKey(x => x.Id);
+                builder.Property(x => x.Id).ValueGeneratedNever();
+            });
+            modelBuilder.Entity<ParserPriceSplitRange>(builder =>
             {
                 builder.HasKey(x => x.Id);
                 builder.Property(x => x.Id).ValueGeneratedNever();

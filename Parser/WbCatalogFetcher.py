@@ -1,16 +1,30 @@
 import asyncio
 import math
+import os
 
 import httpx
 
 from loguru import logger
-from common_data import HEADERS
+from common_data import headers_with_wbaas_token
 from dto import DataPage
 from typing import List
 from SearchPhraseParser import SearchPhraseParser
 import random
 from typing import Callable
 from app.proxy_transport import httpx_proxy_kwargs
+from app.proxy_rate_limiter import AsyncProxyRateLimiter, global_proxy_rate_limiter
+from app.browser_sessions import invalidate_proxy_session
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if not value or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
 
 class WbCatalogFetcher:
     def __init__(self,
@@ -33,13 +47,15 @@ class WbCatalogFetcher:
                  backoff_recorder: Callable | None=None,
                  source_category: str | None=None,
                  source_subcategory: str | None=None,
-                 proxy_url: str | None=None):
+                 proxy_url: str | None=None,
+                 proxy_key: str | None=None,
+                 rate_limiter: AsyncProxyRateLimiter | None=None):
 
         self.pages = pages
         self.search_phrase = search_phrase
         self.cookies = cookies
         self.dest = dest
-        self.headers = HEADERS
+        self.headers = headers_with_wbaas_token(cookies)
 
         self.batch_size = batch_size
         self.semaphore = asyncio.Semaphore(max_concurrent)
@@ -57,8 +73,25 @@ class WbCatalogFetcher:
         self.source_category = source_category
         self.source_subcategory = source_subcategory
         self.proxy_url = proxy_url
+        self.proxy_key = (proxy_key or "direct").strip() or "direct"
+        self.rate_limiter = rate_limiter or global_proxy_rate_limiter()
+        self.post_request_gap_seconds = _env_float(
+            "PARSER_PROXY_POST_REQUEST_GAP_SECONDS",
+            0.0,
+        )
+        self.post_request_jitter_seconds = _env_float(
+            "PARSER_PROXY_POST_REQUEST_JITTER_SECONDS",
+            0.0,
+        )
         self.limit_signals = 0
         self.stop_requested = False
+
+    async def _post_request_delay(self) -> None:
+        seconds = max(0.0, float(self.post_request_gap_seconds))
+        jitter = random.uniform(0.0, max(0.0, float(self.post_request_jitter_seconds)))
+        delay = seconds + jitter
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     def _record_error(
             self,
@@ -120,12 +153,18 @@ class WbCatalogFetcher:
 
         for page in self.pages:
             page_count = math.ceil(page.total / 100)
+            start_page = max(1, int(getattr(page, "next_page", 1) or 1))
+            start_offset = max(0, int(getattr(page, "next_item_offset", 0) or 0))
+            range_id = getattr(page, "range_id", None)
 
-            for page_num in range(1, page_count+1):
+            for page_num in range(start_page, page_count+1):
                 tasks.append({
                     "min_price": page.min_price,
                     "max_price": page.max_price,
                     "page": page_num,
+                    "range_id": range_id,
+                    "page_count": page_count,
+                    "start_offset": start_offset if page_num == start_page else 0,
                 })
 
                 if self.max_catalog_pages and len(tasks) >= self.max_catalog_pages:
@@ -171,9 +210,7 @@ class WbCatalogFetcher:
 
             try:
                 async with self.semaphore:
-                    delay_min, delay_max = self.request_delay_bounds
-                    if delay_max > 0:
-                        await asyncio.sleep(random.uniform(delay_min, delay_max))
+                    await self.rate_limiter.wait(self.proxy_key)
 
                     if self.attempt_recorder:
                         self.attempt_recorder()
@@ -185,6 +222,7 @@ class WbCatalogFetcher:
                         headers=self.headers,
                         timeout=self.timeout
                     )
+                    await self._post_request_delay()
                     if response.status_code == 200:
                         try:
                             data = response.json()
@@ -211,6 +249,10 @@ class WbCatalogFetcher:
                             return None
 
                         if "products" in data:
+                            data["__parser_range_id"] = task.get("range_id")
+                            data["__parser_page"] = task.get("page")
+                            data["__parser_page_count"] = task.get("page_count")
+                            data["__parser_start_offset"] = task.get("start_offset") or 0
                             logger.debug(self._task_label(task))
                             return data
                         else:
@@ -222,6 +264,11 @@ class WbCatalogFetcher:
                     else:
                         logger.warning(f"status={response.status_code} "
                                        f"page={task['page']} | attempt={attempt}")
+                        if response.status_code in {401, 403, 498}:
+                            invalidate_proxy_session(
+                                self.proxy_key,
+                                reason=f"WB catalog HTTP status {response.status_code}",
+                            )
                         if self._is_retryable_status(response.status_code):
                             self._mark_limit_signal()
                         self._record_error(
@@ -231,6 +278,7 @@ class WbCatalogFetcher:
                             action="retry" if attempt < max_attempts else "stopped")
 
             except httpx.RequestError as err:
+                await self._post_request_delay()
                 logger.error(err)
                 self._record_error(
                     message=str(err),

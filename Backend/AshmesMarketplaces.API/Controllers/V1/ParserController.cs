@@ -22,6 +22,7 @@ public sealed class ParserController : ControllerBase
     private readonly IPublicProductAvailabilityReadService _productAvailabilityReadService;
     private readonly IParserBatchQueueService _parserBatchQueueService;
     private readonly IParserProxyRunService _parserProxyRunService;
+    private readonly IParserPriceSplitQueueService _parserPriceSplitQueueService;
 
     public ParserController(
         IParserProductReadService productReadService,
@@ -31,7 +32,8 @@ public sealed class ParserController : ControllerBase
         IParserObservedMarketEventReadService observedMarketEventReadService,
         IPublicProductAvailabilityReadService productAvailabilityReadService,
         IParserBatchQueueService parserBatchQueueService,
-        IParserProxyRunService parserProxyRunService)
+        IParserProxyRunService parserProxyRunService,
+        IParserPriceSplitQueueService parserPriceSplitQueueService)
     {
         _productReadService = productReadService;
         _reviewReadService = reviewReadService;
@@ -41,6 +43,73 @@ public sealed class ParserController : ControllerBase
         _productAvailabilityReadService = productAvailabilityReadService;
         _parserBatchQueueService = parserBatchQueueService;
         _parserProxyRunService = parserProxyRunService;
+        _parserPriceSplitQueueService = parserPriceSplitQueueService;
+    }
+
+    [HttpPost("price-split/jobs/ensure")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserPriceSplitJobResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserPriceSplitJobResponse>> EnsurePriceSplitJob(
+        [FromBody] ParserPriceSplitEnsureJobRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserPriceSplitQueueService.EnsureJobAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("price-split/jobs/current")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserPriceSplitJobResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserPriceSplitJobResponse>> GetCurrentPriceSplitJob(
+        [FromBody] ParserPriceSplitCurrentJobRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserPriceSplitQueueService.GetCurrentJobAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("price-split/ranges/claim")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserPriceSplitClaimRangesResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserPriceSplitClaimRangesResponse>> ClaimPriceSplitRanges(
+        [FromBody] ParserPriceSplitClaimRangesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserPriceSplitQueueService.ClaimRangesAsync(request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPatch("price-split/ranges/{id:guid}")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserPriceSplitRangeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserPriceSplitRangeResponse>> UpdatePriceSplitRange(
+        Guid id,
+        [FromBody] ParserPriceSplitUpdateRangeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserPriceSplitQueueService.UpdateRangeAsync(id, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("price-split/ranges/{id:guid}/split")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserPriceSplitRangeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserPriceSplitRangeResponse>> SplitPriceSplitRange(
+        Guid id,
+        [FromBody] ParserPriceSplitSplitRangeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _parserPriceSplitQueueService.SplitRangeAsync(id, request, cancellationToken);
+        return ToActionResult(result);
     }
 
     [HttpPost("proxy-runs/start")]
@@ -94,6 +163,7 @@ public sealed class ParserController : ControllerBase
 
     [HttpPost("batches")]
     [AllowAnonymous]
+    [RequestSizeLimit(268_435_456)]
     [ProducesResponseType(typeof(ParserBatchSubmitResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]

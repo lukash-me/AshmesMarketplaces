@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -20,9 +21,11 @@ from manifest import get_git_commit, utc_now_iso
 
 try:
     from app.proxy_mapping import ProxyMapping, ProxyScheduler
+    from app.proxy_preflight import ProxyPreflightError, format_proxy_preflight_result, run_proxy_preflight
     from app.proxy_transport import http_proxy_url_from_definition
 except ImportError:  # pragma: no cover - direct script execution from Parser/app
     from proxy_mapping import ProxyMapping, ProxyScheduler
+    from proxy_preflight import ProxyPreflightError, format_proxy_preflight_result, run_proxy_preflight
     from proxy_transport import http_proxy_url_from_definition
 
 
@@ -37,6 +40,10 @@ INGESTION_CLI_PROJECT = Path("Backend") / "AshmesMarketplaces.ParserIngestionCli
 def _make_pipeline_run_id() -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     commit = get_git_commit(BASE_DIR.parent)
+    proxy_scope = os.environ.get("PARSER_ONLY_PROXY", "").strip()
+    if proxy_scope:
+        safe_proxy_scope = re.sub(r"[^A-Za-z0-9]+", "_", proxy_scope).strip("_")
+        return f"market_refresh_{timestamp}_{safe_proxy_scope}_{os.getpid()}_{commit}"
     return f"market_refresh_{timestamp}_{commit}"
 
 
@@ -1097,6 +1104,37 @@ def _load_proxy_mapping(config: PipelineConfig, mode_config: dict[str, Any], rep
     return ProxyMapping.local_default(os.environ.get("PARSER_PROXY_KEY") or "local")
 
 
+def _enabled_http_proxies(proxy_mapping: ProxyMapping) -> list[Any]:
+    proxy_keys = []
+    seen: set[str] = set()
+    for assignment in proxy_mapping.assignments:
+        if not assignment.enabled or assignment.proxy_key in seen:
+            continue
+        proxy = proxy_mapping.proxies.get(assignment.proxy_key)
+        if proxy and proxy.type == "http-proxy":
+            proxy_keys.append(proxy.key)
+            seen.add(proxy.key)
+    return [proxy_mapping.proxies[key] for key in proxy_keys]
+
+
+def _run_proxy_preflight(proxy_mapping: ProxyMapping) -> dict[str, Any]:
+    proxies = _enabled_http_proxies(proxy_mapping)
+    if not proxies:
+        return {"status": "skipped", "reason": "no enabled http proxy assignments", "items": []}
+    result = run_proxy_preflight(proxies)
+    return {"status": "ok", "items": format_proxy_preflight_result(result)}
+
+
+def _proxy_preflight_enabled() -> bool:
+    skip_value = os.environ.get("PARSER_SKIP_PIPELINE_PROXY_PREFLIGHT")
+    if skip_value and skip_value.strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+    value = os.environ.get("PARSER_PROXY_PREFLIGHT_ENABLED")
+    if value is None:
+        return True
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _product_ids_from_run(product_run_dir: Path) -> set[str]:
     return {
         str(row.get("wb_product_id"))
@@ -1882,9 +1920,39 @@ def _run_batched_pipeline(
             "disabled_batches": int(existing_proxy.get("disabled_batches") or 0),
             "cooldown_batches": int(existing_proxy.get("cooldown_batches") or 0),
             "last_error": existing_proxy.get("last_error"),
+            "preflight": existing_proxy.get("preflight"),
         },
     }
     _write_manifest(pipeline_run_dir, manifest)
+    if _proxy_preflight_enabled():
+        try:
+            preflight = _run_proxy_preflight(proxy_mapping)
+            manifest["batching"]["proxy"]["preflight"] = preflight
+            _emit_pipeline(pipeline_run_dir, f"PROXY PREFLIGHT {preflight.get('status')}: {preflight.get('items') or preflight.get('reason')}")
+            _write_manifest(pipeline_run_dir, manifest)
+        except ProxyPreflightError as exception:
+            manifest["batching"]["proxy"]["preflight"] = {"status": "failed", "error": str(exception)}
+            manifest["batching"]["proxy"]["last_error"] = str(exception)
+            _emit_pipeline(pipeline_run_dir, f"PROXY PREFLIGHT FAILED: {exception}")
+            _write_manifest(pipeline_run_dir, manifest)
+            return
+    preflight_items_by_proxy = {
+        str(item.get("proxyKey")): item
+        for item in ((manifest["batching"]["proxy"].get("preflight") or {}).get("items") or [])
+        if item.get("proxyKey")
+    }
+    env_proxy_key = os.environ.get("PARSER_ONLY_PROXY", "").strip() or os.environ.get("PARSER_PROXY_KEY", "").strip()
+    if env_proxy_key and env_proxy_key not in preflight_items_by_proxy:
+        env_egress_ip = os.environ.get("PARSER_PROXY_EGRESS_IP", "").strip()
+        env_token_ref = os.environ.get("PARSER_PROXY_TOKEN_REF", "").strip()
+        env_session_status = os.environ.get("PARSER_PROXY_SESSION_STATUS", "").strip()
+        if env_egress_ip or env_token_ref or env_session_status:
+            preflight_items_by_proxy[env_proxy_key] = {
+                "proxyKey": env_proxy_key,
+                "egressIp": env_egress_ip,
+                "tokenRef": env_token_ref,
+                "status": env_session_status or "valid",
+            }
     if effective_batch_outbox:
         try:
             effective_batch_outbox.send_pending_once()
@@ -1982,16 +2050,52 @@ def _run_batched_pipeline(
         def proxy_run_id(proxy_key: str, source_category: str, source_subcategory: str) -> str:
             return f"{pipeline_run_id}:{proxy_key}:{source_category}:{source_subcategory}"
 
+        parser_cycle_id = os.environ.get("PARSER_CYCLE_ID", "").strip() or pipeline_run_id
+        parser_cycle_kind = os.environ.get("PARSER_CYCLE_KIND", "").strip() or "legacy"
+
         def notify_proxy_run_start(
             *,
             proxy_key: str,
             source_category: str,
             source_subcategory: str,
             planned_products_count: int,
+            phase: str | None = None,
+            planned_ranges_count: int | None = None,
+            completed_ranges_count: int | None = None,
+            range_progress_percent: float | None = None,
         ) -> dict[str, Any]:
             key = proxy_run_key(proxy_key, source_category, source_subcategory)
             state = proxy_run_state.get(key)
             if state is not None:
+                planned = max(0, int(planned_products_count))
+                if planned > int(state.get("planned") or 0):
+                    state["planned"] = planned
+                if phase:
+                    state["phase"] = phase
+                if planned_ranges_count is not None:
+                    state["planned_ranges"] = max(0, int(planned_ranges_count))
+                if completed_ranges_count is not None:
+                    state["completed_ranges"] = max(0, int(completed_ranges_count))
+                if range_progress_percent is not None:
+                    state["range_progress_percent"] = max(0.0, min(100.0, float(range_progress_percent)))
+                if effective_batch_outbox and hasattr(effective_batch_outbox, "update_proxy_run_progress"):
+                    try:
+                        effective_batch_outbox.update_proxy_run_progress(
+                            external_proxy_run_id=state["external_proxy_run_id"],
+                            planned_products_count=state["planned"],
+                            downloaded_products_count=state["downloaded"],
+                            phase=state.get("phase"),
+                            planned_ranges_count=state.get("planned_ranges"),
+                            completed_ranges_count=state.get("completed_ranges"),
+                            range_progress_percent=state.get("range_progress_percent"),
+                        )
+                    except Exception as exception:
+                        manifest["batching"]["outbox"]["last_error"] = str(exception)
+                        _emit_pipeline(
+                            pipeline_run_dir,
+                            f"PROXY RUN PLAN UPDATE FAILED: proxy={proxy_key} error={exception}",
+                        )
+                        raise
                 return state
 
             state = {
@@ -2003,34 +2107,70 @@ def _run_batched_pipeline(
                 "downloaded": 0,
                 "status": "running",
                 "error": None,
+                "phase": phase or "ranges",
+                "planned_ranges": max(0, int(planned_ranges_count or 0)),
+                "completed_ranges": max(0, int(completed_ranges_count or 0)),
+                "range_progress_percent": max(0.0, min(100.0, float(range_progress_percent or 0))),
             }
             proxy_run_state[key] = state
-            if effective_batch_outbox:
+            if effective_batch_outbox and hasattr(effective_batch_outbox, "start_proxy_run"):
                 try:
+                    preflight_item = preflight_items_by_proxy.get(proxy_key) or {}
                     effective_batch_outbox.start_proxy_run(
                         external_proxy_run_id=state["external_proxy_run_id"],
+                        parser_cycle_id=parser_cycle_id,
+                        cycle_kind=parser_cycle_kind,
                         proxy_key=proxy_key,
                         source_category=source_category,
                         source_subcategory=source_subcategory,
                         planned_products_count=state["planned"],
                         downloaded_products_count=state["downloaded"],
+                        egress_ip=preflight_item.get("egressIp"),
+                        token_ref=preflight_item.get("tokenRef"),
+                        session_status=(preflight_item.get("status") or "valid") if preflight_item else None,
+                        phase=state.get("phase"),
+                        planned_ranges_count=state.get("planned_ranges"),
+                        completed_ranges_count=state.get("completed_ranges"),
+                        range_progress_percent=state.get("range_progress_percent"),
                     )
                 except Exception as exception:
                     manifest["batching"]["outbox"]["last_error"] = str(exception)
                     _emit_pipeline(pipeline_run_dir, f"PROXY RUN START FAILED: proxy={proxy_key} error={exception}")
+                    raise
             return state
 
-        def notify_proxy_run_progress(state: dict[str, Any], *, downloaded_delta: int, planned: int | None = None) -> None:
+        def notify_proxy_run_progress(
+            state: dict[str, Any],
+            *,
+            downloaded_delta: int,
+            planned: int | None = None,
+            phase: str | None = None,
+            planned_ranges_count: int | None = None,
+            completed_ranges_count: int | None = None,
+            range_progress_percent: float | None = None,
+        ) -> None:
             state["downloaded"] = max(0, int(state.get("downloaded") or 0) + max(0, int(downloaded_delta)))
             if planned is not None:
                 state["planned"] = max(int(state.get("planned") or 0), max(0, int(planned)))
             state["planned"] = max(int(state.get("planned") or 0), int(state.get("downloaded") or 0))
-            if effective_batch_outbox:
+            if phase:
+                state["phase"] = phase
+            if planned_ranges_count is not None:
+                state["planned_ranges"] = max(0, int(planned_ranges_count))
+            if completed_ranges_count is not None:
+                state["completed_ranges"] = max(0, int(completed_ranges_count))
+            if range_progress_percent is not None:
+                state["range_progress_percent"] = max(0.0, min(100.0, float(range_progress_percent)))
+            if effective_batch_outbox and hasattr(effective_batch_outbox, "update_proxy_run_progress"):
                 try:
                     effective_batch_outbox.update_proxy_run_progress(
                         external_proxy_run_id=state["external_proxy_run_id"],
                         planned_products_count=state["planned"],
                         downloaded_products_count=state["downloaded"],
+                        phase=state.get("phase"),
+                        planned_ranges_count=state.get("planned_ranges"),
+                        completed_ranges_count=state.get("completed_ranges"),
+                        range_progress_percent=state.get("range_progress_percent"),
                     )
                 except Exception as exception:
                     manifest["batching"]["outbox"]["last_error"] = str(exception)
@@ -2038,6 +2178,7 @@ def _run_batched_pipeline(
                         pipeline_run_dir,
                         f"PROXY RUN PROGRESS FAILED: proxy={state['proxy_key']} error={exception}",
                     )
+                    raise
 
         def notify_proxy_run_finish(state: dict[str, Any], *, status: str, error: str | None = None) -> None:
             if state.get("status") in {"completed", "failed"}:
@@ -2045,8 +2186,9 @@ def _run_batched_pipeline(
             normalized_status = "failed" if status == "failed" else "completed"
             state["status"] = normalized_status
             state["error"] = error
+            state["phase"] = "failed" if normalized_status == "failed" else "completed"
             state["planned"] = max(int(state.get("planned") or 0), int(state.get("downloaded") or 0))
-            if effective_batch_outbox:
+            if effective_batch_outbox and hasattr(effective_batch_outbox, "finish_proxy_run"):
                 try:
                     effective_batch_outbox.finish_proxy_run(
                         external_proxy_run_id=state["external_proxy_run_id"],
@@ -2061,11 +2203,67 @@ def _run_batched_pipeline(
                         pipeline_run_dir,
                         f"PROXY RUN FINISH FAILED: proxy={state['proxy_key']} error={exception}",
                     )
+                    raise
 
         def finish_open_proxy_runs(*, status: str, error: str | None = None) -> None:
             for state in list(proxy_run_state.values()):
                 if state.get("status") == "running":
                     notify_proxy_run_finish(state, status=status, error=error)
+
+        def handle_category_lifecycle(event: dict[str, Any]) -> None:
+            proxy_key = str(event.get("proxy_key") or "direct")
+            source_category = str(event.get("source_category") or "")
+            source_subcategory = str(event.get("source_subcategory") or "")
+            if not source_category or not source_subcategory:
+                return
+
+            if event.get("event") == "start":
+                notify_proxy_run_start(
+                    proxy_key=proxy_key,
+                    source_category=source_category,
+                    source_subcategory=source_subcategory,
+                    planned_products_count=int(event.get("planned_products_count") or 0),
+                    phase=event.get("phase"),
+                    planned_ranges_count=event.get("planned_ranges_count"),
+                    completed_ranges_count=event.get("completed_ranges_count"),
+                    range_progress_percent=event.get("range_progress_percent"),
+                )
+                return
+
+            if event.get("event") == "progress":
+                state = notify_proxy_run_start(
+                    proxy_key=proxy_key,
+                    source_category=source_category,
+                    source_subcategory=source_subcategory,
+                    planned_products_count=int(event.get("planned_products_count") or 0),
+                    phase=event.get("phase"),
+                    planned_ranges_count=event.get("planned_ranges_count"),
+                    completed_ranges_count=event.get("completed_ranges_count"),
+                    range_progress_percent=event.get("range_progress_percent"),
+                )
+                notify_proxy_run_progress(
+                    state,
+                    downloaded_delta=0,
+                    planned=int(event.get("planned_products_count") or 0),
+                    phase=event.get("phase"),
+                    planned_ranges_count=event.get("planned_ranges_count"),
+                    completed_ranges_count=event.get("completed_ranges_count"),
+                    range_progress_percent=event.get("range_progress_percent"),
+                )
+                return
+
+            if event.get("event") == "finish":
+                state = notify_proxy_run_start(
+                    proxy_key=proxy_key,
+                    source_category=source_category,
+                    source_subcategory=source_subcategory,
+                    planned_products_count=int(event.get("planned_products_count") or 0),
+                )
+                notify_proxy_run_finish(
+                    state,
+                    status=str(event.get("status") or "completed"),
+                    error=event.get("error"),
+                )
 
         def handle_streaming_batch(discovery_batch: Any) -> SimpleNamespace:
             nonlocal parent_product_run_dir
@@ -2164,12 +2362,15 @@ def _run_batched_pipeline(
                 return SimpleNamespace(status="deferred", reason=f"proxy {proxy_status}")
 
             proxy_scheduler.mark_started(proxy_key)
-            estimated_planned = max(batch.size, (max_batches or 0) * batch_size if max_batches else 0)
+            estimated_planned = batch.size
+            if max_batches is not None:
+                estimated_planned = max(batch.size, max_batches * batch_size)
             proxy_run = notify_proxy_run_start(
                 proxy_key=proxy_key,
                 source_category=source_category,
                 source_subcategory=source_subcategory,
                 planned_products_count=estimated_planned,
+                phase="download",
             )
 
             batch_manifest = {
@@ -2399,9 +2600,13 @@ def _run_batched_pipeline(
             config_path = _to_abs(product_config["config"], base_dir=repo_root)
             env_overrides = dict(products_plan.env_overrides)
             original_env = {key: os.environ.get(key) for key in env_overrides}
+            max_stream_batches_key = "PARSER_MAX_STREAM_BATCHES"
+            original_max_stream_batches = os.environ.get(max_stream_batches_key)
             try:
                 for key, value in env_overrides.items():
                     os.environ[key] = value
+                if max_batches is not None:
+                    os.environ[max_stream_batches_key] = str(max_batches)
                 parser_config = ParserConfig.load(config_path)
                 return run_parser_streaming(
                     parser_config,
@@ -2409,8 +2614,13 @@ def _run_batched_pipeline(
                     batch_handler=kwargs["batch_handler"],
                     smoke_only=bool(product_config.get("smoke_only")),
                     resume_seen_product_ids=kwargs.get("resume_seen_product_ids"),
+                    category_lifecycle_handler=kwargs.get("category_lifecycle_handler"),
                 )
             finally:
+                if original_max_stream_batches is None:
+                    os.environ.pop(max_stream_batches_key, None)
+                else:
+                    os.environ[max_stream_batches_key] = original_max_stream_batches
                 for key, value in original_env.items():
                     if value is None:
                         os.environ.pop(key, None)
@@ -2426,6 +2636,7 @@ def _run_batched_pipeline(
                 batch_handler=handle_streaming_batch,
                 smoke_only=False,
                 resume_seen_product_ids=resume_seen_product_ids,
+                category_lifecycle_handler=handle_category_lifecycle,
             )
         except Exception as exception:
             finish_open_proxy_runs(status="failed", error=str(exception))
@@ -2433,9 +2644,12 @@ def _run_batched_pipeline(
         else:
             finish_open_proxy_runs(status="completed")
         products_record = _record_for(manifest, "products")
-        products_record["status"] = "succeeded"
+        product_summary = _manifest_summary(parent_product_run_dir)
+        product_status = str(product_summary.get("status") or "succeeded")
+        products_record["status"] = product_status
         products_record["output_run_dirs"] = [str(parent_product_run_dir)]
-        products_record["error_summary"] = None
+        products_record["child_manifest_summaries"] = [product_summary]
+        products_record["error_summary"] = None if product_status == "succeeded" else f"Child manifest status is {product_status}."
 
         if stage_to_db and manifest["staging"].get("status") != "failed":
             command = _complete_pipeline_command(

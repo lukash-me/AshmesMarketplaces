@@ -2364,6 +2364,163 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.ToTable("ParserNicheAssignments", (string)null);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserPriceSplitJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("CompletedRangesCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("completed_ranges_count");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text")
+                        .HasColumnName("error");
+
+                    b.Property<DateTime?>("FinishedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("finished_at_utc");
+
+                    b.Property<int>("MaxPriceU")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_price_u");
+
+                    b.Property<int>("MinPriceU")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_price_u");
+
+                    b.Property<string>("ParserInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)")
+                        .HasColumnName("parser_instance_id");
+
+                    b.Property<string>("ProxyKey")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("proxy_key");
+
+                    b.Property<string>("SourceCategory")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("source_category");
+
+                    b.Property<string>("SourceSubcategory")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("source_subcategory");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<int>("TotalRangesCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("total_ranges_count");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourceCategory", "SourceSubcategory", "ProxyKey", "Status");
+
+                    b.HasIndex("ParserInstanceId", "ProxyKey", "SourceCategory", "SourceSubcategory", "Status");
+
+                    b.ToTable("ParserPriceSplitJobs", (string)null);
+                });
+
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserPriceSplitRange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("AttemptsCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts_count");
+
+                    b.Property<DateTime?>("CooldownUntilUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("cooldown_until_utc");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("text")
+                        .HasColumnName("error");
+
+                    b.Property<int?>("ExpectedTotal")
+                        .HasColumnType("integer")
+                        .HasColumnName("expected_total");
+
+                    b.Property<Guid>("JobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("job_id");
+
+                    b.Property<DateTime?>("LastAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_attempt_at_utc");
+
+                    b.Property<int>("MaxPriceU")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_price_u");
+
+                    b.Property<int>("MinPriceU")
+                        .HasColumnType("integer")
+                        .HasColumnName("min_price_u");
+
+                    b.Property<int>("NextItemOffset")
+                        .HasColumnType("integer")
+                        .HasColumnName("next_item_offset");
+
+                    b.Property<int>("NextPage")
+                        .HasColumnType("integer")
+                        .HasColumnName("next_page");
+
+                    b.Property<Guid?>("ParentRangeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_range_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ParentRangeId");
+
+                    b.HasIndex("JobId", "MinPriceU", "MaxPriceU")
+                        .IsUnique();
+
+                    b.HasIndex("JobId", "Status", "CooldownUntilUtc");
+
+                    b.ToTable("ParserPriceSplitRanges", (string)null);
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.ParserProductChangeEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2803,13 +2960,28 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<int>("CompletedRangesCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("completed_ranges_count");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at_utc");
 
+                    b.Property<string>("CycleKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("cycle_kind");
+
                     b.Property<int>("DownloadedProductsCount")
                         .HasColumnType("integer")
                         .HasColumnName("downloaded_products_count");
+
+                    b.Property<string>("EgressIp")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("egress_ip");
 
                     b.Property<string>("Error")
                         .HasColumnType("text")
@@ -2829,21 +3001,46 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_heartbeat_at_utc");
 
+                    b.Property<string>("ParserCycleId")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)")
+                        .HasColumnName("parser_cycle_id");
+
                     b.Property<string>("ParserInstanceId")
                         .IsRequired()
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)")
                         .HasColumnName("parser_instance_id");
 
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("phase");
+
                     b.Property<int>("PlannedProductsCount")
                         .HasColumnType("integer")
                         .HasColumnName("planned_products_count");
+
+                    b.Property<int>("PlannedRangesCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("planned_ranges_count");
 
                     b.Property<string>("ProxyKey")
                         .IsRequired()
                         .HasMaxLength(120)
                         .HasColumnType("character varying(120)")
                         .HasColumnName("proxy_key");
+
+                    b.Property<double>("RangeProgressPercent")
+                        .HasColumnType("double precision")
+                        .HasColumnName("range_progress_percent");
+
+                    b.Property<string>("SessionStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("session_status");
 
                     b.Property<string>("SourceCategory")
                         .IsRequired()
@@ -2867,6 +3064,11 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                         .HasColumnType("character varying(32)")
                         .HasColumnName("status");
 
+                    b.Property<string>("TokenRef")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("token_ref");
+
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at_utc");
@@ -2882,9 +3084,17 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.HasIndex("ParserInstanceId", "ExternalProxyRunId")
                         .IsUnique();
 
+                    b.HasIndex("ParserInstanceId", "ParserCycleId");
+
+                    b.HasIndex("ParserInstanceId", "ProxyKey")
+                        .IsUnique()
+                        .HasFilter("status = 'running'");
+
                     b.HasIndex("ParserInstanceId", "StartedAtUtc");
 
                     b.HasIndex("ProxyKey", "Status");
+
+                    b.HasIndex("ParserInstanceId", "CycleKind", "StartedAtUtc");
 
                     b.ToTable("ParserProxyRuns", (string)null);
                 });

@@ -103,6 +103,17 @@ def _write_cycle_report(
     return report_path
 
 
+def _pipeline_status(pipeline_run_dir: Path | None) -> str | None:
+    if pipeline_run_dir is None:
+        return None
+    manifest_path = pipeline_run_dir / "pipeline_manifest.json"
+    if not manifest_path.exists():
+        return None
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    status = payload.get("status")
+    return str(status) if status is not None else None
+
+
 def run_cycle(
     *,
     config_path: Path,
@@ -110,6 +121,8 @@ def run_cycle(
     stage_to_db: bool,
     connection_string: str | None,
     smoke_max_batches: int | None = None,
+    only_proxy: str | None = None,
+    only_subcategory: str | None = None,
     outbox_flush_passes: int = 3,
     outbox_flush_limit: int | None = None,
     skip_rank: bool = False,
@@ -128,6 +141,15 @@ def run_cycle(
     if mode_config is None:
         raise ValueError(f"Mode '{mode}' is not defined in {config_path}.")
 
+    mode_product_env = {
+        str(key): str(value)
+        for key, value in (((mode_config.get("product") or {}).get("env") or {}).items())
+        if value is not None
+    }
+    previous_mode_product_env = {key: os.environ.get(key) for key in mode_product_env}
+    for key, value in mode_product_env.items():
+        os.environ[key] = value
+
     batching = dict(mode_config.get("batching") or {})
     parser_instance_id = str(
         os.environ.get("PARSER_INSTANCE_ID")
@@ -143,9 +165,12 @@ def run_cycle(
     previous_smoke_direct_discovery = os.environ.get("PARSER_SMOKE_DIRECT_DISCOVERY")
     if smoke_max_batches is not None and smoke_max_batches > 0:
         os.environ["PARSER_MAX_STREAM_BATCHES"] = str(smoke_max_batches)
-        os.environ["PARSER_SMOKE_DIRECT_DISCOVERY"] = "1"
-    if smoke_source_subcategory and smoke_source_subcategory.strip():
-        os.environ["PARSER_SUBCATEGORY_ALLOWLIST"] = smoke_source_subcategory.strip()
+    scoped_subcategory = (only_subcategory or smoke_source_subcategory or "").strip()
+    previous_only_proxy = os.environ.get("PARSER_ONLY_PROXY")
+    if scoped_subcategory:
+        os.environ["PARSER_SUBCATEGORY_ALLOWLIST"] = scoped_subcategory
+    if only_proxy and only_proxy.strip():
+        os.environ["PARSER_ONLY_PROXY"] = only_proxy.strip()
 
     pipeline_run_dir: Path | None = None
     final_outbox = CycleOutboxSummary(enabled=bool(outbox))
@@ -172,11 +197,22 @@ def run_cycle(
             test_label=test_label,
             batch_outbox=outbox,
         )
+        pipeline_status = _pipeline_status(pipeline_run_dir)
+        if pipeline_status:
+            status = pipeline_status
+        if pipeline_status in {"failed", "interrupted"}:
+            error = f"Pipeline finished with status {pipeline_status}."
+            raise RuntimeError(error)
     except Exception as exception:
         status = "failed"
         error = str(exception)
         raise
     finally:
+        for key, value in previous_mode_product_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         if previous_max_batches is None:
             os.environ.pop("PARSER_MAX_STREAM_BATCHES", None)
         else:
@@ -185,6 +221,10 @@ def run_cycle(
             os.environ.pop("PARSER_SUBCATEGORY_ALLOWLIST", None)
         else:
             os.environ["PARSER_SUBCATEGORY_ALLOWLIST"] = previous_subcategory_allowlist
+        if previous_only_proxy is None:
+            os.environ.pop("PARSER_ONLY_PROXY", None)
+        else:
+            os.environ["PARSER_ONLY_PROXY"] = previous_only_proxy
         if previous_smoke_direct_discovery is None:
             os.environ.pop("PARSER_SMOKE_DIRECT_DISCOVERY", None)
         else:
@@ -223,6 +263,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connection-string")
     parser.add_argument("--smoke-max-batches", type=int, help="Limit cycle to N streaming batches.")
     parser.add_argument("--smoke-source-subcategory", help="Limit cycle to one source subcategory allowlist value.")
+    parser.add_argument("--only-subcategory", help="Limit cycle to one source subcategory allowlist value.")
+    parser.add_argument("--only-proxy", help="Assert that the selected niche resolves to this proxy key.")
     parser.add_argument("--outbox-flush-passes", type=int, default=3)
     parser.add_argument("--outbox-flush-limit", type=int)
     parser.add_argument("--skip-rank", action="store_true")
@@ -245,6 +287,8 @@ def main() -> None:
             stage_to_db=args.stage_to_db,
             connection_string=args.connection_string,
             smoke_max_batches=args.smoke_max_batches,
+            only_proxy=args.only_proxy,
+            only_subcategory=args.only_subcategory,
             smoke_source_subcategory=args.smoke_source_subcategory,
             outbox_flush_passes=args.outbox_flush_passes,
             outbox_flush_limit=args.outbox_flush_limit,

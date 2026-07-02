@@ -27,6 +27,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserRun> ParserRuns => Set<ParserRun>();
     public DbSet<ParserInstance> ParserInstances => Set<ParserInstance>();
     public DbSet<ParserProxyRun> ParserProxyRuns => Set<ParserProxyRun>();
+    public DbSet<ParserPriceSplitJob> ParserPriceSplitJobs => Set<ParserPriceSplitJob>();
+    public DbSet<ParserPriceSplitRange> ParserPriceSplitRanges => Set<ParserPriceSplitRange>();
     public DbSet<ParserNicheAssignment> ParserNicheAssignments => Set<ParserNicheAssignment>();
     public DbSet<ParserBatchSubmission> ParserBatchSubmissions => Set<ParserBatchSubmission>();
     public DbSet<ParserBatchSubmissionEvent> ParserBatchSubmissionEvents => Set<ParserBatchSubmissionEvent>();

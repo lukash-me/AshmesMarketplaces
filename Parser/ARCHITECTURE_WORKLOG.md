@@ -158,6 +158,29 @@ Docker/prod запуск:
 Это не гарантия решения. Если 429 повторится, искать причину в proxy health,
 token/session, WB response pattern и timing, а не повторять те же правки.
 
+## Baseline ограничений parser-а
+
+2026-07-02 сверил рабочие исторические режимы. Для текущей proxy-архитектуры выбран baseline `46d7a00`,
+потому что он ближе к production runner:
+
+- complete-card batch: `100` товаров;
+- catalog request group: `10` page-запросов;
+- catalog concurrency: `2`;
+- filter/catalog delay перед запросом: `0.3-0.9` сек на один proxy;
+- delay после группы catalog-запросов: `2-5` сек;
+- split -> catalog pause: `10` сек, как в более ранней стабильной логике `13be099`;
+- token теперь Playwright, но строго per proxy, без общего token/cookie jar.
+
+Важные инварианты:
+
+- `batching.batch_size` означает 100 карточек в batch для server queue.
+- `PARSER_CATALOG_REQUEST_GROUP_SIZE` означает размер группы catalog page-запросов. В production preset он равен `10`.
+- `PARSER_BATCH_SIZE` больше не используется в production preset как catalog group; он остается только как backward-compatible alias.
+- `429` не должен инвалидировать token/session. Это rate-limit/cooldown текущего proxy-run.
+- `401/403/498` должны инвалидировать только session соответствующего proxy.
+- Catalog request не должен иметь двойную задержку: если включен pre-request limiter, post-delay по умолчанию равен `0`.
+- Live smoke не запускать в рамках правок лимитов; сначала проходятся unit/backend/frontend проверки.
+
 ## Последнее известное состояние локальной среды
 
 - EF migrations применялись до `20260701210801_ParserProxyRunPhaseProgress`.
@@ -180,4 +203,3 @@ token/session, WB response pattern и timing, а не повторять те ж
    отдельные.
 8. Если появляется 429, остановить повторные запросы, закрыть proxy-run
    failed/cooldown и зафиксировать причину в этом файле.
-
