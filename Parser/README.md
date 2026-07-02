@@ -1,5 +1,9 @@
 ﻿# Parser Safe Runner
 
+Before changing parser behavior or running parser smoke, read
+`Parser/ARCHITECTURE_WORKLOG.md`. It records architecture decisions, repeated
+failure causes, encoding rules, proxy/niche names and monitoring invariants.
+
 ## Current production flow
 
 Production parsing is a one-cycle worker process. The Docker service starts
