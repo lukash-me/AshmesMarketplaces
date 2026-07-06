@@ -41,6 +41,21 @@ class BrowserSessionSnapshot:
     failure_count: int = 0
     last_error: str | None = None
     token_ref: str | None = None
+    user_agent: str | None = None
+
+
+@dataclass(frozen=True)
+class BrowserSessionData:
+    proxy_key: str
+    token: str
+    cookies: dict[str, str]
+    user_agent: str | None
+    token_ref: str | None
+    profile_dir: Path
+    cache_path: Path
+
+
+_MEMORY_SESSIONS: dict[str, BrowserSessionData] = {}
 
 
 def _utc_now() -> datetime:
@@ -81,12 +96,32 @@ def browser_session_cache_root() -> Path:
     return Path(value) if value else PARSER_ROOT / "output" / "browser_sessions"
 
 
+def _session_scope_parts() -> list[str]:
+    scope = os.environ.get("PARSER_SESSION_SCOPE", "").strip()
+    if not scope:
+        return []
+    return [safe_proxy_key(part) for part in re.split(r"[\\/]+", scope) if part.strip()]
+
+
+def _scoped_root(root: Path, proxy_key: str) -> Path:
+    parts = _session_scope_parts()
+    if parts:
+        path = root
+        for part in parts:
+            path /= part
+        return path
+    return root / safe_proxy_key(proxy_key)
+
+
 def proxy_profile_dir(proxy_key: str, *, root: Path | None = None) -> Path:
-    return (root or browser_profiles_root()) / safe_proxy_key(proxy_key)
+    return _scoped_root(root or browser_profiles_root(), proxy_key)
 
 
 def proxy_session_cache_path(proxy_key: str, *, root: Path | None = None) -> Path:
-    return (root or browser_session_cache_root()) / f"{safe_proxy_key(proxy_key)}.json"
+    base = root or browser_session_cache_root()
+    if _session_scope_parts():
+        return _scoped_root(base, proxy_key) / "session.json"
+    return base / f"{safe_proxy_key(proxy_key)}.json"
 
 
 def token_ref(token: str | None) -> str | None:
@@ -155,6 +190,15 @@ def _force_refresh() -> bool:
     return os.environ.get("PARSER_FORCE_REFRESH_TOKEN", "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _session_cache_mode() -> str:
+    return os.environ.get("PARSER_SESSION_CACHE_MODE", "").strip().lower()
+
+
+def _memory_key(proxy_key: str) -> str:
+    scope = "/".join(_session_scope_parts())
+    return f"{scope or 'default'}::{safe_proxy_key(proxy_key)}"
+
+
 def _read_cache(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
@@ -178,6 +222,33 @@ def _is_cache_valid(payload: dict[str, Any] | None, *, now: datetime | None = No
     return expires_at > (now or _utc_now())
 
 
+def _session_from_payload(proxy_key: str, payload: dict[str, Any] | None) -> BrowserSessionData | None:
+    if not payload:
+        return None
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        return None
+
+    cookies: dict[str, str] = {}
+    for cookie in payload.get("cookies") or []:
+        if not isinstance(cookie, dict):
+            continue
+        name = str(cookie.get("name") or "").strip()
+        value = cookie.get("value")
+        if name and value is not None:
+            cookies[name] = str(value)
+    cookies[COOKIE_NAME] = token
+    return BrowserSessionData(
+        proxy_key=proxy_key,
+        token=token,
+        cookies=cookies,
+        user_agent=str(payload.get("userAgent") or HEADERS.get("user-agent") or "").strip() or None,
+        token_ref=str(payload.get("tokenRef") or token_ref(token) or "").strip() or None,
+        profile_dir=proxy_profile_dir(proxy_key),
+        cache_path=proxy_session_cache_path(proxy_key),
+    )
+
+
 def session_snapshot(proxy_key: str) -> BrowserSessionSnapshot:
     cache_path = proxy_session_cache_path(proxy_key)
     payload = _read_cache(cache_path) or {}
@@ -191,7 +262,31 @@ def session_snapshot(proxy_key: str) -> BrowserSessionSnapshot:
         failure_count=int(payload.get("failureCount") or 0),
         last_error=payload.get("lastError"),
         token_ref=token_ref(payload.get("token")),
+        user_agent=str(payload.get("userAgent") or "").strip() or None,
     )
+
+
+def get_browser_session_for_proxy(
+    proxy_key: str,
+    proxy: ProxyDefinition | None = None,
+    *,
+    user_agent: str | None = None,
+) -> BrowserSessionData | None:
+    memory_key = _memory_key(proxy_key)
+    if _session_cache_mode() == "run" and memory_key in _MEMORY_SESSIONS:
+        return _MEMORY_SESSIONS[memory_key]
+
+    cache_path = proxy_session_cache_path(proxy_key)
+    cached = _read_cache(cache_path)
+    if _session_cache_mode() != "run" and not _force_refresh() and _is_cache_valid(cached):
+        session = _session_from_payload(proxy_key, cached)
+        if session is not None:
+            return session
+
+    session = _refresh_browser_session_for_proxy(proxy_key, proxy, user_agent=user_agent)
+    if session is not None and _session_cache_mode() == "run":
+        _MEMORY_SESSIONS[memory_key] = session
+    return session
 
 
 def get_token_for_proxy(
@@ -200,12 +295,8 @@ def get_token_for_proxy(
     *,
     user_agent: str | None = None,
 ) -> str | None:
-    cache_path = proxy_session_cache_path(proxy_key)
-    cached = _read_cache(cache_path)
-    if not _force_refresh() and _is_cache_valid(cached):
-        return str(cached["token"])
-
-    return _refresh_token_for_proxy(proxy_key, proxy, user_agent=user_agent)
+    session = get_browser_session_for_proxy(proxy_key, proxy, user_agent=user_agent)
+    return session.token if session else None
 
 
 def get_cookies_for_proxy(
@@ -214,21 +305,8 @@ def get_cookies_for_proxy(
     *,
     user_agent: str | None = None,
 ) -> dict[str, str] | None:
-    token = get_token_for_proxy(proxy_key, proxy, user_agent=user_agent)
-    if not token:
-        return None
-
-    cached = _read_cache(proxy_session_cache_path(proxy_key)) or {}
-    cookies: dict[str, str] = {}
-    for cookie in cached.get("cookies") or []:
-        if not isinstance(cookie, dict):
-            continue
-        name = str(cookie.get("name") or "").strip()
-        value = cookie.get("value")
-        if name and value is not None:
-            cookies[name] = str(value)
-    cookies[COOKIE_NAME] = token
-    return cookies
+    session = get_browser_session_for_proxy(proxy_key, proxy, user_agent=user_agent)
+    return dict(session.cookies) if session else None
 
 
 def invalidate_proxy_session(proxy_key: str, *, reason: str | None = None) -> None:
@@ -251,6 +329,16 @@ def _refresh_token_for_proxy(
     *,
     user_agent: str | None = None,
 ) -> str | None:
+    session = _refresh_browser_session_for_proxy(proxy_key, proxy, user_agent=user_agent)
+    return session.token if session else None
+
+
+def _refresh_browser_session_for_proxy(
+    proxy_key: str,
+    proxy: ProxyDefinition | None,
+    *,
+    user_agent: str | None = None,
+) -> BrowserSessionData | None:
     cache_path = proxy_session_cache_path(proxy_key)
     previous = _read_cache(cache_path) or {}
     now = _utc_now()
@@ -318,7 +406,7 @@ def _refresh_token_for_proxy(
             "updatedAtUtc": _format_utc(refreshed_at),
         }
         _write_cache(cache_path, payload)
-        return token
+        return _session_from_payload(proxy_key, payload)
     except Exception as exception:
         failure_count = int(previous.get("failureCount") or 0) + 1
         _write_cache(

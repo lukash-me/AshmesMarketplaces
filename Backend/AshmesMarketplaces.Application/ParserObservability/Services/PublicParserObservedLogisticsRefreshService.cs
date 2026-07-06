@@ -107,32 +107,7 @@ public sealed class PublicParserObservedLogisticsRefreshService : IPublicParserO
             """)
             .ToListAsync(cancellationToken);
 
-        var newProducts = await _dbContext.Database.SqlQueryRaw<CurrentOnlyLogisticsObservation>(
-            """
-            SELECT
-                current.parser_run_id AS "CurrentParserRunId",
-                current.wb_product_id AS "WbProductId",
-                current.source_region_dest AS "Destination",
-                current.total_quantity_observed AS "CurrentQuantity",
-                current.observed_at_utc AS "CurrentObservedAtUtc"
-            FROM "ParserLogisticsSnapshotRows" current
-            WHERE current.parser_run_id = {0}
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM "ParserLogisticsSnapshotRows" previous
-                    WHERE previous.wb_product_id = current.wb_product_id
-                        AND previous.source_region_dest = current.source_region_dest
-                        AND (
-                            previous.observed_at_utc < current.observed_at_utc
-                            OR (
-                                previous.observed_at_utc = current.observed_at_utc
-                                AND previous.source_line_number < current.source_line_number
-                            )
-                        )
-                );
-            """,
-            latestLogisticsRunId)
-            .ToListAsync(cancellationToken);
+        var newProducts = await LoadNewProductObservationsAsync(latestLogisticsRunId, cancellationToken);
 
         var metadata = await LoadProductMetadataAsync(
             changedPairs.Select(x => x.WbProductId).Concat(newProducts.Select(x => x.WbProductId)),
@@ -173,6 +148,101 @@ public sealed class PublicParserObservedLogisticsRefreshService : IPublicParserO
             items,
             BuildMarketEventSummary(items),
             []);
+    }
+
+    private async Task<IReadOnlyList<CurrentOnlyLogisticsObservation>> LoadNewProductObservationsAsync(
+        string latestLogisticsRunId,
+        CancellationToken cancellationToken)
+    {
+        var latestClosedCycleId = await LoadLatestClosedCycleWithCreatedEffectsAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(latestClosedCycleId))
+        {
+            var currentRows = await (
+                    from effect in _dbContext.ParserRunProductEffects.AsNoTracking()
+                    join run in _dbContext.ParserProxyRuns.AsNoTracking()
+                        on effect.ParserProxyRunId equals run.Id
+                    join logistics in _dbContext.ParserCurrentProductLogistics.AsNoTracking()
+                        on effect.WbProductId equals logistics.WbProductId
+                    where run.ParserCycleId == latestClosedCycleId &&
+                          effect.EffectType == ParserRunProductEffectTypes.Created
+                    select new
+                    {
+                        effect.WbProductId,
+                        logistics.LogisticsJson,
+                        logistics.ObservedAtUtc
+                    })
+                .ToListAsync(cancellationToken);
+
+            var observations = currentRows
+                .Select(row => MapCreatedProductLogistics(row.WbProductId, row.LogisticsJson, row.ObservedAtUtc, latestLogisticsRunId))
+                .Where(x => x is not null)
+                .Select(x => x!)
+                .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+                .Select(x => x.OrderByDescending(row => row.CurrentObservedAtUtc).First())
+                .ToList();
+
+            if (observations.Count > 0)
+                return observations;
+        }
+
+        return await _dbContext.Database.SqlQueryRaw<CurrentOnlyLogisticsObservation>(
+            """
+            SELECT
+                current.parser_run_id AS "CurrentParserRunId",
+                current.wb_product_id AS "WbProductId",
+                current.source_region_dest AS "Destination",
+                current.total_quantity_observed AS "CurrentQuantity",
+                current.observed_at_utc AS "CurrentObservedAtUtc"
+            FROM "ParserLogisticsSnapshotRows" current
+            WHERE current.parser_run_id = {0}
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM "ParserLogisticsSnapshotRows" previous
+                    WHERE previous.wb_product_id = current.wb_product_id
+                        AND previous.source_region_dest = current.source_region_dest
+                        AND (
+                            previous.observed_at_utc < current.observed_at_utc
+                            OR (
+                                previous.observed_at_utc = current.observed_at_utc
+                                AND previous.source_line_number < current.source_line_number
+                            )
+                        )
+                );
+            """,
+            latestLogisticsRunId)
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<string?> LoadLatestClosedCycleWithCreatedEffectsAsync(CancellationToken cancellationToken)
+    {
+        var candidateCycles = await (
+                from effect in _dbContext.ParserRunProductEffects.AsNoTracking()
+                join run in _dbContext.ParserProxyRuns.AsNoTracking()
+                    on effect.ParserProxyRunId equals run.Id
+                where effect.EffectType == ParserRunProductEffectTypes.Created
+                group run by run.ParserCycleId into cycle
+                select new
+                {
+                    ParserCycleId = cycle.Key,
+                    LastTouchedAtUtc = cycle.Max(x => x.FinishedAtUtc ?? x.UpdatedAtUtc)
+                })
+            .OrderByDescending(x => x.LastTouchedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        foreach (var candidate in candidateCycles)
+        {
+            var hasRunningProxyRun = await _dbContext.ParserProxyRuns
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.ParserCycleId == candidate.ParserCycleId &&
+                         x.Status == ParserProxyRunStatuses.Running,
+                    cancellationToken);
+            if (!hasRunningProxyRun)
+                return candidate.ParserCycleId;
+        }
+
+        return null;
     }
 
     private async Task<IReadOnlyDictionary<string, ProductMetadata>> LoadProductMetadataAsync(
@@ -277,6 +347,31 @@ public sealed class PublicParserObservedLogisticsRefreshService : IPublicParserO
             metadata?.Rating,
             metadata?.FeedbackCount,
             metadata?.ImageUrl);
+    }
+
+    private static CurrentOnlyLogisticsObservation? MapCreatedProductLogistics(
+        string wbProductId,
+        string logisticsJson,
+        DateTime observedAtUtc,
+        string currentParserRunId)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(logisticsJson);
+            var root = document.RootElement;
+            return new CurrentOnlyLogisticsObservation
+            {
+                CurrentParserRunId = currentParserRunId,
+                WbProductId = wbProductId,
+                Destination = JsonString(root, "sourceRegionDest") ?? "unknown",
+                CurrentQuantity = JsonInt(root, "totalQuantityObserved"),
+                CurrentObservedAtUtc = observedAtUtc
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static ParserObservedMarketEventItemDto SelectProductRepresentative(
@@ -398,6 +493,26 @@ public sealed class PublicParserObservedLogisticsRefreshService : IPublicParserO
             .Where(x => x.ValueKind == JsonValueKind.String)
             .Select(x => x.GetString())
             .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    private static string? JsonString(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static int? JsonInt(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var number) => number,
+            JsonValueKind.String when int.TryParse(value.GetString(), out var number) => number,
+            _ => null
+        };
     }
 
     private sealed class LogisticsObservationPair

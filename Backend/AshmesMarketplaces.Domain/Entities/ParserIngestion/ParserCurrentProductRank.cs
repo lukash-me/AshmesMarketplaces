@@ -40,4 +40,16 @@ public sealed class ParserCurrentProductRank
         BatchId = batchId;
         UpdatedAtUtc = DateTime.UtcNow;
     }
+
+    public void Restore(ParserCurrentSimpleSnapshot snapshot)
+    {
+        Update(
+            snapshot.WbRootId,
+            snapshot.SourceCategory,
+            snapshot.SourceSubcategory,
+            snapshot.Hash,
+            snapshot.Json,
+            snapshot.ObservedAtUtc,
+            snapshot.BatchId);
+    }
 }

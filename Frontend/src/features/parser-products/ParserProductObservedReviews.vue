@@ -41,7 +41,6 @@ let listVersion = 0;
 let detailVersion = 0;
 let repliesVersion = 0;
 
-const rootScoped = computed(() => Boolean(props.product.wbRootId));
 const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize)));
 const pageStart = computed(() => (totalCount.value === 0 ? 0 : (page.value - 1) * pageSize + 1));
 const pageEnd = computed(() => Math.min(totalCount.value, page.value * pageSize));
@@ -49,7 +48,7 @@ const displayReview = computed(() => detail.value ?? selected.value);
 const detailProductUrl = computed(() => getWildberriesProductUrl(displayReview.value?.wbProductId));
 
 watch(
-  () => [props.product.id, props.product.wbRootId, props.product.wbProductId] as const,
+  () => [props.product.id, props.product.wbProductId] as const,
   async () => {
     page.value = 1;
     selected.value = null;
@@ -97,9 +96,7 @@ async function loadRows() {
       pageSize,
       sort: sort.value,
       ...(ratingFilter.value ? { rating: Number(ratingFilter.value) } : {}),
-      ...(rootScoped.value
-        ? { sourceWbRootId: props.product.wbRootId ?? undefined }
-        : { wbProductId: props.product.wbProductId })
+      wbProductId: props.product.wbProductId
     });
 
     if (version === listVersion) {

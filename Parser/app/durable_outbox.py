@@ -41,6 +41,8 @@ class OutboxBatch:
     source_category: str
     source_subcategory: str
     proxy_key: str
+    parser_cycle_id: str | None
+    external_proxy_run_id: str | None
     batch_kind: str
     content_hash: str
     payload_path: Path
@@ -153,6 +155,8 @@ class DurableBatchOutbox:
                     source_category TEXT NOT NULL,
                     source_subcategory TEXT NOT NULL,
                     proxy_key TEXT NOT NULL,
+                    parser_cycle_id TEXT NULL,
+                    external_proxy_run_id TEXT NULL,
                     batch_kind TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
                     payload_path TEXT NOT NULL,
@@ -167,6 +171,8 @@ class DurableBatchOutbox:
                 )
                 """
             )
+            self._ensure_column(connection, "parser_outbox_batches", "parser_cycle_id", "TEXT NULL")
+            self._ensure_column(connection, "parser_outbox_batches", "external_proxy_run_id", "TEXT NULL")
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_parser_outbox_external_batch
@@ -181,6 +187,8 @@ class DurableBatchOutbox:
         source_category: str,
         source_subcategory: str,
         proxy_key: str,
+        parser_cycle_id: str | None = None,
+        external_proxy_run_id: str | None = None,
         batch_kind: str,
         payload: Any,
     ) -> OutboxBatch:
@@ -206,6 +214,8 @@ class DurableBatchOutbox:
                     source_category,
                     source_subcategory,
                     proxy_key,
+                    parser_cycle_id,
+                    external_proxy_run_id,
                     batch_kind,
                     content_hash,
                     payload_path,
@@ -214,7 +224,7 @@ class DurableBatchOutbox:
                     created_at_utc,
                     updated_at_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
                 """,
                 (
                     local_batch_id,
@@ -223,6 +233,8 @@ class DurableBatchOutbox:
                     source_category,
                     source_subcategory,
                     proxy_key,
+                    parser_cycle_id,
+                    external_proxy_run_id,
                     batch_kind,
                     content_hash,
                     str(payload_path),
@@ -339,6 +351,8 @@ class DurableBatchOutbox:
                     "sourceCategory": batch.source_category,
                     "sourceSubcategory": batch.source_subcategory,
                     "proxyKey": batch.proxy_key,
+                    "parserCycleId": batch.parser_cycle_id,
+                    "externalProxyRunId": batch.external_proxy_run_id,
                     "batchKind": batch.batch_kind,
                     "contentHash": batch.content_hash,
                     "payload": payload,
@@ -390,6 +404,10 @@ class DurableBatchOutbox:
         planned_ranges_count: int | None = None,
         completed_ranges_count: int | None = None,
         range_progress_percent: float | None = None,
+        range_checks_count: int | None = None,
+        final_ranges_count: int | None = None,
+        empty_ranges_count: int | None = None,
+        split_ranges_count: int | None = None,
     ) -> None:
         if not self.server_base_url:
             return
@@ -411,6 +429,10 @@ class DurableBatchOutbox:
             "plannedRangesCount": planned_ranges_count,
             "completedRangesCount": completed_ranges_count,
             "rangeProgressPercent": range_progress_percent,
+            "rangeChecksCount": range_checks_count,
+            "finalRangesCount": final_ranges_count,
+            "emptyRangesCount": empty_ranges_count,
+            "splitRangesCount": split_ranges_count,
         }
         response = self.post_json(f"{self.server_base_url}/proxy-runs/start", payload)
         if int(getattr(response, "status_code", 0)) >= 400:
@@ -426,6 +448,10 @@ class DurableBatchOutbox:
         planned_ranges_count: int | None = None,
         completed_ranges_count: int | None = None,
         range_progress_percent: float | None = None,
+        range_checks_count: int | None = None,
+        final_ranges_count: int | None = None,
+        empty_ranges_count: int | None = None,
+        split_ranges_count: int | None = None,
     ) -> None:
         if not self.server_base_url:
             return
@@ -438,6 +464,10 @@ class DurableBatchOutbox:
             "plannedRangesCount": planned_ranges_count,
             "completedRangesCount": completed_ranges_count,
             "rangeProgressPercent": range_progress_percent,
+            "rangeChecksCount": range_checks_count,
+            "finalRangesCount": final_ranges_count,
+            "emptyRangesCount": empty_ranges_count,
+            "splitRangesCount": split_ranges_count,
         }
         encoded_run_id = quote(external_proxy_run_id, safe="")
         response = self.patch_json(
@@ -578,6 +608,8 @@ class DurableBatchOutbox:
             source_category=str(row["source_category"]),
             source_subcategory=str(row["source_subcategory"]),
             proxy_key=str(row["proxy_key"]),
+            parser_cycle_id=row["parser_cycle_id"],
+            external_proxy_run_id=row["external_proxy_run_id"],
             batch_kind=str(row["batch_kind"]),
             content_hash=str(row["content_hash"]),
             payload_path=Path(str(row["payload_path"])),
@@ -590,3 +622,9 @@ class DurableBatchOutbox:
             created_at_utc=str(row["created_at_utc"]),
             updated_at_utc=str(row["updated_at_utc"]),
         )
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+        columns = {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+        if column_name not in columns:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")

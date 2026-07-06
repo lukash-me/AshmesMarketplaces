@@ -29,6 +29,10 @@ public sealed class ParserProxyRunConfiguration : IEntityTypeConfiguration<Parse
         builder.Property(x => x.PlannedRangesCount).IsRequired().HasColumnName("planned_ranges_count");
         builder.Property(x => x.CompletedRangesCount).IsRequired().HasColumnName("completed_ranges_count");
         builder.Property(x => x.RangeProgressPercent).IsRequired().HasColumnName("range_progress_percent");
+        builder.Property(x => x.RangeChecksCount).IsRequired().HasColumnName("range_checks_count");
+        builder.Property(x => x.FinalRangesCount).IsRequired().HasColumnName("final_ranges_count");
+        builder.Property(x => x.EmptyRangesCount).IsRequired().HasColumnName("empty_ranges_count");
+        builder.Property(x => x.SplitRangesCount).IsRequired().HasColumnName("split_ranges_count");
         builder.Property(x => x.StartedAtUtc).IsRequired().HasColumnName("started_at_utc");
         builder.Property(x => x.LastHeartbeatAtUtc).IsRequired().HasColumnName("last_heartbeat_at_utc");
         builder.Property(x => x.FinishedAtUtc).HasColumnName("finished_at_utc");

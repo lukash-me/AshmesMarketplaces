@@ -88,6 +88,23 @@ class FakeExecutor:
                 "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in product_rows),
                 encoding="utf-8",
             )
+        if step == "rank":
+            (run_dir / "product_rank_snapshots.jsonl").write_text(
+                json.dumps(
+                    {
+                        "wb_product_id": "1001",
+                        "wb_root_id": "5001",
+                        "absolute_position": 1,
+                        "query": "Коврики для ванной",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "rank_page_fetches.jsonl").write_text("", encoding="utf-8")
+            (run_dir / "errors.jsonl").write_text("", encoding="utf-8")
+            (run_dir / "runner.log").write_text("rank ok\n", encoding="utf-8")
         if step in {"logistics", "reviews", "product_details"} and step not in self.incomplete_steps:
             self._write_enrichment_artifacts(step=step, command=command, run_dir=run_dir)
 
@@ -595,8 +612,8 @@ class MarketRefreshRunnerTests(unittest.TestCase):
                         "proxies": [{"key": "bath-proxy", "type": "direct"}],
                         "niches": [
                             {
-                                "sourceCategory": "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                                "sourceSubcategory": "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
+                                "sourceCategory": "Товары для дома",
+                                "sourceSubcategory": "Коврики для ванной",
                                 "proxyKey": "bath-proxy",
                                 "enabled": True,
                             }
@@ -736,10 +753,13 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             )
             manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(len(outbox.enqueued), 1)
-        self.assertEqual(outbox.send_calls, 2)
-        self.assertEqual(outbox.poll_calls, 2)
-        enqueued = outbox.enqueued[0]
+        self.assertEqual(len(outbox.enqueued), 2)
+        self.assertEqual(outbox.send_calls, 3)
+        self.assertEqual(outbox.poll_calls, 3)
+        rank_enqueued = outbox.enqueued[0]
+        self.assertEqual(rank_enqueued["batch_kind"], "rank_snapshot_batch")
+        self.assertIn("product_rank_snapshots.jsonl", rank_enqueued["payload"]["artifacts"])
+        enqueued = outbox.enqueued[1]
         self.assertEqual(enqueued["external_batch_id"], manifest["batching"]["batches"][0]["batch_id"])
         self.assertEqual(enqueued["source_category"], "Товары для дома")
         self.assertEqual(enqueued["source_subcategory"], "Коврики для ванной")
@@ -748,7 +768,7 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertIn("products/products.jsonl", enqueued["payload"]["artifacts"])
         self.assertIn("batch_manifest.json", enqueued["payload"]["artifacts"])
         self.assertEqual(manifest["batching"]["outbox"]["enabled"], True)
-        self.assertEqual(manifest["batching"]["outbox"]["enqueued_batches"], 1)
+        self.assertEqual(manifest["batching"]["outbox"]["enqueued_batches"], 2)
 
     def test_batched_full_enrichment_stops_after_configured_batch_limit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -829,7 +849,7 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             ["ranks", "complete_batch", "complete_pipeline"],
         )
 
-    def test_batched_full_enrichment_quarantines_incomplete_batch_before_staging(self) -> None:
+    def test_batched_full_enrichment_allows_incomplete_details_before_staging(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
             config = self._config(temp_dir)
@@ -840,6 +860,64 @@ class MarketRefreshRunnerTests(unittest.TestCase):
             }
             config.modes = dict(config.payload["modes"])
             fake = FakeExecutor(output_base_dir=config.output_base_dir, incomplete_steps={"product_details"})
+            staging = FakeStagingExecutor()
+
+            def streaming_runner(**kwargs: Any) -> Path:
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 2, "unique_rows": 2, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                rows = [
+                    {"wb_product_id": "3001", "wb_root_id": "7001", "marketplace": "wildberries", "source_subcategory": "one"},
+                    {"wb_product_id": "3002", "wb_root_id": "7002", "marketplace": "wildberries", "source_subcategory": "one"},
+                ]
+                (parent_dir / "products.jsonl").write_text(
+                    "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                    encoding="utf-8",
+                )
+                kwargs["batch_handler"](SimpleNamespace(batch_index=1, rows=rows, parent_run_dir=parent_dir))
+                return parent_dir
+
+            run_dir = runner.run_pipeline(
+                config=config,
+                mode="batched_full_enrichment",
+                stage_to_db=True,
+                connection_string="Host=localhost;Password=secret",
+                connection_string_source="argument",
+                executor=fake,
+                staging_executor=staging,
+                streaming_product_runner=streaming_runner,
+            )
+            manifest = json.loads((run_dir / "pipeline_manifest.json").read_text(encoding="utf-8"))
+
+        self.assertEqual([FakeStagingExecutor._kind_for(command) for command in staging.calls], ["ranks", "complete_batch", "complete_pipeline"])
+        self.assertEqual(manifest["batching"]["batches"][0]["status"], "staged")
+        self.assertEqual(manifest["batching"]["quarantined_batches"], 0)
+        self.assertEqual(manifest["batching"]["quarantined_products"], 0)
+
+    def test_batched_full_enrichment_still_quarantines_incomplete_logistics_before_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "three-niches"},
+                "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
+            }
+            config.modes = dict(config.payload["modes"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir, incomplete_steps={"logistics"})
             staging = FakeStagingExecutor()
 
             def streaming_runner(**kwargs: Any) -> Path:

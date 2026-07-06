@@ -26,7 +26,12 @@ public class ApplicationDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<ParserRun> ParserRuns => Set<ParserRun>();
     public DbSet<ParserInstance> ParserInstances => Set<ParserInstance>();
+    public DbSet<ParserInstanceConfiguration> ParserInstanceConfigurations => Set<ParserInstanceConfiguration>();
+    public DbSet<ParserInstanceProxyAssignment> ParserInstanceProxyAssignments => Set<ParserInstanceProxyAssignment>();
+    public DbSet<ParserProxy> ParserProxies => Set<ParserProxy>();
+    public DbSet<ParserProxyNicheAssignment> ParserProxyNicheAssignments => Set<ParserProxyNicheAssignment>();
     public DbSet<ParserProxyRun> ParserProxyRuns => Set<ParserProxyRun>();
+    public DbSet<ParserLaunchRequest> ParserLaunchRequests => Set<ParserLaunchRequest>();
     public DbSet<ParserPriceSplitJob> ParserPriceSplitJobs => Set<ParserPriceSplitJob>();
     public DbSet<ParserPriceSplitRange> ParserPriceSplitRanges => Set<ParserPriceSplitRange>();
     public DbSet<ParserNicheAssignment> ParserNicheAssignments => Set<ParserNicheAssignment>();
@@ -44,6 +49,10 @@ public class ApplicationDbContext : DbContext
     public DbSet<ParserCurrentProductReviewEvidence> ParserCurrentProductReviewEvidence => Set<ParserCurrentProductReviewEvidence>();
     public DbSet<ParserCurrentProductReviewsSummary> ParserCurrentProductReviewsSummaries => Set<ParserCurrentProductReviewsSummary>();
     public DbSet<ParserProductChangeEvent> ParserProductChangeEvents => Set<ParserProductChangeEvent>();
+    public DbSet<ParserProductPresenceEvent> ParserProductPresenceEvents => Set<ParserProductPresenceEvent>();
+    public DbSet<ParserRunProductEffect> ParserRunProductEffects => Set<ParserRunProductEffect>();
+    public DbSet<ParserRunCurrentEntityEffect> ParserRunCurrentEntityEffects => Set<ParserRunCurrentEntityEffect>();
+    public DbSet<ParserRunRollback> ParserRunRollbacks => Set<ParserRunRollback>();
     public DbSet<ParserProductDetailRow> ParserProductDetailRows => Set<ParserProductDetailRow>();
     public DbSet<ParserReviewRootFetch> ParserReviewRootFetches => Set<ParserReviewRootFetch>();
     public DbSet<ParserReviewRow> ParserReviewRows => Set<ParserReviewRow>();
@@ -61,6 +70,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<AccessRequest> AccessRequests => Set<AccessRequest>();
     public DbSet<UserAnalysisSchedule> UserAnalysisSchedules => Set<UserAnalysisSchedule>();
     public DbSet<PublicAnalysisSchedule> PublicAnalysisSchedules => Set<PublicAnalysisSchedule>();
+    public DbSet<PublicAnalysisManualRunRequest> PublicAnalysisManualRunRequests => Set<PublicAnalysisManualRunRequest>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<UserWorkspace> UserWorkspaces => Set<UserWorkspace>();
@@ -88,6 +98,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<Warehouse> Warehouses => Set<Warehouse>();
     public DbSet<PublicMarketIntelligenceSnapshot> PublicMarketIntelligenceSnapshots => Set<PublicMarketIntelligenceSnapshot>();
     public DbSet<PublicMarketConcentrationSnapshot> PublicMarketConcentrationSnapshots => Set<PublicMarketConcentrationSnapshot>();
+    public DbSet<WildberriesCategoryLeaf> WildberriesCategoryLeaves => Set<WildberriesCategoryLeaf>();
 
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();

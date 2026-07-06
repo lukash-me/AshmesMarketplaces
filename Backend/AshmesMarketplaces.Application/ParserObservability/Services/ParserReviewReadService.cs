@@ -33,11 +33,9 @@ public sealed class ParserReviewReadService : IParserReviewReadService
             {
                 Review = review,
                 HasObservedReply = _dbContext.ParserReviewReplyRows.Any(reply =>
-                    reply.IdParserRun == review.IdParserRun
-                    && reply.Marketplace == review.Marketplace
+                    reply.Marketplace == review.Marketplace
                     && reply.ReviewIdOnMp == review.ReviewIdOnMp
-                    && reply.WbProductId == review.WbProductId
-                    && reply.SourceWbRootId == review.SourceWbRootId)
+                    && reply.WbProductId == review.WbProductId)
             })
             .ToListAsync(cancellationToken);
 
@@ -97,11 +95,9 @@ public sealed class ParserReviewReadService : IParserReviewReadService
         var replies = _dbContext.ParserReviewReplyRows
             .AsNoTracking()
             .Where(reply =>
-                reply.IdParserRun == review.IdParserRun
-                && reply.Marketplace == review.Marketplace
+                reply.Marketplace == review.Marketplace
                 && reply.ReviewIdOnMp == review.ReviewIdOnMp
-                && reply.WbProductId == review.WbProductId
-                && reply.SourceWbRootId == review.SourceWbRootId);
+                && reply.WbProductId == review.WbProductId);
 
         replies = ApplyReplySort(replies, query.Sort);
 
@@ -170,11 +166,9 @@ public sealed class ParserReviewReadService : IParserReviewReadService
         {
             rows = rows.Where(review =>
                 _dbContext.ParserReviewReplyRows.Any(reply =>
-                    reply.IdParserRun == review.IdParserRun
-                    && reply.Marketplace == review.Marketplace
+                    reply.Marketplace == review.Marketplace
                     && reply.ReviewIdOnMp == review.ReviewIdOnMp
-                    && reply.WbProductId == review.WbProductId
-                    && reply.SourceWbRootId == review.SourceWbRootId) == query.HasObservedReply.Value);
+                    && reply.WbProductId == review.WbProductId) == query.HasObservedReply.Value);
         }
 
         return rows;
@@ -215,11 +209,9 @@ public sealed class ParserReviewReadService : IParserReviewReadService
         return await _dbContext.ParserReviewReplyRows
             .AsNoTracking()
             .AnyAsync(reply =>
-                reply.IdParserRun == row.IdParserRun
-                && reply.Marketplace == row.Marketplace
+                reply.Marketplace == row.Marketplace
                 && reply.ReviewIdOnMp == row.ReviewIdOnMp
-                && reply.WbProductId == row.WbProductId
-                && reply.SourceWbRootId == row.SourceWbRootId,
+                && reply.WbProductId == row.WbProductId,
                 cancellationToken);
     }
 

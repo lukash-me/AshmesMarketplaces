@@ -25,6 +25,10 @@ class NicheProxyAssignment:
     source_subcategory: str
     proxy_key: str
     enabled: bool = True
+    wb_category_id: int | None = None
+    source_path: str | None = None
+    search_query: str | None = None
+    parser_search_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,10 @@ class ProxyMapping:
                 source_subcategory=str(item.get("sourceSubcategory") or "").strip(),
                 proxy_key=str(item.get("proxyKey") or default_proxy.key).strip(),
                 enabled=bool(item.get("enabled", True)),
+                wb_category_id=_optional_int(item.get("wbCategoryId")),
+                source_path=str(item.get("sourcePath") or "").strip() or None,
+                search_query=str(item.get("searchQuery") or "").strip() or None,
+                parser_search_text=str(item.get("parserSearchText") or "").strip() or None,
             )
             for item in payload.get("niches") or []
         ]
@@ -151,3 +159,12 @@ def _proxy_from_dict(payload: dict[str, Any]) -> ProxyDefinition:
         rate_limit_per_minute=payload.get("rateLimitPerMinute"),
         cooldown_seconds=int(payload.get("cooldownSeconds") or 300),
     )
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

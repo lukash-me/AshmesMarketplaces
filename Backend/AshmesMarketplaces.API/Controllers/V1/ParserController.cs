@@ -23,6 +23,8 @@ public sealed class ParserController : ControllerBase
     private readonly IParserBatchQueueService _parserBatchQueueService;
     private readonly IParserProxyRunService _parserProxyRunService;
     private readonly IParserPriceSplitQueueService _parserPriceSplitQueueService;
+    private readonly IParserProxyManagementService _parserProxyManagementService;
+    private readonly IConfiguration _configuration;
 
     public ParserController(
         IParserProductReadService productReadService,
@@ -33,7 +35,9 @@ public sealed class ParserController : ControllerBase
         IPublicProductAvailabilityReadService productAvailabilityReadService,
         IParserBatchQueueService parserBatchQueueService,
         IParserProxyRunService parserProxyRunService,
-        IParserPriceSplitQueueService parserPriceSplitQueueService)
+        IParserPriceSplitQueueService parserPriceSplitQueueService,
+        IParserProxyManagementService parserProxyManagementService,
+        IConfiguration configuration)
     {
         _productReadService = productReadService;
         _reviewReadService = reviewReadService;
@@ -44,6 +48,52 @@ public sealed class ParserController : ControllerBase
         _parserBatchQueueService = parserBatchQueueService;
         _parserProxyRunService = parserProxyRunService;
         _parserPriceSplitQueueService = parserPriceSplitQueueService;
+        _parserProxyManagementService = parserProxyManagementService;
+        _configuration = configuration;
+    }
+
+    [HttpGet("runtime/proxy-assignments")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserRuntimeProxyAssignmentsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserRuntimeProxyAssignmentsDto>> GetRuntimeProxyAssignments(
+        [FromQuery] string? parserInstanceId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsParserApiKeyValid())
+        {
+            return Problem(
+                title: "Unauthorized",
+                detail: "Parser API key is invalid.",
+                statusCode: StatusCodes.Status401Unauthorized,
+                type: "https://httpstatuses.com/401");
+        }
+
+        var result = await _parserProxyManagementService.GetRuntimeAssignmentsAsync(parserInstanceId, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("runtime/review-sync-state")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(ParserRuntimeReviewSyncStateDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<ParserRuntimeReviewSyncStateDto>> GetRuntimeReviewSyncState(
+        [FromQuery] string? wbProductId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsParserApiKeyValid())
+        {
+            return Problem(
+                title: "Unauthorized",
+                detail: "Parser API key is invalid.",
+                statusCode: StatusCodes.Status401Unauthorized,
+                type: "https://httpstatuses.com/401");
+        }
+
+        var result = await _parserProxyManagementService.GetRuntimeReviewSyncStateAsync(wbProductId, cancellationToken);
+        return ToActionResult(result);
     }
 
     [HttpPost("price-split/jobs/ensure")]
@@ -376,6 +426,9 @@ public sealed class ParserController : ControllerBase
             ServiceErrorType.BadRequest => StatusCodes.Status400BadRequest,
             ServiceErrorType.NotFound => StatusCodes.Status404NotFound,
             ServiceErrorType.Conflict => StatusCodes.Status409Conflict,
+            ServiceErrorType.Unauthorized => StatusCodes.Status401Unauthorized,
+            ServiceErrorType.Forbidden => StatusCodes.Status403Forbidden,
+            ServiceErrorType.Unavailable => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError
         };
 
@@ -393,7 +446,23 @@ public sealed class ParserController : ControllerBase
             ServiceErrorType.BadRequest => "Invalid request",
             ServiceErrorType.NotFound => "Resource not found",
             ServiceErrorType.Conflict => "Conflict",
+            ServiceErrorType.Unauthorized => "Unauthorized",
+            ServiceErrorType.Forbidden => "Forbidden",
+            ServiceErrorType.Unavailable => "Service unavailable",
             _ => "Unexpected error"
         };
+    }
+
+    private bool IsParserApiKeyValid()
+    {
+        var expected = _configuration["PARSER_API_KEY"];
+        if (string.IsNullOrWhiteSpace(expected))
+            expected = _configuration["Parser:ApiKey"];
+
+        if (string.IsNullOrWhiteSpace(expected))
+            return true;
+
+        var actual = Request.Headers["X-Parser-Api-Key"].FirstOrDefault();
+        return string.Equals(actual, expected, StringComparison.Ordinal);
     }
 }

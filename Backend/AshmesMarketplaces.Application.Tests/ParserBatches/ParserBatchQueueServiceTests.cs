@@ -44,6 +44,41 @@ public sealed class ParserBatchQueueServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_backfills_proxy_run_metadata_for_existing_idempotent_batch()
+    {
+        await using var context = CreateContext();
+        var run = new ParserProxyRun(
+            "parser-1",
+            "cycle-1:proxy-1:category:niche",
+            "cycle-1",
+            ParserProxyRunCycleKinds.Diagnostic,
+            "proxy-1",
+            "category",
+            "niche",
+            100,
+            0,
+            "203.0.113.10",
+            null,
+            "valid",
+            DateTime.UtcNow);
+        context.ParserProxyRuns.Add(run);
+        await context.SaveChangesAsync();
+        var service = new ParserBatchQueueService(context);
+
+        var first = await service.SubmitAsync(CreateRequest(), CancellationToken.None);
+        var second = await service.SubmitAsync(
+            CreateRequest(parserCycleId: "cycle-1", externalProxyRunId: run.ExternalProxyRunId),
+            CancellationToken.None);
+
+        Assert.True(first.IsSuccess);
+        Assert.True(second.IsSuccess);
+        var batch = await context.ParserBatchSubmissions.SingleAsync();
+        Assert.Equal(run.Id, batch.ParserProxyRunId);
+        Assert.Equal("cycle-1", batch.ParserCycleId);
+        Assert.Equal(run.ExternalProxyRunId, batch.ExternalProxyRunId);
+    }
+
+    [Fact]
     public async Task SubmitAsync_rejects_duplicate_batch_id_with_different_payload_hash()
     {
         await using var context = CreateContext();
@@ -107,7 +142,9 @@ public sealed class ParserBatchQueueServiceTests
     private static ParserBatchSubmitRequest CreateRequest(
         string externalBatchId = "batch-1",
         string payload = """{"items":[{"wbProductId":"1"}]}""",
-        string? contentHash = null)
+        string? contentHash = null,
+        string? parserCycleId = null,
+        string? externalProxyRunId = null)
     {
         using var document = JsonDocument.Parse(payload);
         return new ParserBatchSubmitRequest(
@@ -118,7 +155,9 @@ public sealed class ParserBatchQueueServiceTests
             "local-proxy",
             "full",
             contentHash,
-            document.RootElement.Clone());
+            document.RootElement.Clone(),
+            parserCycleId,
+            externalProxyRunId);
     }
 
     private static ApplicationDbContext CreateContext()
@@ -142,6 +181,7 @@ public sealed class ParserBatchQueueServiceTests
             {
                 typeof(ParserInstance),
                 typeof(ParserNicheAssignment),
+                typeof(ParserProxyRun),
                 typeof(ParserBatchSubmission),
                 typeof(ParserBatchArtifact),
                 typeof(ParserBatchSubmissionEvent)
@@ -159,6 +199,11 @@ public sealed class ParserBatchQueueServiceTests
                 builder.Property(x => x.Id).ValueGeneratedNever();
             });
             modelBuilder.Entity<ParserNicheAssignment>(builder =>
+            {
+                builder.HasKey(x => x.Id);
+                builder.Property(x => x.Id).ValueGeneratedNever();
+            });
+            modelBuilder.Entity<ParserProxyRun>(builder =>
             {
                 builder.HasKey(x => x.Id);
                 builder.Property(x => x.Id).ValueGeneratedNever();

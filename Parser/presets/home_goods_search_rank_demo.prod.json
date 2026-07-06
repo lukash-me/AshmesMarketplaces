@@ -17,9 +17,9 @@
                      {
                          "id":  "home_storage_organizers",
                          "type":  "search_query",
-                         "source_category":  "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                         "source_subcategory":  "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№",
-                         "query":  "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№",
+                         "source_category":  "Товары для дома",
+                         "source_subcategory":  "Органайзеры для хранения вещей",
+                         "query":  "Органайзеры для хранения вещей",
                          "filters":  {
 
                                      }
@@ -27,9 +27,9 @@
                      {
                          "id":  "home_bath_mats",
                          "type":  "search_query",
-                         "source_category":  "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                         "source_subcategory":  "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
-                         "query":  "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
+                         "source_category":  "Товары для дома",
+                         "source_subcategory":  "Коврики для ванной",
+                         "query":  "Коврики для ванной",
                          "filters":  {
 
                                      }
@@ -37,9 +37,9 @@
                      {
                          "id":  "home_wall_sconces",
                          "type":  "search_query",
-                         "source_category":  "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                         "source_subcategory":  "РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°",
-                         "query":  "РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°",
+                         "source_category":  "Товары для дома",
+                         "source_subcategory":  "Светильники бра",
+                         "query":  "Светильники бра",
                          "filters":  {
 
                                      }

@@ -41,6 +41,22 @@ public sealed class PublicMarketIntelligenceSnapshotReadService : IPublicMarketI
             .FirstOrDefaultAsync(cancellationToken);
 
         if (snapshot is null)
+        {
+            snapshot = await _dbContext.PublicMarketIntelligenceSnapshots
+                .AsNoTracking()
+                .Where(x =>
+                    x.SourceCategory == context.SourceCategory
+                    && x.SourceSubcategory == context.SourceSubcategory
+                    && x.SourceRegionDest == context.SourceRegionDest
+                    && x.Sort == context.Sort
+                    && x.TopN == context.TopN
+                    && x.CalculatedAtUtc != null
+                    && x.Status == PublicMarketIntelligenceSnapshot.CompletedStatus)
+                .OrderByDescending(x => x.CalculatedAtUtc)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (snapshot is null)
             return ServiceResult<PublicMarketIntelligenceDto>.NotFound("Маркетинговая разведка еще не рассчитана.");
 
         var dto = JsonSerializer.Deserialize<PublicMarketIntelligenceDto>(

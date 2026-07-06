@@ -53,13 +53,26 @@ For smoke checks, limit one cycle without changing presets:
 `Parser/app/market_refresh.py` remains the lower-level pipeline entrypoint used
 by the cycle runner and by legacy manual diagnostics.
 
-## Proxy mapping and niche scheduling
+## Proxy management and niche scheduling
 
-Production presets point to `Parser/presets/production/proxy_mapping.json`.
-If `Parser/presets/production/proxy_mapping.local.json` exists, it is used
-instead. The tracked file is a safe fallback without credentials; the local file
-may contain real `http-proxy` definitions with `baseUrl`, `socks5Url` and
-credentials. Version 1 uses only HTTP proxy transport.
+Production proxy settings are stored in the backend database and are managed
+from the admin UI (`Parser monitoring` -> `Proxies`). The parser supervisor
+loads runtime assignments from:
+
+```text
+GET /api/v1/parser/runtime/proxy-assignments
+```
+
+Use `PARSER_BATCH_QUEUE_URL` or `PARSER_RUNTIME_PROXY_ASSIGNMENTS_URL` to point
+the supervisor to the API, and `PARSER_API_KEY` when the backend is configured
+to require `X-Parser-Api-Key`.
+
+The tracked `Parser/presets/production/proxy_mapping.json` remains only a safe
+development fallback without credentials. `proxy_mapping.local.json` is not a
+production source of truth anymore and should not be used in normal runbooks.
+After deployment, add proxies manually in the UI and assign WB leaf niches from
+the WB category dropdown. Proxies without a niche are visible in the UI but are
+excluded from runtime launches.
 
 During batched processing every complete-card batch records the selected
 `proxyKey` in the pipeline manifest and passes proxy transport to child steps
@@ -110,8 +123,9 @@ Backend and frontend development can continue with VPN enabled; parser execution
 
 WB browser cookies are acquired through Playwright persistent contexts. Sessions
 are scoped by `proxyKey`: every proxy has its own browser profile, cookie jar,
-`x_wbaas_token`, cooldown and error state. Credentials are read from
-`proxy_mapping.local.json` and must not be committed.
+`x_wbaas_token`, cooldown and error state. Credentials are received from the
+backend runtime proxy assignments endpoint. Do not store production proxy
+credentials in parser config files.
 
 Local setup:
 
@@ -321,17 +335,17 @@ For the home-goods demo run reviews per selected subcategory so one artifact pre
 ```powershell
 & .\Parser\.venv\Scripts\python.exe .\Parser\pipelines\reviews\runner.py `
   --products-run-dir .\Parser\output\runs\<home_goods_products_run_id> `
-  --source-subcategory "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№" `
+  --source-subcategory "Органайзеры для хранения вещей" `
   --limit-products 10 `
   --smoke-only
 
 & .\Parser\.venv\Scripts\python.exe .\Parser\pipelines\reviews\runner.py `
   --products-run-dir .\Parser\output\runs\<home_goods_products_run_id> `
-  --source-subcategory "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№" `
+  --source-subcategory "Органайзеры для хранения вещей" `
   --limit-products 100
 ```
 
-Repeat the subcategory-specific review smoke and bounded run for `РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№` and `РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°` after the product manifest and sample rows look presentable.
+Repeat the subcategory-specific review smoke and bounded run for `Коврики для ванной` and `Светильники бра` after the product manifest and sample rows look presentable.
 
 Resume a review run with its existing scope:
 

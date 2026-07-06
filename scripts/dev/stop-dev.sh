@@ -82,9 +82,9 @@ if [[ "$STOP_DOCKER" == "true" ]]; then
     exit 0
   fi
 
-  step "Stopping PostgreSQL and pgAdmin containers..."
+  step "Stopping PostgreSQL, pgAdmin, and Intelligence containers..."
   DOCKER_BIN="$(resolve_command docker docker docker.exe)"
-  "$DOCKER_BIN" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" stop postgres pgadmin
+  "$DOCKER_BIN" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" stop postgres pgadmin intelligence
 fi
 
 step "Done."

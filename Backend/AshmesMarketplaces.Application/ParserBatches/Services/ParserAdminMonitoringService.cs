@@ -1,4 +1,4 @@
-using AshmesMarketplaces.Application.Auth.Security;
+﻿using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.ParserBatches.Dtos;
 using AshmesMarketplaces.DataAccess;
@@ -29,10 +29,20 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             return AccessError<IReadOnlyList<ParserAdminInstanceDto>>(access.Error!);
 
         var now = DateTime.UtcNow;
-        var instances = await _dbContext.ParserInstances
+        var configuredInstances = await _dbContext.ParserInstanceConfigurations
+            .AsNoTracking()
+            .Include(x => x.ProxyAssignments.Where(a => a.Enabled))
+            .ThenInclude(x => x.Proxy)
+            .ThenInclude(x => x!.Assignment)
+            .Where(x => x.Status == ParserInstanceConfigurationStatuses.Active)
+            .OrderBy(x => x.ParserInstanceId)
+            .ToListAsync(cancellationToken);
+
+        var runtimeInstances = await _dbContext.ParserInstances
             .AsNoTracking()
             .OrderByDescending(x => x.LastSeenAtUtc)
             .ToListAsync(cancellationToken);
+        var runtimeById = runtimeInstances.ToDictionary(x => x.ParserInstanceId, StringComparer.OrdinalIgnoreCase);
 
         var runs = await _dbContext.ParserProxyRuns
             .AsNoTracking()
@@ -43,42 +53,25 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             .GroupBy(x => x.ParserInstanceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.OrdinalIgnoreCase);
 
-        var result = instances
-            .Select(instance =>
-            {
-                runsByInstance.TryGetValue(instance.ParserInstanceId, out var instanceRuns);
-                instanceRuns ??= [];
-                var latestRunKey = LatestMonitoringCycleId(instanceRuns);
-                var latestRuns = latestRunKey is not null
-                    ? instanceRuns
-                        .Where(x => x.ParserCycleId == latestRunKey ||
-                                    (x.Status == ParserProxyRunStatuses.Running &&
-                                     x.CycleKind == ParserProxyRunCycleKinds.Production))
-                        .OrderBy(x => x.ProxyKey)
-                        .ThenBy(x => x.SourceSubcategory)
-                        .ToList()
-                    : [];
-                var proxies = latestRuns.Select(x => MapProxyRun(x, now)).ToList();
-                var planned = proxies.Sum(x => x.PlannedProductsCount);
-                var downloaded = proxies.Sum(x => x.DownloadedProductsCount);
-                var startedAt = proxies.Count > 0 ? proxies.Min(x => x.StartedAtUtc) : instance.LastSeenAtUtc;
-                var finishedAt = proxies.Count > 0 && proxies.All(x => x.FinishedAtUtc.HasValue)
-                    ? proxies.Max(x => x.FinishedAtUtc)
-                    : null;
-                return new ParserAdminInstanceDto(
-                    instance.Id,
-                    instance.ParserInstanceId,
-                    instance.DisplayName,
-                    proxies.Count(x => x.Status == ParserProxyRunStatuses.Running),
-                    proxies.Count,
-                    planned,
-                    downloaded,
-                    Percent(downloaded, planned),
-                    RuntimeMinutes(startedAt, finishedAt, now),
-                    instance.LastSeenAtUtc,
-                    proxies);
-            })
+        var activeLaunches = await _dbContext.ParserLaunchRequests
+            .AsNoTracking()
+            .Where(x => ParserLaunchRequestStatuses.Active.Contains(x.Status))
+            .OrderByDescending(x => x.RequestedAtUtc)
+            .ToListAsync(cancellationToken);
+        var activeLaunchesByInstance = activeLaunches
+            .GroupBy(x => x.ParserInstanceConfigurationId)
+            .ToDictionary(x => x.Key, x => x.ToList());
+
+        var result = configuredInstances
+            .Select(config => MapConfiguredInstance(config, runtimeById, runsByInstance, activeLaunchesByInstance, now))
             .ToList();
+
+        var configuredIds = configuredInstances
+            .Select(x => x.ParserInstanceId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        result.AddRange(runtimeInstances
+            .Where(x => !configuredIds.Contains(x.ParserInstanceId))
+            .Select(instance => MapRuntimeOnlyInstance(instance, runsByInstance, now)));
 
         return ServiceResult<IReadOnlyList<ParserAdminInstanceDto>>.Success(result);
     }
@@ -96,38 +89,93 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         pageSize = Math.Clamp(pageSize <= 0 ? 50 : pageSize, 1, MaxPageSize);
 
         var now = DateTime.UtcNow;
-        var journal = await _dbContext.ParserProxyRuns
+        var runs = await _dbContext.ParserProxyRuns
             .AsNoTracking()
             .Where(x => x.Status == ParserProxyRunStatuses.Completed ||
-                        x.Status == ParserProxyRunStatuses.Failed)
+                        x.Status == ParserProxyRunStatuses.Failed ||
+                        x.Status == ParserProxyRunStatuses.Interrupted)
             .OrderByDescending(x => x.FinishedAtUtc)
             .ThenByDescending(x => x.StartedAtUtc)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(x => new ParserAdminProxyRunJournalDto(
-                x.Id,
-                x.ParserInstanceId,
-                x.ParserCycleId,
-                x.CycleKind,
-                x.ExternalProxyRunId,
-                x.ProxyKey,
-                x.SourceCategory,
-                x.SourceSubcategory,
-                x.EgressIp,
-                x.TokenRef,
-                x.SessionStatus,
-                x.Status,
-                x.Phase,
-                x.PlannedProductsCount,
-                x.DownloadedProductsCount,
-                x.PlannedRangesCount,
-                x.CompletedRangesCount,
-                x.RangeProgressPercent,
-                x.StartedAtUtc,
-                x.FinishedAtUtc,
-                RuntimeMinutes(x.StartedAtUtc, x.FinishedAtUtc, now),
-                x.Error))
             .ToListAsync(cancellationToken);
+
+        var runIds = runs.Select(x => x.Id).ToList();
+        var productEffects = runIds.Count == 0
+            ? []
+            : await _dbContext.ParserRunProductEffects
+                .AsNoTracking()
+                .Where(x => runIds.Contains(x.ParserProxyRunId))
+                .Select(x => new
+                {
+                    x.ParserProxyRunId,
+                    x.WbProductId,
+                    x.EffectType
+                })
+                .ToListAsync(cancellationToken);
+        var productEffectCounts = productEffects
+            .GroupBy(x => x.ParserProxyRunId)
+            .ToDictionary(
+                group => group.Key,
+                group =>
+                {
+                    var createdProductIds = group
+                        .Where(x => x.EffectType == ParserRunProductEffectTypes.Created)
+                        .Select(x => x.WbProductId)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToHashSet(StringComparer.Ordinal);
+                    var updatedProductsCount = group
+                        .Where(x => x.EffectType == ParserRunProductEffectTypes.Updated &&
+                                    !createdProductIds.Contains(x.WbProductId))
+                        .Select(x => x.WbProductId)
+                        .Distinct(StringComparer.Ordinal)
+                        .Count();
+                    return new ProductEffectCounts(createdProductIds.Count, updatedProductsCount, true);
+                });
+
+        var journal = runs
+            .Select(x =>
+            {
+                productEffectCounts.TryGetValue(x.Id, out var effectCounts);
+                effectCounts ??= ProductEffectCounts.Empty;
+                return new ParserAdminProxyRunJournalDto(
+                    x.Id,
+                    x.ParserInstanceId,
+                    x.ParserCycleId,
+                    x.CycleKind,
+                    x.ExternalProxyRunId,
+                    x.ProxyKey,
+                    x.SourceCategory,
+                    x.SourceSubcategory,
+                    x.EgressIp,
+                    x.TokenRef,
+                    x.SessionStatus,
+                    x.Status,
+                    x.Phase,
+                    x.PlannedProductsCount,
+                    x.DownloadedProductsCount,
+                    effectCounts.CreatedProductsCount,
+                    effectCounts.UpdatedProductsCount,
+                    effectCounts.HasProductEffectsLedger,
+                    x.PlannedRangesCount,
+                    x.CompletedRangesCount,
+                    x.RangeProgressPercent,
+                    x.RangeChecksCount,
+                    x.FinalRangesCount,
+                    x.EmptyRangesCount,
+                    x.SplitRangesCount,
+                    x.StartedAtUtc,
+                    x.LastHeartbeatAtUtc,
+                    x.FinishedAtUtc,
+                    RuntimeMinutes(
+                        x.StartedAtUtc,
+                        x.Status == ParserProxyRunStatuses.Interrupted ? x.LastHeartbeatAtUtc : x.FinishedAtUtc,
+                        now),
+                    Rate(x.DownloadedProductsCount, x.StartedAtUtc, x.LastHeartbeatAtUtc),
+                    Rate(x.RangeChecksCount, x.StartedAtUtc, x.LastHeartbeatAtUtc),
+                    x.Error);
+            })
+            .ToList();
 
         return ServiceResult<IReadOnlyList<ParserAdminProxyRunJournalDto>>.Success(journal);
     }
@@ -375,6 +423,201 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             batch.CompletedAtUtc,
             batch.Error);
 
+    private static ParserAdminInstanceDto MapConfiguredInstance(
+        ParserInstanceConfiguration config,
+        IReadOnlyDictionary<string, ParserInstance> runtimeById,
+        IReadOnlyDictionary<string, List<ParserProxyRun>> runsByInstance,
+        IReadOnlyDictionary<Guid, List<ParserLaunchRequest>> activeLaunchesByInstance,
+        DateTime now)
+    {
+        runtimeById.TryGetValue(config.ParserInstanceId, out var runtimeInstance);
+        runsByInstance.TryGetValue(config.ParserInstanceId, out var instanceRuns);
+        activeLaunchesByInstance.TryGetValue(config.Id, out var activeLaunches);
+        activeLaunches ??= [];
+        instanceRuns ??= [];
+        var latestRuns = LatestRuns(instanceRuns);
+        var latestByProxy = latestRuns
+            .GroupBy(x => x.ProxyKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.OrderByDescending(run => run.StartedAtUtc).First(), StringComparer.OrdinalIgnoreCase);
+
+        var proxies = new List<ParserAdminProxyRunDto>();
+        foreach (var assignment in config.ProxyAssignments.Where(x => x.Enabled && x.Proxy is not null).OrderBy(x => x.Proxy!.Key))
+        {
+            var proxyKey = assignment.Proxy!.Key;
+            var activeLaunch = ActiveLaunchForProxy(activeLaunches, proxyKey);
+            var hasLatestRun = latestByProxy.Remove(proxyKey, out var run);
+            if (hasLatestRun && run is not null && ShouldShowRunOverLaunch(run, activeLaunch))
+            {
+                proxies.Add(MapProxyRun(run, now));
+            }
+            else if (activeLaunch is not null)
+            {
+                proxies.Add(MapQueuedProxy(assignment, activeLaunch, now));
+            }
+            else if (run is not null)
+            {
+                proxies.Add(MapProxyRun(run, now));
+            }
+            else
+            {
+                proxies.Add(MapConfiguredProxy(assignment, config.UpdatedAtUtc));
+            }
+        }
+
+        proxies.AddRange(latestByProxy.Values.OrderBy(x => x.ProxyKey).Select(x => MapProxyRun(x, now)));
+
+        var planned = proxies.Sum(x => x.PlannedProductsCount);
+        var downloaded = proxies.Sum(x => x.DownloadedProductsCount);
+        var hasRuntimeRuns = proxies.Any(x => x.Status != "configured");
+        var startedAt = hasRuntimeRuns
+            ? proxies.Where(x => x.Status != "configured").Select(x => (DateTime?)x.StartedAtUtc).Min()
+                ?? runtimeInstance?.LastSeenAtUtc
+                ?? config.UpdatedAtUtc
+            : config.UpdatedAtUtc;
+        var finishedAt = proxies.Count > 0 &&
+                         proxies.All(x => x.Status == "configured" || EffectiveRuntimeEnd(x) is not null)
+            ? proxies.Select(EffectiveRuntimeEnd).Where(x => x.HasValue).Max()
+            : null;
+
+        return new ParserAdminInstanceDto(
+            config.Id,
+            config.ParserInstanceId,
+            config.DisplayName,
+            proxies.Count(IsActiveProxyState),
+            config.ProxyAssignments.Count(x => x.Enabled),
+            planned,
+            downloaded,
+            Percent(downloaded, planned),
+            hasRuntimeRuns ? RuntimeMinutes(startedAt, finishedAt, now) : 0,
+            runtimeInstance?.LastSeenAtUtc ?? config.UpdatedAtUtc,
+            proxies);
+    }
+
+    private static ParserAdminInstanceDto MapRuntimeOnlyInstance(
+        ParserInstance instance,
+        IReadOnlyDictionary<string, List<ParserProxyRun>> runsByInstance,
+        DateTime now)
+    {
+        runsByInstance.TryGetValue(instance.ParserInstanceId, out var instanceRuns);
+        instanceRuns ??= [];
+        var proxies = LatestRuns(instanceRuns).Select(x => MapProxyRun(x, now)).ToList();
+        var planned = proxies.Sum(x => x.PlannedProductsCount);
+        var downloaded = proxies.Sum(x => x.DownloadedProductsCount);
+        var startedAt = proxies.Count > 0 ? proxies.Min(x => x.StartedAtUtc) : instance.LastSeenAtUtc;
+        var finishedAt = proxies.Count > 0 && proxies.All(x => EffectiveRuntimeEnd(x) is not null)
+            ? proxies.Select(EffectiveRuntimeEnd).Where(x => x.HasValue).Max()
+            : null;
+
+        return new ParserAdminInstanceDto(
+            instance.Id,
+            instance.ParserInstanceId,
+            instance.DisplayName,
+            proxies.Count(x => x.Status == ParserProxyRunStatuses.Running),
+            proxies.Count,
+            planned,
+            downloaded,
+            Percent(downloaded, planned),
+            RuntimeMinutes(startedAt, finishedAt, now),
+            instance.LastSeenAtUtc,
+            proxies);
+    }
+
+    private static List<ParserProxyRun> LatestRuns(IReadOnlyList<ParserProxyRun> instanceRuns)
+    {
+        var latestRunKey = LatestMonitoringCycleId(instanceRuns);
+        return latestRunKey is not null
+            ? instanceRuns
+                .Where(x => x.ParserCycleId == latestRunKey ||
+                            (x.Status == ParserProxyRunStatuses.Running &&
+                             x.CycleKind == ParserProxyRunCycleKinds.Production))
+                .OrderBy(x => x.ProxyKey)
+                .ThenBy(x => x.SourceSubcategory)
+                .ToList()
+            : [];
+    }
+
+    private static ParserAdminProxyRunDto MapConfiguredProxy(
+        ParserInstanceProxyAssignment assignment,
+        DateTime timestampUtc)
+    {
+        var proxy = assignment.Proxy!;
+        var niche = proxy.Assignment;
+        return new ParserAdminProxyRunDto(
+            assignment.Id,
+            $"configured:{proxy.Key}",
+            string.Empty,
+            "configured",
+            proxy.Key,
+            niche?.SourceCategory ?? string.Empty,
+            niche?.SourceSubcategory ?? "Без ниши",
+            proxy.Ip,
+            null,
+            null,
+            "configured",
+            "idle",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            timestampUtc,
+            timestampUtc,
+            null,
+            null,
+            0,
+            0,
+            0,
+            niche is { Enabled: true } ? null : "Ниша не назначена или отключена.");
+    }
+
+    private static ParserAdminProxyRunDto MapQueuedProxy(
+        ParserInstanceProxyAssignment assignment,
+        ParserLaunchRequest launch,
+        DateTime now)
+    {
+        var proxy = assignment.Proxy!;
+        var niche = proxy.Assignment;
+        var plannedProductsCount = launch.LaunchMode == ParserLaunchModes.FullAll
+            ? 0
+            : Math.Max(0, launch.BatchLimit ?? 0) * 100;
+        return new ParserAdminProxyRunDto(
+            launch.Id,
+            $"launch:{launch.Id}:{proxy.Key}",
+            string.Empty,
+            "launch",
+            proxy.Key,
+            niche?.SourceCategory ?? string.Empty,
+            niche?.SourceSubcategory ?? "Без ниши",
+            proxy.Ip,
+            null,
+            null,
+            ParserLaunchRequestStatuses.Queued,
+            ParserLaunchRequestStatuses.Queued,
+            plannedProductsCount,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            launch.RequestedAtUtc,
+            launch.StartedAtUtc ?? launch.RequestedAtUtc,
+            null,
+            null,
+            RuntimeMinutes(launch.RequestedAtUtc, null, now),
+            0,
+            0,
+            null);
+    }
+
     private static ParserAdminProxyRunDto MapProxyRun(
         ParserProxyRun run,
         DateTime now)
@@ -397,11 +640,18 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             run.PlannedRangesCount,
             run.CompletedRangesCount,
             run.RangeProgressPercent,
+            run.RangeChecksCount,
+            run.FinalRangesCount,
+            run.EmptyRangesCount,
+            run.SplitRangesCount,
             Percent(run.DownloadedProductsCount, run.PlannedProductsCount),
             run.StartedAtUtc,
             run.LastHeartbeatAtUtc,
+            run.LastHeartbeatAtUtc,
             run.FinishedAtUtc,
-            RuntimeMinutes(run.StartedAtUtc, run.FinishedAtUtc, now),
+            RuntimeMinutes(run.StartedAtUtc, EffectiveRuntimeEnd(run), now),
+            Rate(run.DownloadedProductsCount, run.StartedAtUtc, run.LastHeartbeatAtUtc),
+            Rate(run.RangeChecksCount, run.StartedAtUtc, run.LastHeartbeatAtUtc),
             run.Error);
     }
 
@@ -420,6 +670,54 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         return Math.Max(0, (int)Math.Round((end - startedAtUtc).TotalMinutes, MidpointRounding.AwayFromZero));
     }
 
+    private static DateTime? EffectiveRuntimeEnd(ParserProxyRun run)
+    {
+        return run.Status == ParserProxyRunStatuses.Interrupted
+            ? run.LastHeartbeatAtUtc
+            : run.FinishedAtUtc;
+    }
+
+    private static DateTime? EffectiveRuntimeEnd(ParserAdminProxyRunDto run)
+    {
+        return run.Status == ParserProxyRunStatuses.Interrupted
+            ? run.LastHeartbeatAtUtc
+            : run.FinishedAtUtc;
+    }
+
+    private static ParserLaunchRequest? ActiveLaunchForProxy(
+        IReadOnlyList<ParserLaunchRequest> activeLaunches,
+        string proxyKey)
+    {
+        return activeLaunches.FirstOrDefault(x =>
+            x.LaunchMode == ParserLaunchModes.CheckProxy
+                ? string.Equals(x.ProxyKey, proxyKey, StringComparison.OrdinalIgnoreCase)
+                : true);
+    }
+
+    private static bool IsActiveProxyState(ParserAdminProxyRunDto proxy)
+    {
+        return proxy.Status is ParserProxyRunStatuses.Running or ParserLaunchRequestStatuses.Queued;
+    }
+
+    private static bool ShouldShowRunOverLaunch(ParserProxyRun run, ParserLaunchRequest? activeLaunch)
+    {
+        if (activeLaunch is null)
+            return true;
+
+        if (run.Status == ParserProxyRunStatuses.Running)
+            return true;
+
+        return string.Equals(run.ParserCycleId, activeLaunch.ParserCycleId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static double Rate(int count, DateTime startedAtUtc, DateTime? lastActivityAtUtc)
+    {
+        if (count <= 0 || !lastActivityAtUtc.HasValue || lastActivityAtUtc.Value <= startedAtUtc)
+            return 0;
+
+        return Math.Round(count / Math.Max(1, (lastActivityAtUtc.Value - startedAtUtc).TotalSeconds), 2);
+    }
+
     private static string NicheKey(string sourceCategory, string sourceSubcategory) =>
         $"{sourceCategory}\u001f{sourceSubcategory}";
 
@@ -429,6 +727,14 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             return null;
 
         return runs.OrderByDescending(x => x.StartedAtUtc).First().ParserCycleId;
+    }
+
+    private sealed record ProductEffectCounts(
+        int CreatedProductsCount,
+        int UpdatedProductsCount,
+        bool HasProductEffectsLedger)
+    {
+        public static ProductEffectCounts Empty { get; } = new(0, 0, false);
     }
 
 }

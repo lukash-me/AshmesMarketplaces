@@ -27,8 +27,11 @@ public sealed class PublicMarketConcentrationRefreshService : IPublicMarketConce
     {
         var snapshots = new List<PublicMarketConcentrationSnapshotDto>();
         var errors = new List<string>();
+        var contexts = await LoadAvailableContextsAsync(cancellationToken);
+        if (contexts.Count == 0)
+            return ServiceResult<IReadOnlyList<PublicMarketConcentrationSnapshotDto>>.NotFound("Наблюдения для расчета концентрации рынка не найдены.");
 
-        foreach (var context in PublicMarketIntelligenceContextCatalog.All)
+        foreach (var context in contexts)
         {
             var result = await RefreshAsync(context, cancellationToken);
             if (result.IsSuccess)
@@ -44,6 +47,41 @@ public sealed class PublicMarketConcentrationRefreshService : IPublicMarketConce
         return errors.Count == 0
             ? ServiceResult<IReadOnlyList<PublicMarketConcentrationSnapshotDto>>.Success(snapshots)
             : ServiceResult<IReadOnlyList<PublicMarketConcentrationSnapshotDto>>.Unavailable(string.Join("; ", errors));
+    }
+
+    private async Task<IReadOnlyList<PublicMarketIntelligenceQuery>> LoadAvailableContextsAsync(CancellationToken cancellationToken)
+    {
+        var contexts = await _dbContext.ParserRankSnapshotRows
+            .AsNoTracking()
+            .Where(x =>
+                x.SourceCategory != null
+                && x.SourceSubcategory != null
+                && x.SourceRegionDest != null
+                && x.Sort != null)
+            .Select(x => new
+            {
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.Query,
+                x.SourceRegionDest,
+                x.Sort
+            })
+            .Distinct()
+            .OrderBy(x => x.SourceSubcategory)
+            .ThenBy(x => x.Query)
+            .ToListAsync(cancellationToken);
+
+        return contexts
+            .Select(x => new PublicMarketIntelligenceQuery
+            {
+                SourceCategory = x.SourceCategory,
+                SourceSubcategory = x.SourceSubcategory,
+                Query = x.Query,
+                SourceRegionDest = x.SourceRegionDest,
+                Sort = x.Sort,
+                TopN = PublicMarketIntelligenceContextCatalog.TopN
+            })
+            .ToList();
     }
 
     public async Task<ServiceResult<PublicMarketConcentrationSnapshotDto>> RefreshAsync(

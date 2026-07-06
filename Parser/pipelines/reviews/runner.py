@@ -30,8 +30,17 @@ except ModuleNotFoundError as exception:
     raise SystemExit(1) from exception
 
 from config import BASE_DIR, ReviewsParserConfig
+from app.runtime_review_sync_state import (
+    ReviewSyncState,
+    load_runtime_review_sync_state,
+    runtime_review_sync_state_url,
+)
 from manifest import get_git_commit, utc_now_iso
-from review_contracts import SelectedProduct, map_feedback_payload
+from review_contracts import (
+    ROOT_VARIANT_FILTERED_ATTRIBUTION_MODE,
+    SelectedProduct,
+    map_feedback_payload,
+)
 from review_exporters import (
     ReviewCanonicalExporter,
     append_jsonl,
@@ -51,6 +60,31 @@ class RootWorkItem:
     @property
     def selected_wb_product_ids(self) -> list[str]:
         return sorted(self.selected_products.keys())
+
+    @property
+    def wb_product_id(self) -> str | None:
+        return None
+
+
+@dataclass(frozen=True)
+class ProductWorkItem:
+    product: SelectedProduct
+
+    @property
+    def wb_root_id(self) -> str:
+        return self.product.wb_root_id
+
+    @property
+    def wb_product_id(self) -> str:
+        return self.product.wb_product_id
+
+    @property
+    def selected_products(self) -> dict[str, SelectedProduct]:
+        return {self.product.wb_product_id: self.product}
+
+    @property
+    def selected_wb_product_ids(self) -> list[str]:
+        return [self.product.wb_product_id]
 
 
 @dataclass(frozen=True)
@@ -73,10 +107,26 @@ def _output_paths(run_dir: Path) -> dict[str, Path]:
         "reviews_jsonl": run_dir / "reviews.jsonl",
         "review_replies_jsonl": run_dir / "review_replies.jsonl",
         "review_fetch_results_jsonl": run_dir / "review_fetch_results.jsonl",
+        "review_coverage_jsonl": run_dir / "review_coverage.jsonl",
         "errors_jsonl": run_dir / "errors.jsonl",
         "runner_log": run_dir / "runner.log",
         "raw_root_feedbacks": run_dir / "raw" / "root_feedbacks",
+        "raw_product_feedbacks": run_dir / "raw" / "product_feedbacks",
     }
+
+
+def _ensure_contract_files(output_paths: dict[str, Path]) -> None:
+    for key in (
+        "reviews_jsonl",
+        "review_replies_jsonl",
+        "review_fetch_results_jsonl",
+        "review_coverage_jsonl",
+        "errors_jsonl",
+        "runner_log",
+    ):
+        path = output_paths[key]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
 
 
 def _resolve_products_source(
@@ -191,6 +241,7 @@ def _load_products(
             product = SelectedProduct(
                 wb_product_id=wb_product_id,
                 wb_root_id=wb_root_id,
+                feedback_count=_int_or_none(row.get("feedback_count")),
                 source_category=row.get("source_category"),
                 source_subcategory=row.get("source_subcategory"),
                 source_query=row.get("source_query"),
@@ -207,6 +258,20 @@ def _load_products(
     ]
 
 
+def _to_review_work_items(
+    root_items: list[RootWorkItem],
+    config: ReviewsParserConfig,
+) -> list[RootWorkItem | ProductWorkItem]:
+    if config.fetch_mode == "root_capped_fallback":
+        return root_items
+
+    return [
+        ProductWorkItem(product=product)
+        for root_item in root_items
+        for product in root_item.selected_products.values()
+    ]
+
+
 def _completed_root_ids(fetch_results_path: Path) -> set[str]:
     completed: set[str] = set()
     for row in iter_jsonl(fetch_results_path) or []:
@@ -218,23 +283,40 @@ def _completed_root_ids(fetch_results_path: Path) -> set[str]:
     return completed
 
 
+def _completed_product_ids(fetch_results_path: Path) -> set[str]:
+    completed: set[str] = set()
+    for row in iter_jsonl(fetch_results_path) or []:
+        status = row.get("status")
+        if status in {"success", "empty", "skipped"}:
+            product_id = _string_id(row.get("source_wb_product_id"))
+            if product_id:
+                completed.add(product_id)
+    return completed
+
+
 async def _smoke_probe(
     *,
     config: ReviewsParserConfig,
-    work_item: RootWorkItem,
+    work_item: RootWorkItem | ProductWorkItem,
 ) -> ReviewFetchResult:
     async with WbReviewsClient(config) as client:
+        if isinstance(work_item, ProductWorkItem):
+            return await client.fetch_root_variant(
+                wb_product_id=work_item.wb_product_id,
+                wb_root_id=work_item.wb_root_id,
+                marketplace_feedback_count=work_item.product.feedback_count,
+            )
         return await client.smoke_probe(work_item.wb_root_id)
 
 
 async def _run_worklist(
     *,
     config: ReviewsParserConfig,
-    work_items: list[RootWorkItem],
-    handler: Callable[[RootWorkItem, ReviewFetchResult], None],
+    work_items: list[RootWorkItem | ProductWorkItem],
+    handler: Callable[[RootWorkItem | ProductWorkItem, ReviewFetchResult], None],
 ) -> None:
-    work_queue: asyncio.Queue[RootWorkItem | None] = asyncio.Queue()
-    result_queue: asyncio.Queue[tuple[RootWorkItem, ReviewFetchResult]] = asyncio.Queue()
+    work_queue: asyncio.Queue[RootWorkItem | ProductWorkItem | None] = asyncio.Queue()
+    result_queue: asyncio.Queue[tuple[RootWorkItem | ProductWorkItem, ReviewFetchResult]] = asyncio.Queue()
     for work_item in work_items:
         work_queue.put_nowait(work_item)
 
@@ -245,7 +327,29 @@ async def _run_worklist(
                 try:
                     if work_item is None:
                         return
-                    result = await client.fetch_root(work_item.wb_root_id)
+                    if isinstance(work_item, ProductWorkItem):
+                        sync_state = _load_review_sync_state(work_item)
+                        if (
+                            sync_state is not None
+                            and sync_state.marketplace_feedback_count is not None
+                            and work_item.product.feedback_count == sync_state.marketplace_feedback_count
+                            and sync_state.has_complete_review_history
+                            and not sync_state.unanswered_review_ids
+                        ):
+                            result = await client.fetch_product(
+                                wb_product_id=work_item.wb_product_id,
+                                wb_root_id=work_item.wb_root_id,
+                                sync_state=sync_state,
+                                marketplace_feedback_count=work_item.product.feedback_count,
+                            )
+                        else:
+                            result = await client.fetch_root_variant(
+                                wb_product_id=work_item.wb_product_id,
+                                wb_root_id=work_item.wb_root_id,
+                                marketplace_feedback_count=work_item.product.feedback_count,
+                            )
+                    else:
+                        result = await client.fetch_root(work_item.wb_root_id)
                     await result_queue.put((work_item, result))
                 finally:
                     work_queue.task_done()
@@ -271,7 +375,7 @@ async def _run_worklist(
 
 def _handle_result(
     *,
-    work_item: RootWorkItem,
+    work_item: RootWorkItem | ProductWorkItem,
     fetch_result: ReviewFetchResult,
     config: ReviewsParserConfig,
     manifest: ReviewRunManifest,
@@ -285,8 +389,12 @@ def _handle_result(
         retries=fetch_result.retries,
         backoff_seconds=fetch_result.backoff_seconds_total,
     )
-    manifest.add_counter("roots_processed")
-    manifest.add_counter("products_processed", len(work_item.selected_products))
+    is_product_full = isinstance(work_item, ProductWorkItem)
+    if is_product_full:
+        manifest.add_counter("products_processed")
+    else:
+        manifest.add_counter("roots_processed")
+        manifest.add_counter("products_processed", len(work_item.selected_products))
 
     raw_payload_path: Path | None = None
     write_result = None
@@ -295,7 +403,10 @@ def _handle_result(
     error_summary = fetch_result.error_summary
 
     if fetch_result.status == "failed":
-        manifest.add_counter("roots_failed")
+        if is_product_full:
+            manifest.add_counter("products_failed")
+        else:
+            manifest.add_counter("roots_failed")
         manifest.record_error(
             phase="fetch",
             message=fetch_result.error_summary or "WB review root fetch failed.",
@@ -310,13 +421,18 @@ def _handle_result(
     else:
         try:
             if config.retain_raw_payloads and fetch_result.payload is not None:
+                raw_dir = output_paths["raw_product_feedbacks"] if is_product_full else output_paths["raw_root_feedbacks"]
+                raw_file = f"{work_item.wb_product_id or work_item.wb_root_id}.json.gz"
                 raw_payload_path = write_raw_root_payload(
-                    output_paths["raw_root_feedbacks"] / f"{work_item.wb_root_id}.json.gz",
+                    raw_dir / raw_file,
                     fetch_result.payload,
                 )
 
-            if fetch_result.status == "empty":
-                manifest.add_counter("roots_empty")
+            if fetch_result.status in {"empty", "skipped"}:
+                if is_product_full:
+                    manifest.add_counter("products_empty")
+                else:
+                    manifest.add_counter("roots_empty")
             else:
                 mapped = map_feedback_payload(
                     payload=fetch_result.payload or {},
@@ -327,6 +443,11 @@ def _handle_result(
                     input_products_parser_run_id=input_products_parser_run_id,
                     input_products_jsonl=str(input_products_jsonl),
                     source_wb_root_id=work_item.wb_root_id,
+                    review_attribution_mode=(
+                        ROOT_VARIANT_FILTERED_ATTRIBUTION_MODE
+                        if is_product_full
+                        else "root_payload"
+                    ),
                 )
                 manifest.add_counter("reviews_seen", mapped.payload_feedback_rows_seen)
                 manifest.add_counter("replies_seen", mapped.replies_seen)
@@ -345,7 +466,10 @@ def _handle_result(
                     review_rows=mapped.review_rows,
                     reply_rows=mapped.reply_rows,
                 )
-                manifest.add_counter("roots_succeeded")
+                if is_product_full:
+                    manifest.add_counter("products_succeeded")
+                else:
+                    manifest.add_counter("roots_succeeded")
                 manifest.add_counter("reviews_written", write_result.reviews_written)
                 manifest.add_counter("replies_written", write_result.replies_written)
                 manifest.add_counter("review_duplicates", write_result.review_duplicates)
@@ -357,7 +481,10 @@ def _handle_result(
         except Exception as exception:
             event_status = "failed"
             error_summary = str(exception)
-            manifest.add_counter("roots_failed")
+            if is_product_full:
+                manifest.add_counter("products_failed")
+            else:
+                manifest.add_counter("roots_failed")
             manifest.record_error(
                 phase="export",
                 message="Review root output handling failed.",
@@ -370,14 +497,29 @@ def _handle_result(
                 details={"exception": str(exception)},
             )
 
+    coverage = _coverage_row(
+        work_item=work_item,
+        fetch_result=fetch_result,
+        mapped=mapped,
+        event_status=event_status,
+        error_summary=error_summary,
+    )
+    append_jsonl(output_paths["review_coverage_jsonl"], coverage)
+
     append_jsonl(
         output_paths["review_fetch_results_jsonl"],
         {
             "timestamp_utc": utc_now_iso(),
             "parser_run_id": manifest.parser_run_id,
             "source_wb_root_id": work_item.wb_root_id,
+            "source_wb_product_id": work_item.wb_product_id,
             "selected_wb_product_ids": work_item.selected_wb_product_ids,
             "endpoint": fetch_result.endpoint,
+            "coverage_source": fetch_result.coverage_source,
+            "coverage_status": coverage["coverage_status"],
+            "marketplace_feedback_count": coverage["marketplace_feedback_count"],
+            "fetched_reviews_count": coverage["fetched_reviews_count"],
+            "pages_fetched": fetch_result.pages_fetched,
             "attempts": fetch_result.attempts,
             "retries": fetch_result.retries,
             "backoff_seconds_total": fetch_result.backoff_seconds_total,
@@ -391,10 +533,16 @@ def _handle_result(
             ),
             "payload_feedback_rows_seen": mapped.payload_feedback_rows_seen if mapped else 0,
             "selected_review_rows_seen": mapped.selected_review_rows_seen if mapped else 0,
+            "foreign_review_rows_seen": mapped.foreign_review_rows_seen if mapped else 0,
+            "foreign_wb_product_ids": sorted(mapped.foreign_wb_product_ids) if mapped else [],
             "reviews_written": write_result.reviews_written if write_result else 0,
             "replies_written": write_result.replies_written if write_result else 0,
             "review_duplicates": write_result.review_duplicates if write_result else 0,
             "reply_duplicates": write_result.reply_duplicates if write_result else 0,
+            "known_reviews_seen": fetch_result.known_reviews_seen,
+            "fetched_new_reviews": fetch_result.fetched_new_reviews,
+            "fetched_new_replies": fetch_result.fetched_new_replies,
+            "sync_coverage_status": fetch_result.sync_coverage_status,
             "raw_payload_retained": raw_payload_path is not None,
             "raw_payload_path": str(raw_payload_path) if raw_payload_path else None,
             "error_summary": error_summary,
@@ -406,21 +554,114 @@ def _handle_result(
 
 def _log_progress(
     manifest: ReviewRunManifest,
-    work_item: RootWorkItem,
+    work_item: RootWorkItem | ProductWorkItem,
     status: str,
     write_result: Any,
 ) -> None:
-    processed = manifest.counters["roots_processed"]
+    processed = (
+        manifest.counters.get("products_processed", 0)
+        if work_item.wb_product_id
+        else manifest.counters["roots_processed"]
+    )
+    selected = (
+        manifest.counters.get("products_selected", 0)
+        if work_item.wb_product_id
+        else manifest.counters["roots_selected"]
+    )
     if processed <= 5 or processed % 25 == 0 or status == "failed":
         logger.info(
-            "Review root handled root={} status={} roots={}/{} reviews_written={} replies_written={}",
+            "Review handled root={} product={} status={} roots={}/{} products={}/{} reviews_written={} replies_written={}",
             work_item.wb_root_id,
+            work_item.wb_product_id,
             status,
-            processed,
+            manifest.counters["roots_processed"],
             manifest.counters["roots_selected"],
+            manifest.counters.get("products_processed", 0),
+            manifest.counters.get("products_selected", selected),
             getattr(write_result, "reviews_written", 0),
             getattr(write_result, "replies_written", 0),
         )
+
+
+def _coverage_row(
+    *,
+    work_item: RootWorkItem | ProductWorkItem,
+    fetch_result: ReviewFetchResult,
+    mapped: Any,
+    event_status: str,
+    error_summary: str | None,
+) -> dict[str, Any]:
+    product = next(iter(work_item.selected_products.values()))
+    fetched_reviews_count = mapped.selected_review_rows_seen if mapped else 0
+    if fetch_result.existing_fetched_reviews_count is not None:
+        fetched_reviews_count += fetch_result.existing_fetched_reviews_count
+    expected_count = fetch_result.marketplace_feedback_count
+    group_marketplace_feedback_count = product.feedback_count
+    if fetch_result.coverage_source == ROOT_VARIANT_FILTERED_ATTRIBUTION_MODE:
+        expected_count = fetched_reviews_count
+    if expected_count is None:
+        expected_count = product.feedback_count
+    if event_status == "failed":
+        coverage_status = _failed_coverage_status(fetch_result.http_status)
+    elif expected_count is None:
+        coverage_status = "unknown"
+    elif expected_count == 0 and fetched_reviews_count == 0:
+        coverage_status = "full"
+    elif fetched_reviews_count >= expected_count:
+        coverage_status = "full"
+    else:
+        coverage_status = "incomplete"
+
+    return {
+        "timestamp_utc": utc_now_iso(),
+        "source_wb_root_id": product.wb_root_id,
+        "source_wb_product_id": product.wb_product_id,
+        "group_marketplace_feedback_count": group_marketplace_feedback_count,
+        "marketplace_feedback_count": expected_count,
+        "fetched_reviews_count": fetched_reviews_count,
+        "coverage_status": coverage_status,
+        "coverage_source": fetch_result.coverage_source,
+        "pages_fetched": fetch_result.pages_fetched,
+        "http_status": fetch_result.http_status,
+        "foreign_review_rows_seen": mapped.foreign_review_rows_seen if mapped else 0,
+        "foreign_wb_product_ids": sorted(mapped.foreign_wb_product_ids) if mapped else [],
+        "last_coverage_error": error_summary,
+    }
+
+
+def _load_review_sync_state(work_item: ProductWorkItem) -> ReviewSyncState | None:
+    url = runtime_review_sync_state_url(work_item.wb_product_id)
+    if not url:
+        return None
+
+    try:
+        state = load_runtime_review_sync_state(url)
+    except Exception as exception:  # pragma: no cover - defensive runtime fallback
+        logger.warning(
+            "Review sync state unavailable product={} error={}",
+            work_item.wb_product_id,
+            str(exception),
+        )
+        return None
+
+    logger.info(
+        "Review sync state product={} knownReviews={} unansweredReviews={} marketplaceFeedbackCount={} fetchedReviews={} coverageStatus={}",
+        work_item.wb_product_id,
+        len(state.known_review_ids),
+        len(state.unanswered_review_ids),
+        state.marketplace_feedback_count,
+        state.fetched_reviews_count,
+        state.coverage_status,
+    )
+    return state
+
+
+def _failed_coverage_status(http_status: int | None) -> str:
+    if http_status == 429:
+        return "rate_limited"
+    if http_status in {401, 403, 498}:
+        return "blocked"
+    return "endpoint_unavailable"
 
 
 def _final_status(manifest: ReviewRunManifest, interrupted: bool) -> str:
@@ -447,6 +688,12 @@ def run_reviews(
 
     resume_manifest = ReviewRunManifest.load(args.resume_run_dir) if args.resume_run_dir else None
     source = _resolve_products_source(args, resume_manifest)
+    if config.fetch_mode == "product_full" and source.limit_products is not None:
+        logger.info(
+            "Ignoring reviews limit_products={} in product_full mode; product batch input already defines scope.",
+            source.limit_products,
+        )
+        source = replace(source, limit_products=None)
     if resume_manifest:
         run_dir = resume_manifest.run_dir
         manifest = resume_manifest
@@ -471,6 +718,7 @@ def run_reviews(
         )
 
     output_paths = _output_paths(run_dir)
+    _ensure_contract_files(output_paths)
     manifest.set_output_files(output_paths)
     logger.add(output_paths["runner_log"], encoding="utf-8")
     logger.info(
@@ -485,14 +733,30 @@ def run_reviews(
 
     interrupted = False
     try:
-        work_items = _load_products(source=source, marketplace=config.marketplace, manifest=manifest)
+        root_items = _load_products(source=source, marketplace=config.marketplace, manifest=manifest)
+        work_items = _to_review_work_items(root_items, config)
         if not work_items:
-            raise ValueError("No selected review root work items were built from products input.")
+            raise ValueError("No selected review work items were built from products input.")
 
         completed_root_ids = _completed_root_ids(output_paths["review_fetch_results_jsonl"])
-        if completed_root_ids:
+        completed_product_ids = _completed_product_ids(output_paths["review_fetch_results_jsonl"])
+        if config.fetch_mode == "product_full" and completed_product_ids:
             before = len(work_items)
-            work_items = [item for item in work_items if item.wb_root_id not in completed_root_ids]
+            work_items = [
+                item for item in work_items
+                if not isinstance(item, ProductWorkItem)
+                or item.wb_product_id not in completed_product_ids
+            ]
+            skipped_products = before - len(work_items)
+            manifest.add_counter("products_skipped", skipped_products)
+            logger.info("Resume skip completed review products: {}", skipped_products)
+        elif completed_root_ids:
+            before = len(work_items)
+            work_items = [
+                item for item in work_items
+                if not isinstance(item, RootWorkItem)
+                or item.wb_root_id not in completed_root_ids
+            ]
             skipped_roots = before - len(work_items)
             manifest.add_counter("roots_skipped", skipped_roots)
             logger.info("Resume skip completed review roots: {}", skipped_roots)
@@ -511,8 +775,10 @@ def run_reviews(
         manifest.network_check_result = {
             "status": "ok" if smoke_result.status in {"success", "empty"} else "failed",
             "source_wb_root_id": smoke_result.source_wb_root_id,
+            "source_wb_product_id": smoke_result.source_wb_product_id,
             "endpoint": smoke_result.endpoint,
             "http_status": smoke_result.http_status,
+            "coverage_source": smoke_result.coverage_source,
             "fetch_status": smoke_result.status,
             "error_summary": smoke_result.error_summary,
         }
@@ -575,6 +841,15 @@ def _string_id(value: Any) -> str | None:
         return None
     normalized = str(value).strip()
     return normalized or None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_args() -> argparse.Namespace:

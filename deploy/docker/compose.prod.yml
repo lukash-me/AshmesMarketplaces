@@ -136,6 +136,9 @@ services:
       INTELLIGENCE_LOG_LEVEL: ${INTELLIGENCE_LOG_LEVEL}
       INTELLIGENCE_API_PREFIX: /api/v1
       INTELLIGENCE_ENABLE_DEBUG: "false"
+      INTELLIGENCE_TOP_FORECAST_MODEL_DIR: /app/data/top_forecast_models
+    volumes:
+      - intelligence_data:/app/data
     expose:
       - "8020"
     healthcheck:
@@ -246,3 +249,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  intelligence_data:

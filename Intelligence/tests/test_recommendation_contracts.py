@@ -424,14 +424,14 @@ class RecommendationContractTests(unittest.TestCase):
                 position=index + 1,
                 observedRangeLimit=120,
                 deliveryProfile=delivery_profile([
-                    delivery_destination("central", "Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЂРµРіРёРѕРЅ", 24, city="РњРѕСЃРєРІР°")
+                    delivery_destination("central", "Центральный регион", 24, city="Москва")
                 ]),
             ))
         products[0]["deliveryProfile"] = delivery_profile([
-            delivery_destination("central", "Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЂРµРіРёРѕРЅ", 72, city="РњРѕСЃРєРІР°", source_type="seller_warehouse")
+            delivery_destination("central", "Центральный регион", 72, city="Москва", source_type="seller_warehouse")
         ])
         products[30]["deliveryProfile"] = delivery_profile([
-            delivery_destination("central", "Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЂРµРіРёРѕРЅ", 120, city="РњРѕСЃРєРІР°")
+            delivery_destination("central", "Центральный регион", 120, city="Москва")
         ])
 
         response = self.post_hot_products(products, {"maxRecommendations": 31, "includeDebug": True})

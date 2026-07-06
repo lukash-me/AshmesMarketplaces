@@ -10,6 +10,7 @@ if str(PARSER_DIR) not in sys.path:
 
 from config import ParserConfig  # noqa: E402
 from dto import DataPage  # noqa: E402
+from app.proxy_mapping import NicheProxyAssignment, ProxyDefinition, ProxyMapping  # noqa: E402
 from pipelines.products import runner  # noqa: E402
 
 
@@ -50,7 +51,7 @@ def _patch_common_streaming(monkeypatch, fetcher_cls, *, categories: list[dict] 
     monkeypatch.setattr(runner, "product_to_canonical_row", canonical_row)
 
 
-def _streaming_config(tmp_path: Path, *, product_fetch_mode: str = "direct") -> ParserConfig:
+def _streaming_config(tmp_path: Path, *, product_fetch_mode: str = "direct", acquire_token: bool = False) -> ParserConfig:
     return ParserConfig(
         output_base_dir=tmp_path,
         parent_category="Root",
@@ -58,9 +59,29 @@ def _streaming_config(tmp_path: Path, *, product_fetch_mode: str = "direct") -> 
         include_xlsx=False,
         include_wb_wallet_prices=False,
         product_fetch_mode=product_fetch_mode,
-        acquire_token=False,
+        acquire_token=acquire_token,
         batch_delay_min_seconds=0.0,
         batch_delay_max_seconds=0.0,
+    )
+
+
+def _proxy_mapping_for_test() -> ProxyMapping:
+    proxy = ProxyDefinition(
+        key="proxy-1",
+        type="http-proxy",
+        base_url="http://10.0.0.1:19118",
+        credentials={"username": "login", "password": "secret-password"},
+    )
+    return ProxyMapping(
+        default_proxy=ProxyDefinition(key="direct", type="direct"),
+        proxies={"proxy-1": proxy},
+        assignments=[
+            NicheProxyAssignment(
+                source_category="Root",
+                source_subcategory="Test niche",
+                proxy_key="proxy-1",
+            )
+        ],
     )
 
 
@@ -103,6 +124,154 @@ def test_explicit_niche_resolution_preserves_configured_subcategory(monkeypatch)
     assert resolved[0]["name"] == "Configured leaf"
     assert resolved[0]["sourceSubcategory"] == "Configured leaf"
     assert resolved[0]["sourcePath"] == "Root category - Parent - WB leaf"
+
+
+def test_price_split_uses_parser_search_text_instead_of_wb_menu_query(tmp_path, monkeypatch) -> None:
+    class _SearchPhraseParser:
+        search_phrases: list[str] = []
+
+        def __init__(self, *, search_phrase: str, **_: object) -> None:
+            self.search_phrases.append(search_phrase)
+
+        def parse(self) -> list[DataPage]:
+            return [DataPage(min_price=10000, max_price=20000, total=100)]
+
+    categories = [
+        {
+            "name": "Платья и сарафаны",
+            "sourceCategory": "Женщинам",
+            "sourceSubcategory": "Платья и сарафаны",
+            "sourcePath": "Женщинам / Платья и сарафаны",
+            "searchQuery": "menu_v3_8137 платье женские",
+            "parserSearchText": "Платья и сарафаны",
+        }
+    ]
+    _patch_common_streaming(monkeypatch, _Fetcher, categories=categories)
+    monkeypatch.setattr(runner, "SearchPhraseParser", _SearchPhraseParser)
+
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path, product_fetch_mode="price_split"),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+
+    assert _SearchPhraseParser.search_phrases == ["Платья и сарафаны"]
+    assert (run_dir / "products.csv").exists()
+
+
+def test_transport_preflight_acquires_browser_session_then_checks_filters_endpoint(tmp_path, monkeypatch) -> None:
+    _patch_common_streaming(monkeypatch, _Fetcher)
+    monkeypatch.setattr(runner, "_load_proxy_mapping", lambda: _proxy_mapping_for_test())
+
+    calls: list[str] = []
+
+    def acquire_cookies(*args, **kwargs):
+        calls.append("token")
+        return {"x_wbaas_token": "token-1", "session": "cookie-1"}
+
+    class _SearchPhraseParser:
+        def __init__(self, **kwargs: object) -> None:
+            self.search_phrase = kwargs["search_phrase"]
+            assert kwargs["cookies"]["x_wbaas_token"] == "token-1"
+
+        def fetch_data(self) -> dict[str, object]:
+            calls.append(f"filters_preflight:{self.search_phrase}")
+            return {"metadata": {"name": self.search_phrase}, "data": {"total": 100}}
+
+        def parse(self) -> list[DataPage]:
+            calls.append("filters_parse")
+            return [DataPage(min_price=10000, max_price=20000, total=100)]
+
+    class _TransportPreflight:
+        is_success = True
+        is_transport_success = True
+        connect_status = 200
+        http_status = 0
+        tls_established = True
+
+        @staticmethod
+        def diagnostic_message() -> str:
+            return "WB transport preflight ok: CONNECT=200 TLS=ok"
+
+    monkeypatch.setattr(runner, "_acquire_cookies", acquire_cookies)
+    monkeypatch.setattr(runner, "SearchPhraseParser", _SearchPhraseParser)
+    monkeypatch.setattr(runner, "run_wb_proxy_preflight", lambda proxy: _TransportPreflight())
+
+    lifecycle_events: list[dict[str, object]] = []
+    batches: list[runner.ProductDiscoveryBatch] = []
+
+    runner.run_parser_streaming(
+        _streaming_config(tmp_path, product_fetch_mode="price_split", acquire_token=True),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: batches.append(batch) or runner.ProductDiscoveryBatchResult(status="staged"),
+        category_lifecycle_handler=lifecycle_events.append,
+    )
+
+    assert calls == ["token", "filters_preflight:Test niche", "filters_parse"]
+    assert [len(batch.rows) for batch in batches] == [100, 100, 50]
+    assert any(
+        event.get("event") == "start" and event.get("phase") == "wb_preflight"
+        for event in lifecycle_events
+    )
+    assert any(
+        event.get("event") == "progress" and event.get("phase") == "ranges"
+        for event in lifecycle_events
+    )
+
+
+def test_filters_preflight_failure_stops_before_full_price_split(tmp_path, monkeypatch) -> None:
+    _patch_common_streaming(monkeypatch, _Fetcher)
+    monkeypatch.setattr(runner, "_load_proxy_mapping", lambda: _proxy_mapping_for_test())
+
+    calls: list[str] = []
+
+    class _TransportPreflight:
+        is_transport_success = True
+        connect_status = 200
+        http_status = 0
+        tls_established = True
+
+        @staticmethod
+        def diagnostic_message() -> str:
+            return "WB transport preflight ok: CONNECT=200 TLS=ok"
+
+    class _SearchPhraseParser:
+        def __init__(self, **kwargs: object) -> None:
+            self.final_error = "WB filters HTTP status 498"
+            self.aborted_by_rate_limit = False
+
+        def fetch_data(self) -> None:
+            calls.append("filters_preflight")
+            return None
+
+        def parse(self) -> list[DataPage]:
+            calls.append("filters_parse")
+            raise AssertionError("Price split must not run when authenticated WB preflight fails")
+
+    monkeypatch.setattr(runner, "_acquire_cookies", lambda *args, **kwargs: {"x_wbaas_token": "token-1"})
+    monkeypatch.setattr(runner, "SearchPhraseParser", _SearchPhraseParser)
+    monkeypatch.setattr(runner, "run_wb_proxy_preflight", lambda proxy: _TransportPreflight())
+
+    lifecycle_events: list[dict[str, object]] = []
+    batches: list[runner.ProductDiscoveryBatch] = []
+
+    runner.run_parser_streaming(
+        _streaming_config(tmp_path, product_fetch_mode="price_split", acquire_token=True),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: batches.append(batch) or runner.ProductDiscoveryBatchResult(status="staged"),
+        category_lifecycle_handler=lifecycle_events.append,
+    )
+
+    assert calls == ["filters_preflight"]
+    assert batches == []
+    assert any(
+        event.get("event") == "finish"
+        and event.get("status") == "failed"
+        and "WB filters preflight failed" in str(event.get("error"))
+        and "search.wb.ru" in str(event.get("error"))
+        and "www" not in str(event.get("error"))
+        for event in lifecycle_events
+    )
 
 
 class _Fetcher:
@@ -192,8 +361,24 @@ class _FullSplitParser:
 
     def parse(self):
         if self.split_progress_recorder:
-            self.split_progress_recorder(processed_ranges=0, pending_ranges=2, progress_percent=0.0)
-            self.split_progress_recorder(processed_ranges=2, pending_ranges=0, progress_percent=99.0)
+            self.split_progress_recorder(
+                processed_ranges=0,
+                pending_ranges=2,
+                progress_percent=0.0,
+                range_checks_count=0,
+                final_ranges_count=0,
+                empty_ranges_count=0,
+                split_ranges_count=0,
+            )
+            self.split_progress_recorder(
+                processed_ranges=2,
+                pending_ranges=0,
+                progress_percent=99.0,
+                range_checks_count=2,
+                final_ranges_count=2,
+                empty_ranges_count=0,
+                split_ranges_count=0,
+            )
         return [DataPage(100, 900, 50), DataPage(901, 1900, 1000)]
 
 
@@ -210,6 +395,21 @@ class _RangeCarryFetcher:
         assert [page.total for page in self.pages] == [50, 1000]
         yield [{"products": [{"id": index} for index in range(1, 51)]}]
         yield [{"products": [{"id": index} for index in range(1001, 1101)]}]
+
+
+class _StopRequestedAfterEnoughBatchesFetcher:
+    stop_requested = True
+
+    def __init__(self, **_: object) -> None:
+        pass
+
+    async def fetch_all(self) -> list[dict[str, object]]:
+        raise AssertionError("streaming parser must consume iter_result_batches(), not fetch_all()")
+
+    async def iter_result_batches(self):
+        yield [{"products": [{"id": index} for index in range(1, 101)]}]
+        yield [{"products": [{"id": index} for index in range(101, 201)]}]
+        yield [{"products": [{"id": index} for index in range(201, 301)]}]
 
 
 def test_run_parser_streaming_full_split_carries_batch_across_price_ranges(tmp_path, monkeypatch) -> None:
@@ -233,6 +433,29 @@ def test_run_parser_streaming_full_split_carries_batch_across_price_ranges(tmp_p
     assert batches[0][-3:] == ["1048", "1049", "1050"]
     assert batches[1][0] == "1051"
     assert batches[1][-1] == "1100"
+
+
+def test_run_parser_streaming_does_not_fail_on_catalog_stop_after_batch_limit(tmp_path, monkeypatch) -> None:
+    _patch_common_streaming(monkeypatch, _StopRequestedAfterEnoughBatchesFetcher)
+    monkeypatch.setenv("PARSER_MAX_STREAM_BATCHES", "3")
+
+    batches: list[runner.ProductDiscoveryBatch] = []
+
+    def handle_batch(batch: runner.ProductDiscoveryBatch) -> runner.ProductDiscoveryBatchResult:
+        batches.append(batch)
+        status = "stopped" if len(batches) >= 3 else "staged"
+        return runner.ProductDiscoveryBatchResult(status=status)
+
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path),
+        streaming_batch_size=100,
+        batch_handler=handle_batch,
+    )
+
+    manifest = (run_dir / "manifest.json").read_text(encoding="utf-8")
+    assert [len(batch.rows) for batch in batches] == [100, 100, 100]
+    assert "WB catalog rate limit while fetching price ranges" not in manifest
+    assert '"status": "succeeded"' in manifest
 
 
 def test_run_parser_streaming_reports_full_split_plan_before_first_batch(tmp_path, monkeypatch) -> None:

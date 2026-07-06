@@ -100,7 +100,7 @@ public sealed class PublicMarketConcentrationReadService : IPublicMarketConcentr
         PublicMarketIntelligenceQuery context,
         CancellationToken cancellationToken)
     {
-        return await _dbContext.PublicMarketConcentrationSnapshots
+        var exact = await _dbContext.PublicMarketConcentrationSnapshots
             .AsNoTracking()
             .Where(x =>
                 x.SourceCategory == context.SourceCategory
@@ -110,6 +110,22 @@ public sealed class PublicMarketConcentrationReadService : IPublicMarketConcentr
                 && x.Sort == context.Sort
                 && x.TopN == context.TopN
                 && x.CalculatedAtUtc != null)
+            .Select(x => new SnapshotMeta(x.Id, x.UpdatedAtUtc))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (exact is not null)
+            return exact;
+
+        return await _dbContext.PublicMarketConcentrationSnapshots
+            .AsNoTracking()
+            .Where(x =>
+                x.SourceCategory == context.SourceCategory
+                && x.SourceSubcategory == context.SourceSubcategory
+                && x.SourceRegionDest == context.SourceRegionDest
+                && x.Sort == context.Sort
+                && x.TopN == context.TopN
+                && x.CalculatedAtUtc != null)
+            .OrderByDescending(x => x.CalculatedAtUtc)
             .Select(x => new SnapshotMeta(x.Id, x.UpdatedAtUtc))
             .FirstOrDefaultAsync(cancellationToken);
     }

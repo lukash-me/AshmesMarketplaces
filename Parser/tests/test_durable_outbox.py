@@ -129,6 +129,36 @@ class DurableBatchOutboxTests(unittest.TestCase):
             self.assertEqual(updated.server_status, "accepted")
             self.assertTrue(updated.payload_path.exists())
 
+    def test_send_includes_parser_cycle_and_proxy_run_metadata(self) -> None:
+        captured: dict[str, object] = {}
+
+        def post_json(_url: str, payload: dict[str, object]) -> SimpleNamespace:
+            captured.update(payload)
+            return SimpleNamespace(status_code=202, json=lambda: {"status": "accepted"})
+
+        with tempfile.TemporaryDirectory() as temp:
+            outbox = DurableBatchOutbox(
+                root_dir=Path(temp),
+                parser_instance_id="parser-a",
+                server_base_url="http://api.local/api/v1/parser",
+                post_json=post_json,
+            )
+            outbox.enqueue_batch(
+                external_batch_id="batch-1",
+                source_category="category",
+                source_subcategory="niche",
+                proxy_key="proxy-1",
+                batch_kind="complete_card_batch",
+                payload={"rows": [1]},
+                parser_cycle_id="cycle-1",
+                external_proxy_run_id="cycle-1:proxy-1:category:niche",
+            )
+
+            outbox.send_pending_once()
+
+        self.assertEqual(captured["parserCycleId"], "cycle-1")
+        self.assertEqual(captured["externalProxyRunId"], "cycle-1:proxy-1:category:niche")
+
     def test_completed_poll_deletes_payload_but_keeps_journal_row(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             outbox = DurableBatchOutbox(
@@ -160,16 +190,16 @@ class DurableBatchOutboxTests(unittest.TestCase):
             outbox = DurableBatchOutbox(root_dir=Path(temp), parser_instance_id="parser-a")
             completed = outbox.enqueue_batch(
                 external_batch_id="batch-completed",
-                source_category="РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                source_subcategory="РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
+                source_category="Товары для дома",
+                source_subcategory="Коврики для ванной",
                 proxy_key="local",
                 batch_kind="complete_card_batch",
                 payload={"rows": [1]},
             )
             pending = outbox.enqueue_batch(
                 external_batch_id="batch-pending",
-                source_category="РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
-                source_subcategory="РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
+                source_category="Товары для дома",
+                source_subcategory="Коврики для ванной",
                 proxy_key="local",
                 batch_kind="complete_card_batch",
                 payload={"rows": [2]},

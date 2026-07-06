@@ -5,21 +5,24 @@
       "sourceCategory": "Женщинам",
       "sourceSubcategory": "Платья и сарафаны",
       "sourcePath": "Женщинам / Одежда / Платья и сарафаны",
-      "searchQuery": "menu_v3_8137 платье женские"
+      "searchQuery": "menu_v3_8137 платье женские",
+      "parserSearchText": "Платья и сарафаны"
     },
     {
       "wbCategoryId": 8194,
       "sourceCategory": "Обувь",
       "sourceSubcategory": "Мужские кеды и кроссовки",
       "sourcePath": "Обувь / Мужская / Кеды и кроссовки",
-      "searchQuery": "menu_redirect_subject_v2_8194 мужские кеды и кроссовки"
+      "searchQuery": "menu_redirect_subject_v2_8194 мужские кеды и кроссовки",
+      "parserSearchText": "Мужские кеды и кроссовки"
     },
     {
       "wbCategoryId": 10012,
       "sourceCategory": "Красота",
       "sourceSubcategory": "Органическая косметика",
       "sourcePath": "Красота / Органическая косметика",
-      "searchQuery": "menu_redirect_subject_v2_10012 органическая косметика"
+      "searchQuery": "menu_redirect_subject_v2_10012 органическая косметика",
+      "parserSearchText": "Органическая косметика"
     }
   ]
 }

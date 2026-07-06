@@ -62,8 +62,8 @@ if ($StopDocker) {
         exit 0
     }
 
-    Write-Step "Stopping PostgreSQL and pgAdmin containers..."
-    & docker compose -f $ComposeFile --env-file $EnvFile stop postgres pgadmin
+    Write-Step "Stopping PostgreSQL, pgAdmin, and Intelligence containers..."
+    & docker compose -f $ComposeFile --env-file $EnvFile stop postgres pgadmin intelligence
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[dev] WARNING: docker compose stop returned a non-zero exit code." -ForegroundColor Yellow
     }

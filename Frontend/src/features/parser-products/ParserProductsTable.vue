@@ -101,8 +101,8 @@ const visibleColumns = computed(() =>
 );
 const optionColumns = computed(() => columns);
 const pageCount = computed(() => Math.max(1, Math.ceil(props.totalCount / props.pageSize)));
-const pageStart = computed(() => (props.totalCount === 0 ? 0 : (props.page - 1) * props.pageSize + 1));
-const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pageSize));
+const pageStart = computed(() => (props.totalCount === 0 || props.rows.length === 0 ? 0 : (props.page - 1) * props.pageSize + 1));
+const pageEnd = computed(() => (props.rows.length === 0 ? 0 : pageStart.value + props.rows.length - 1));
 const paginationItems = computed(() => buildPaginationItems(props.page, pageCount.value));
 
 onMounted(() => {

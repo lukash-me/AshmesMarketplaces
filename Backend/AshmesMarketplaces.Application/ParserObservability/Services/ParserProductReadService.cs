@@ -38,20 +38,20 @@ public sealed partial class ParserProductReadService : IParserProductReadService
     private const string WarningLatestProductsAndLogisticsOverlapIsPartial = "latest_products_and_logistics_overlap_is_partial";
     private const string WarningLatestLogisticsRunNotFound = "latest_logistics_run_not_found";
     private const string MoscowDeliveryDestination = "1259570991";
-    private const string MoscowDeliveryCity = "РњРѕСЃРєРІР°";
-    private const string MoscowDeliveryLabel = "РњРѕСЃРєРІР°, РџР’Р— WB РЅР° СѓР»РёС†Рµ Р—Р°С†РµРїР° 32";
-    private const string MoscowDeliveryAddress = "Рі РњРѕСЃРєРІР°, СѓР»РёС†Р° Р—Р°С†РµРїР° 32";
+    private const string MoscowDeliveryCity = "Москва";
+    private const string MoscowDeliveryLabel = "Москва, ПВЗ WB на улице Зацепа 32";
+    private const string MoscowDeliveryAddress = "г Москва, улица Зацепа 32";
 
     private static readonly string[] DemoCardSubcategoryAllowlist =
     [
-        "РћСЂРіР°РЅР°Р№Р·РµСЂС‹ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІРµС‰РµР№",
-        "РљРѕРІСЂРёРєРё РґР»СЏ РІР°РЅРЅРѕР№",
-        "РЎРІРµС‚РёР»СЊРЅРёРєРё Р±СЂР°"
+        "Органайзеры для хранения вещей",
+        "Коврики для ванной",
+        "Светильники бра"
     ];
     private static readonly IReadOnlyDictionary<string, string> DemoCardCategoryBySubcategory =
         DemoCardSubcategoryAllowlist.ToDictionary(
             subcategory => subcategory,
-            _ => "РўРѕРІР°СЂС‹ РґР»СЏ РґРѕРјР°",
+            _ => "Товары для дома",
             StringComparer.Ordinal);
 
     private static readonly ParserProductReviewEvidenceDto EmptyReviewEvidence = new(
@@ -62,7 +62,14 @@ public sealed partial class ParserProductReadService : IParserProductReadService
         AttributionMode: DefaultAttributionMode,
         IsRootScoped: true,
         IsFullHistoryUnknown: true,
-        HasCappedRootPayload: false);
+        HasCappedRootPayload: false,
+        MarketplaceFeedbackCount: null,
+        FetchedReviewsCount: 0,
+        OldestReviewDateUtc: null,
+        LatestReviewDateUtc: null,
+        CoverageStatus: "unknown",
+        CoverageSource: DefaultAttributionMode,
+        LastCoverageError: null);
 
     private readonly ApplicationDbContext _dbContext;
 
@@ -386,9 +393,11 @@ public sealed partial class ParserProductReadService : IParserProductReadService
         if (id == Guid.Empty)
             return ServiceResult<ParserProductDetailDto>.BadRequest("Parser product row id is required.");
 
+        var productRowId = await ResolveProductRowIdAsync(id, cancellationToken);
+
         var row = await _dbContext.ParserProductRows
             .AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+            .FirstOrDefaultAsync(x => x.Id == productRowId, cancellationToken);
 
         if (row is null)
             return ServiceResult<ParserProductDetailDto>.NotFound("Parser product row was not found.");
@@ -398,9 +407,29 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             .FirstAsync(x => x.Id == row.IdParserFile, cancellationToken);
         var runScope = await LoadScopeForParserRunAsync(row.ParserRunId, cancellationToken);
         var evidence = await LoadEvidenceAsync([row], includeLogisticsDetail: true, runScope, cancellationToken);
+        var currentPositions = await LoadCurrentPositionSummariesAsync([row.Id], cancellationToken);
+        var currentLogistics = await LoadCurrentLogisticsSummariesAsync([row], cancellationToken);
         var details = await LoadProductDetailAsync(row, cancellationToken);
 
-        return ServiceResult<ParserProductDetailDto>.Success(MapToDetail(row, sourceFile, evidence, details));
+        return ServiceResult<ParserProductDetailDto>.Success(
+            MapToDetail(
+                row,
+                sourceFile,
+                evidence,
+                details,
+                currentPositions.GetValueOrDefault(row.Id),
+                currentLogistics.GetValueOrDefault(row.Id)));
+    }
+
+    private async Task<Guid> ResolveProductRowIdAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var currentProductRowId = await _dbContext.ParserCurrentProductRows
+            .AsNoTracking()
+            .Where(x => x.Id == id)
+            .Select(x => (Guid?)x.ProductRowId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return currentProductRowId ?? id;
     }
 
     private async Task<ServiceResult<PagedResponse<ParserProductListItemDto>>> GetCurrentProductListAsync(
@@ -437,8 +466,14 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             .ToList();
 
         var evidence = await LoadListEvidenceAsync(pageRows, ParserRunScope.Production, cancellationToken);
+        var currentPositions = await LoadCurrentPositionSummariesAsync(pageProductIds, cancellationToken);
+        var currentLogistics = await LoadCurrentLogisticsSummariesAsync(pageRows, cancellationToken);
         var items = pageRows
-            .Select(row => MapToListItem(row, evidence))
+            .Select(row => MapToListItem(
+                row,
+                evidence,
+                currentPositions.GetValueOrDefault(row.Id),
+                currentLogistics.GetValueOrDefault(row.Id)))
             .ToList();
 
         return ServiceResult<PagedResponse<ParserProductListItemDto>>.Success(
@@ -1046,6 +1081,162 @@ public sealed partial class ParserProductReadService : IParserProductReadService
         return result;
     }
 
+    private async Task<IReadOnlyDictionary<Guid, ParserProductPositionDto>> LoadCurrentPositionSummariesAsync(
+        IReadOnlyCollection<Guid> productRowIds,
+        CancellationToken cancellationToken)
+    {
+        if (productRowIds.Count == 0)
+            return new Dictionary<Guid, ParserProductPositionDto>();
+
+        return await _dbContext.ParserCurrentProductRows
+            .AsNoTracking()
+            .Where(x => productRowIds.Contains(x.ProductRowId))
+            .Where(x => !string.IsNullOrWhiteSpace(x.PositionState))
+            .Select(x => new
+            {
+                x.ProductRowId,
+                x.PositionState,
+                x.PositionAbsolute,
+                x.PositionObservedRangeLimit,
+                x.PositionQuery,
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.PositionObservedAtUtc
+            })
+            .ToDictionaryAsync(
+                x => x.ProductRowId,
+                x => new ParserProductPositionDto(
+                    x.PositionState!,
+                    x.PositionAbsolute,
+                    x.PositionObservedRangeLimit,
+                    x.PositionQuery,
+                    x.SourceCategory,
+                    x.SourceSubcategory,
+                x.PositionObservedAtUtc),
+                cancellationToken);
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, ParserProductLogisticsSummaryDto>> LoadCurrentLogisticsSummariesAsync(
+        IReadOnlyList<ParserProductRow> products,
+        CancellationToken cancellationToken)
+    {
+        if (products.Count == 0)
+            return new Dictionary<Guid, ParserProductLogisticsSummaryDto>();
+
+        var productIds = products
+            .Select(x => x.WbProductId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct()
+            .ToList();
+        if (productIds.Count == 0)
+            return new Dictionary<Guid, ParserProductLogisticsSummaryDto>();
+
+        var currentRows = await _dbContext.ParserCurrentProductLogistics
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId))
+            .Select(x => new
+            {
+                x.WbProductId,
+                x.LogisticsJson,
+                x.ObservedAtUtc,
+                x.BatchId
+            })
+            .ToDictionaryAsync(x => x.WbProductId, StringComparer.Ordinal, cancellationToken);
+
+        var result = new Dictionary<Guid, ParserProductLogisticsSummaryDto>();
+        foreach (var product in products)
+        {
+            if (!currentRows.TryGetValue(product.WbProductId, out var row))
+                continue;
+
+            using var document = JsonDocument.Parse(row.LogisticsJson);
+            var root = document.RootElement;
+            var sourceRegionDest = JsonString(root, "sourceRegionDest") ?? product.SourceRegionDest;
+            var totalQuantityObserved = JsonInt(root, "totalQuantityObserved");
+            var quantityIsCapped = JsonBool(root, "quantityIsCapped");
+            var quantityCapObserved = JsonInt(root, "quantityCapObserved");
+            var deliveryDestinationName = JsonString(root, "deliveryDestinationName");
+
+            result[product.Id] = new ParserProductLogisticsSummaryDto(
+                totalQuantityObserved,
+                quantityIsCapped,
+                quantityCapObserved,
+                QuantityLabel(totalQuantityObserved, quantityIsCapped, quantityCapObserved),
+                JsonString(root, "quantitySemantics"),
+                JsonInt(root, "warehouseCount") ?? 0,
+                sourceRegionDest,
+                JsonString(root, "deliveryProfileKey"),
+                deliveryDestinationName,
+                JsonString(root, "deliveryProfileVersion"),
+                DeliveryDestinationCity(
+                    sourceRegionDest ?? string.Empty,
+                    JsonString(root, "deliveryDestinationCity"),
+                    deliveryDestinationName),
+                DeliveryDestinationLabel(
+                    sourceRegionDest ?? string.Empty,
+                    JsonString(root, "deliveryDestinationLabel")),
+                DeliveryDestinationAddress(
+                    sourceRegionDest ?? string.Empty,
+                    JsonString(root, "deliveryDestinationAddress")),
+                JsonDecimal(root, "deliveryDestinationLatitude"),
+                JsonDecimal(root, "deliveryDestinationLongitude"),
+                row.BatchId,
+                row.ObservedAtUtc,
+                JsonBool(root, "hasWarehouseRows") ?? false);
+        }
+
+        return result;
+    }
+
+    private static string? JsonString(JsonElement root, string propertyName)
+    {
+        return root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(propertyName, out var value)
+            && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static int? JsonInt(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(propertyName, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var parsed) => parsed,
+            JsonValueKind.String when int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    private static bool? JsonBool(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(propertyName, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(value.GetString(), out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    private static decimal? JsonDecimal(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty(propertyName, out var value))
+            return null;
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetDecimal(out var parsed) => parsed,
+            JsonValueKind.String when decimal.TryParse(value.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => null
+        };
+    }
+
     private static IReadOnlyDictionary<Guid, ParserProductPositionDto> BuildUnknownPositions(
         IReadOnlyList<ParserProductRow> products)
     {
@@ -1058,7 +1249,7 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             PositionStateUnknown,
             null,
             null,
-            null,
+            product.SourceQuery,
             product.SourceCategory,
             product.SourceSubcategory,
             null);
@@ -1358,7 +1549,7 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             var moscowCandidates = candidates
                 .Where(x =>
                     x.DeliveryProfileKey == "moscow_baseline_v1"
-                    || x.DeliveryProfileKey == "nationwide_v1" && x.DeliveryDestinationName == "РњРѕСЃРєРІР°")
+                    || x.DeliveryProfileKey == "nationwide_v1" && x.DeliveryDestinationName == "Москва")
                 .ToList();
             if (moscowCandidates.Count > 0)
                 scopedCandidates = moscowCandidates;
@@ -1425,11 +1616,11 @@ public sealed partial class ParserProductReadService : IParserProductReadService
         int? quantityCapObserved)
     {
         if (quantityIsCapped == true && quantityCapObserved.HasValue)
-            return $"в‰Ґ{quantityCapObserved.Value.ToString(CultureInfo.InvariantCulture)}";
+            return $"≥{quantityCapObserved.Value.ToString(CultureInfo.InvariantCulture)}";
 
         return totalQuantityObserved.HasValue
             ? totalQuantityObserved.Value.ToString(CultureInfo.InvariantCulture)
-            : "РќРµС‚ РґР°РЅРЅС‹С…";
+            : "Нет данных";
     }
 
     private static ParserWarehouseAvailabilityDto MapWarehouseAvailability(WarehouseAvailabilityCandidate row)
@@ -1804,6 +1995,14 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             .Select(x => x.WbProductId)
             .Distinct()
             .ToList();
+        var allProductIds = products
+            .Select(x => x.WbProductId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var reviewSummaries = await _dbContext.ParserCurrentProductReviewsSummaries
+            .AsNoTracking()
+            .Where(x => allProductIds.Contains(x.WbProductId))
+            .ToDictionaryAsync(x => x.WbProductId, StringComparer.Ordinal, cancellationToken);
         var productRunIds = products
             .Select(x => x.ParserRunId)
             .Distinct()
@@ -1858,7 +2057,7 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             var selected = useSameRunBucket ? sameRunBucket! : rootScopedBucket;
             if (selected is null)
             {
-                result[product.Id] = EmptyReviewEvidence;
+                result[product.Id] = EnrichReviewEvidence(EmptyReviewEvidence, product.WbProductId, reviewSummaries);
                 continue;
             }
 
@@ -1870,7 +2069,7 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             var hasCappedRootPayload = selected.HasCappedRootPayload
                 || (useSameRunBucket && isRootKey && rootScopedBucket?.HasCappedRootPayload == true);
 
-            result[product.Id] = new ParserProductReviewEvidenceDto(
+            var evidence = new ParserProductReviewEvidenceDto(
                 rootFetchCount,
                 selected.ParsedReviewCount,
                 selected.ParsedReplyCount,
@@ -1878,10 +2077,42 @@ public sealed partial class ParserProductReadService : IParserProductReadService
                 selected.AttributionMode ?? DefaultAttributionMode,
                 IsRootScoped: true,
                 isFullHistoryUnknown,
-                hasCappedRootPayload);
+                hasCappedRootPayload,
+                MarketplaceFeedbackCount: null,
+                FetchedReviewsCount: selected.ParsedReviewCount,
+                OldestReviewDateUtc: null,
+                LatestReviewDateUtc: null,
+                CoverageStatus: "unknown",
+                CoverageSource: selected.AttributionMode ?? DefaultAttributionMode,
+                LastCoverageError: null);
+            result[product.Id] = EnrichReviewEvidence(evidence, product.WbProductId, reviewSummaries);
         }
 
         return result;
+    }
+
+    private static ParserProductReviewEvidenceDto EnrichReviewEvidence(
+        ParserProductReviewEvidenceDto evidence,
+        string wbProductId,
+        IReadOnlyDictionary<string, ParserCurrentProductReviewsSummary> summaries)
+    {
+        if (!summaries.TryGetValue(wbProductId, out var summary))
+            return evidence;
+
+        return evidence with
+        {
+            MarketplaceFeedbackCount = summary.MarketplaceFeedbackCount,
+            FetchedReviewsCount = summary.FetchedReviewsCount,
+            OldestReviewDateUtc = summary.OldestReviewDateUtc,
+            LatestReviewDateUtc = summary.LastReviewDateUtc,
+            CoverageStatus = summary.CoverageStatus,
+            CoverageSource = summary.CoverageSource,
+            LastCoverageError = summary.LastCoverageError,
+            AttributionMode = summary.CoverageSource,
+            IsFullHistoryUnknown = !string.Equals(summary.CoverageStatus, "full", StringComparison.OrdinalIgnoreCase),
+            HasCappedRootPayload = string.Equals(summary.CoverageSource, "root_capped_fallback", StringComparison.OrdinalIgnoreCase)
+                || evidence.HasCappedRootPayload
+        };
     }
 
     private async Task LoadRootScopedFetchEvidenceAsync(
@@ -2382,7 +2613,9 @@ public sealed partial class ParserProductReadService : IParserProductReadService
 
     private static ParserProductListItemDto MapToListItem(
         ParserProductRow row,
-        ProductEvidenceLookup evidence)
+        ProductEvidenceLookup evidence,
+        ParserProductPositionDto? positionOverride = null,
+        ParserProductLogisticsSummaryDto? logisticsOverride = null)
     {
         return new ParserProductListItemDto(
             row.Id,
@@ -2406,8 +2639,8 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             row.SourceQuery,
             GetImageUrls(row.ImageUrls).FirstOrDefault(),
             evidence.GetRank(row.Id),
-            evidence.GetPosition(row.Id),
-            evidence.GetLogisticsSummary(row.Id),
+            positionOverride ?? evidence.GetPosition(row.Id),
+            logisticsOverride ?? evidence.GetLogisticsSummary(row.Id),
             evidence.GetReviewEvidence(row.Id));
     }
 
@@ -2415,7 +2648,9 @@ public sealed partial class ParserProductReadService : IParserProductReadService
         ParserProductRow row,
         ParserFile sourceFile,
         ProductEvidenceLookup evidence,
-        ParserProductDetailRow? details)
+        ParserProductDetailRow? details,
+        ParserProductPositionDto? positionOverride = null,
+        ParserProductLogisticsSummaryDto? logisticsOverride = null)
     {
         return new ParserProductDetailDto(
             row.Id,
@@ -2453,8 +2688,8 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             row.SourceLineNumber,
             row.RowHash,
             evidence.GetRank(row.Id),
-            evidence.GetPosition(row.Id),
-            evidence.GetLogisticsSummary(row.Id),
+            positionOverride ?? evidence.GetPosition(row.Id),
+            logisticsOverride ?? evidence.GetLogisticsSummary(row.Id),
             evidence.GetLogisticsDetail(row.Id),
             evidence.GetDeliveryProfile(row.Id),
             Description: details?.Description,

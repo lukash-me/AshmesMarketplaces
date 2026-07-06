@@ -132,3 +132,36 @@ def test_sync_rate_limiter_uses_persisted_proxy_state(tmp_path) -> None:
     second.wait("proxy-2")
 
     assert sleeps == [30.0]
+
+
+def test_sync_rate_limiter_defer_is_scoped_to_one_proxy(tmp_path) -> None:
+    now = 100.0
+    wall_now = 1000.0
+    sleeps: list[float] = []
+
+    def monotonic() -> float:
+        return now
+
+    def wall_clock() -> float:
+        return wall_now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now, wall_now
+        sleeps.append(seconds)
+        now += seconds
+        wall_now += seconds
+
+    limiter = SyncProxyRateLimiter(
+        min_gap_seconds=0.0,
+        jitter_seconds=0.0,
+        monotonic=monotonic,
+        wall_clock=wall_clock,
+        sleep=sleep,
+        state_dir=tmp_path,
+    )
+
+    limiter.defer("proxy-1", 45.0)
+    limiter.wait("proxy-2")
+    limiter.wait("proxy-1")
+
+    assert sleeps == [45.0]

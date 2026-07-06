@@ -1,20 +1,25 @@
 using System.Text.Json;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketplaceCategories.Dtos;
+using AshmesMarketplaces.DataAccess;
+using AshmesMarketplaces.Domain.Entities.Marketplaces;
+using Microsoft.EntityFrameworkCore;
 
 namespace AshmesMarketplaces.Application.MarketplaceCategories.Services;
 
-public sealed class WildberriesCategoryCatalogService : IWildberriesCategoryCatalogService
+public sealed class WildberriesCategoryCatalogService :
+    IWildberriesCategoryCatalogService,
+    IWildberriesCategoryCatalogRefreshService
 {
     private static readonly Uri CatalogUri = new("https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json");
-    private static readonly TimeSpan CacheDuration = TimeSpan.FromHours(12);
-    private static readonly SemaphoreSlim CacheLock = new(1, 1);
-    private static WildberriesCategoryCatalogDto? CachedCatalog;
-    private static DateTime CachedUntilUtc;
+    private static readonly SemaphoreSlim RefreshLock = new(1, 1);
+
+    private readonly ApplicationDbContext _dbContext;
     private readonly HttpClient _httpClient;
 
-    public WildberriesCategoryCatalogService(HttpClient httpClient)
+    public WildberriesCategoryCatalogService(ApplicationDbContext dbContext, HttpClient httpClient)
     {
+        _dbContext = dbContext;
         _httpClient = httpClient;
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
         {
@@ -24,22 +29,36 @@ public sealed class WildberriesCategoryCatalogService : IWildberriesCategoryCata
         }
     }
 
-    public Task<ServiceResult<WildberriesCategoryCatalogDto>> GetTreeAsync(CancellationToken cancellationToken)
+    public async Task<ServiceResult<WildberriesCategoryCatalogDto>> GetTreeAsync(CancellationToken cancellationToken)
     {
-        return LoadCatalogAsync(cancellationToken);
+        var leavesResult = await GetLeavesAsync(cancellationToken);
+        if (!leavesResult.IsSuccess)
+            return ServiceResult<WildberriesCategoryCatalogDto>.Unavailable(leavesResult.Error!.Message);
+
+        var fetchedAtUtc = leavesResult.Value!.Count == 0
+            ? DateTime.UtcNow
+            : leavesResult.Value.Max(x => x.Id) > 0
+                ? await _dbContext.WildberriesCategoryLeaves
+                    .AsNoTracking()
+                    .MaxAsync(x => x.FetchedAtUtc, cancellationToken)
+                : DateTime.UtcNow;
+
+        return ServiceResult<WildberriesCategoryCatalogDto>.Success(
+            new WildberriesCategoryCatalogDto("wildberries", fetchedAtUtc, leavesResult.Value));
     }
 
     public async Task<ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>> GetLeavesAsync(
         CancellationToken cancellationToken)
     {
-        var catalogResult = await LoadCatalogAsync(cancellationToken);
-        if (!catalogResult.IsSuccess)
-            return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.Unavailable(catalogResult.Error!.Message);
+        var leaves = await LoadLeavesFromDatabaseAsync(cancellationToken);
+        if (leaves.Count == 0)
+        {
+            var refresh = await RefreshAsync(cancellationToken);
+            if (!refresh.IsSuccess)
+                return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.Unavailable(refresh.Error!.Message);
 
-        var leaves = catalogResult.Value!.Nodes
-            .Where(x => x.IsLeaf)
-            .OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            leaves = await LoadLeavesFromDatabaseAsync(cancellationToken);
+        }
 
         return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.Success(leaves);
     }
@@ -52,13 +71,21 @@ public sealed class WildberriesCategoryCatalogService : IWildberriesCategoryCata
         if (searchText.Length < 2)
             return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.BadRequest("Search query must contain at least 2 characters.");
 
-        var catalogResult = await LoadCatalogAsync(cancellationToken);
-        if (!catalogResult.IsSuccess)
-            return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.Unavailable(catalogResult.Error!.Message);
+        if (!await _dbContext.WildberriesCategoryLeaves.AsNoTracking().AnyAsync(cancellationToken))
+        {
+            var refresh = await RefreshAsync(cancellationToken);
+            if (!refresh.IsSuccess)
+                return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.Unavailable(refresh.Error!.Message);
+        }
 
         var normalized = searchText.ToLowerInvariant();
-        var items = catalogResult.Value!.Nodes
-            .Where(x => x.IsLeaf)
+        var leaves = await _dbContext.WildberriesCategoryLeaves
+            .AsNoTracking()
+            .OrderBy(x => x.SourcePath)
+            .ToListAsync(cancellationToken);
+
+        var items = leaves
+            .Select(Map)
             .Where(x =>
                 x.Name.ToLowerInvariant().Contains(normalized)
                 || x.Path.ToLowerInvariant().Contains(normalized)
@@ -70,38 +97,32 @@ public sealed class WildberriesCategoryCatalogService : IWildberriesCategoryCata
         return ServiceResult<IReadOnlyList<WildberriesCategoryNodeDto>>.Success(items);
     }
 
-    private async Task<ServiceResult<WildberriesCategoryCatalogDto>> LoadCatalogAsync(CancellationToken cancellationToken)
+    public async Task<ServiceResult<WildberriesCategoryCatalogRefreshResult>> RefreshAsync(CancellationToken cancellationToken)
     {
-        var now = DateTime.UtcNow;
-        if (CachedCatalog is not null && CachedUntilUtc > now)
-            return ServiceResult<WildberriesCategoryCatalogDto>.Success(CachedCatalog);
-
-        await CacheLock.WaitAsync(cancellationToken);
+        await RefreshLock.WaitAsync(cancellationToken);
         try
         {
-            now = DateTime.UtcNow;
-            if (CachedCatalog is not null && CachedUntilUtc > now)
-                return ServiceResult<WildberriesCategoryCatalogDto>.Success(CachedCatalog);
-
+            var now = DateTime.UtcNow;
             using var response = await _httpClient.GetAsync(CatalogUri, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                return ServiceResult<WildberriesCategoryCatalogDto>.Unavailable(
+                return ServiceResult<WildberriesCategoryCatalogRefreshResult>.Unavailable(
                     $"Wildberries category catalog is unavailable: HTTP {(int)response.StatusCode}.");
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
             if (document.RootElement.ValueKind != JsonValueKind.Array)
-                return ServiceResult<WildberriesCategoryCatalogDto>.Unavailable("Wildberries category catalog has unexpected format.");
+                return ServiceResult<WildberriesCategoryCatalogRefreshResult>.Unavailable("Wildberries category catalog has unexpected format.");
 
             var nodes = WildberriesCategoryTreeParser.Parse(document.RootElement);
-            if (nodes.Count == 0)
-                return ServiceResult<WildberriesCategoryCatalogDto>.Unavailable("Wildberries category catalog is empty.");
+            var leaves = nodes.Where(x => x.IsLeaf).ToArray();
+            if (leaves.Length == 0)
+                return ServiceResult<WildberriesCategoryCatalogRefreshResult>.Unavailable("Wildberries category catalog does not contain leaf categories.");
 
-            CachedCatalog = new WildberriesCategoryCatalogDto("wildberries", now, nodes);
-            CachedUntilUtc = now.Add(CacheDuration);
-            return ServiceResult<WildberriesCategoryCatalogDto>.Success(CachedCatalog);
+            await UpsertLeavesAsync(leaves, now, cancellationToken);
+            return ServiceResult<WildberriesCategoryCatalogRefreshResult>.Success(
+                new WildberriesCategoryCatalogRefreshResult(leaves.Length, now));
         }
         catch (OperationCanceledException)
         {
@@ -109,14 +130,84 @@ public sealed class WildberriesCategoryCatalogService : IWildberriesCategoryCata
         }
         catch (Exception exception)
         {
-            return ServiceResult<WildberriesCategoryCatalogDto>.Unavailable(
+            return ServiceResult<WildberriesCategoryCatalogRefreshResult>.Unavailable(
                 $"Wildberries category catalog cannot be loaded: {exception.Message}");
         }
         finally
         {
-            CacheLock.Release();
+            RefreshLock.Release();
         }
     }
+
+    private async Task<IReadOnlyList<WildberriesCategoryNodeDto>> LoadLeavesFromDatabaseAsync(
+        CancellationToken cancellationToken)
+    {
+        var leaves = await _dbContext.WildberriesCategoryLeaves
+            .AsNoTracking()
+            .OrderBy(x => x.SourcePath)
+            .ToListAsync(cancellationToken);
+
+        return leaves.Select(Map).ToArray();
+    }
+
+    private async Task UpsertLeavesAsync(
+        IReadOnlyList<WildberriesCategoryNodeDto> leaves,
+        DateTime fetchedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _dbContext.WildberriesCategoryLeaves
+            .ToDictionaryAsync(x => x.WbCategoryId, cancellationToken);
+        var actualIds = leaves.Select(x => x.Id).ToHashSet();
+
+        foreach (var leaf in leaves)
+        {
+            if (existing.TryGetValue(leaf.Id, out var stored))
+            {
+                stored.UpdateFromCatalog(
+                    leaf.Name,
+                    leaf.SourceCategory,
+                    leaf.SourceSubcategory,
+                    leaf.Path,
+                    leaf.SearchQuery,
+                    leaf.ParentId,
+                    leaf.Level,
+                    fetchedAtUtc,
+                    fetchedAtUtc);
+                continue;
+            }
+
+            _dbContext.WildberriesCategoryLeaves.Add(new WildberriesCategoryLeaf(
+                leaf.Id,
+                leaf.Name,
+                leaf.SourceCategory,
+                leaf.SourceSubcategory,
+                leaf.Path,
+                leaf.SearchQuery,
+                leaf.ParentId,
+                leaf.Level,
+                fetchedAtUtc,
+                fetchedAtUtc));
+        }
+
+        var removed = existing.Values
+            .Where(x => !actualIds.Contains(x.WbCategoryId))
+            .ToArray();
+        _dbContext.WildberriesCategoryLeaves.RemoveRange(removed);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private static WildberriesCategoryNodeDto Map(WildberriesCategoryLeaf leaf) =>
+        new(
+            leaf.WbCategoryId,
+            leaf.Name,
+            leaf.SourceCategory,
+            leaf.SourceSubcategory,
+            leaf.SourcePath,
+            leaf.SearchQuery,
+            leaf.ParentId,
+            leaf.IsLeaf,
+            leaf.Level);
 }
 
 public static class WildberriesCategoryTreeParser

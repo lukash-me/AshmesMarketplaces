@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
+    "check:encoding": "python ../tools/check_encoding.py",
     "typecheck": "vue-tsc --noEmit",
     "preview": "vite preview --host 0.0.0.0"
   },

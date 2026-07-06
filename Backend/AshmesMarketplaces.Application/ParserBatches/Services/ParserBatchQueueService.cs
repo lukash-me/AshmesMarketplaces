@@ -47,6 +47,16 @@ public sealed class ParserBatchQueueService : IParserBatchQueueService
             if (!string.Equals(existing.ContentHash, calculatedHash, StringComparison.OrdinalIgnoreCase))
                 return ServiceResult<ParserBatchSubmitResponse>.Conflict("Parser batch already exists with another content hash.");
 
+            if ((existing.ParserProxyRunId is null && !string.IsNullOrWhiteSpace(request.ExternalProxyRunId)) ||
+                (string.IsNullOrWhiteSpace(existing.ParserCycleId) && !string.IsNullOrWhiteSpace(request.ParserCycleId)) ||
+                (string.IsNullOrWhiteSpace(existing.ExternalProxyRunId) && !string.IsNullOrWhiteSpace(request.ExternalProxyRunId)))
+            {
+                var metadataAttachedAtUtc = DateTime.UtcNow;
+                var resolvedParserProxyRunId = await ResolveProxyRunIdAsync(parserInstanceId, request.ExternalProxyRunId, cancellationToken);
+                existing.AttachRunMetadata(request.ParserCycleId, request.ExternalProxyRunId, resolvedParserProxyRunId, metadataAttachedAtUtc);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             return ServiceResult<ParserBatchSubmitResponse>.Success(MapSubmit(existing));
         }
 
@@ -62,6 +72,8 @@ public sealed class ParserBatchQueueService : IParserBatchQueueService
             request.BatchKind,
             calculatedHash,
             now);
+        var parserProxyRunId = await ResolveProxyRunIdAsync(parserInstanceId, request.ExternalProxyRunId, cancellationToken);
+        batch.AttachRunMetadata(request.ParserCycleId, request.ExternalProxyRunId, parserProxyRunId, now);
 
         var payloadDocument = JsonDocument.Parse(payloadJson);
         var artifact = new ParserBatchArtifact(batch.Id, FullBatchArtifactKind, payloadDocument, now);
@@ -73,6 +85,24 @@ public sealed class ParserBatchQueueService : IParserBatchQueueService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         return ServiceResult<ParserBatchSubmitResponse>.Success(MapSubmit(batch));
+    }
+
+    private async Task<Guid?> ResolveProxyRunIdAsync(
+        string parserInstanceId,
+        string? externalProxyRunId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(externalProxyRunId))
+            return null;
+
+        return await _dbContext.ParserProxyRuns
+            .AsNoTracking()
+            .Where(x =>
+                x.ParserInstanceId == parserInstanceId &&
+                x.ExternalProxyRunId == externalProxyRunId.Trim())
+            .OrderByDescending(x => x.StartedAtUtc)
+            .Select(x => (Guid?)x.Id)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     public async Task<ServiceResult<ParserBatchStatusResponse>> GetStatusAsync(

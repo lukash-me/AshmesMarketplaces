@@ -60,7 +60,7 @@ def run_proxy_preflight(
     proxies: Iterable[ProxyDefinition],
     *,
     ip_probe: IpProbe = default_ip_probe,
-    token_probe: TokenProbe = default_token_probe,
+    token_probe: TokenProbe | None = None,
     profile_path: PathProbe = lambda proxy: proxy_profile_dir(proxy.key),
     cache_path: PathProbe = lambda proxy: proxy_session_cache_path(proxy.key),
 ) -> ProxyPreflightResult:
@@ -78,16 +78,17 @@ def run_proxy_preflight(
             )
         by_ip[egress_ip] = proxy.key
 
-        token = token_probe(proxy)
+        token = token_probe(proxy) if token_probe is not None else None
         ref = token_ref(token)
-        if not token:
-            raise ProxyPreflightError(f"Proxy {proxy.key} did not acquire WB token.")
-        if ref and ref in by_token_ref:
-            raise ProxyPreflightError(
-                f"Proxies {by_token_ref[ref]} and {proxy.key} use the same WB token reference {ref}."
-            )
-        if ref:
-            by_token_ref[ref] = proxy.key
+        if token_probe is not None:
+            if not token:
+                raise ProxyPreflightError(f"Proxy {proxy.key} did not acquire WB token.")
+            if ref and ref in by_token_ref:
+                raise ProxyPreflightError(
+                    f"Proxies {by_token_ref[ref]} and {proxy.key} use the same WB token reference {ref}."
+                )
+            if ref:
+                by_token_ref[ref] = proxy.key
 
         items.append(
             ProxyPreflightItem(

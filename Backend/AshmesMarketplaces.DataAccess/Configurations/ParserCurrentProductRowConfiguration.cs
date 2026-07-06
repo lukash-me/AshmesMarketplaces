@@ -50,6 +50,12 @@ public sealed class ParserCurrentProductRowConfiguration : IEntityTypeConfigurat
         builder.Property(x => x.ReviewsHash).HasMaxLength(128).HasColumnName("reviews_hash");
         builder.Property(x => x.MediaHash).HasMaxLength(128).HasColumnName("media_hash");
         builder.Property(x => x.SellerBrandHash).HasMaxLength(128).HasColumnName("seller_brand_hash");
+        builder.Property(x => x.MarketplacePresenceStatus).IsRequired().HasMaxLength(64).HasColumnName("marketplace_presence_status");
+        builder.Property(x => x.LastSeenParserCycleId).HasMaxLength(200).HasColumnName("last_seen_parser_cycle_id");
+        builder.Property(x => x.LastSeenParserProxyRunId).HasMaxLength(80).HasColumnName("last_seen_parser_proxy_run_id");
+        builder.Property(x => x.LastSeenAtUtc).HasColumnName("last_seen_at_utc");
+        builder.Property(x => x.LastPresenceCheckedParserCycleId).HasMaxLength(200).HasColumnName("last_presence_checked_parser_cycle_id");
+        builder.Property(x => x.LastMissingDetectedAtUtc).HasColumnName("last_missing_detected_at_utc");
         builder.Property(x => x.UpdatedAtUtc).IsRequired().HasColumnName("updated_at_utc");
 
         builder.HasIndex(x => x.ProductRowId).IsUnique();
@@ -63,5 +69,7 @@ public sealed class ParserCurrentProductRowConfiguration : IEntityTypeConfigurat
         builder.HasIndex(x => x.ReviewRating);
         builder.HasIndex(x => x.FeedbackCount);
         builder.HasIndex(x => new { x.PositionState, x.PositionAbsolute, x.PositionObservedRangeLimit });
+        builder.HasIndex(x => new { x.SourceCategory, x.SourceSubcategory, x.MarketplacePresenceStatus, x.LastSeenParserCycleId });
+        builder.HasIndex(x => x.LastSeenAtUtc);
     }
 }

@@ -93,6 +93,8 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
         var latestRankPositions = latestRankRows
             .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.Min(row => row.AbsolutePosition), StringComparer.Ordinal);
+        var currentPositions = await LoadCurrentProductPositionsAsync(context, mapProductIds, cancellationToken);
+        var effectiveRankPositions = MergePositions(latestRankPositions, currentPositions);
 
         if (latestRankRows.Any(x => !latestProducts.ContainsKey(x.WbProductId)))
             limitations.Add("Для части товаров нет данных карточек в выбранном наблюдении.");
@@ -118,10 +120,10 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
                 x.WbRootId,
                 x.SellerName,
                 x.BrandName,
-                latestRankPositions.TryGetValue(x.WbProductId, out var position) ? position : null,
+                effectiveRankPositions.TryGetValue(x.WbProductId, out var position) ? position : null,
                 x.FeedbackCount))
             .ToList());
-        var priceQualityMap = BuildPriceQualityMap(mapProducts, latestDetails, deliveryBuckets, latestRankPositions);
+        var priceQualityMap = BuildPriceQualityMap(mapProducts, latestDetails, deliveryBuckets, effectiveRankPositions);
         var priceCorridors = MarketIntelligencePriceCorridorCalculator.Build(
             priceQualityMap.Points
                 .Select(x => new PriceCorridorInput(x.Price, x.Position, x.Rating))
@@ -618,6 +620,59 @@ public sealed class PublicMarketIntelligenceReadService : IPublicMarketIntellige
                     return MarketIntelligenceBucketEvaluator.EvaluateDelivery(row.VisibleDeliveryDate, row.ObservedAtUtc);
                 },
                 StringComparer.Ordinal);
+    }
+
+    private async Task<IReadOnlyDictionary<string, int>> LoadCurrentProductPositionsAsync(
+        MarketContext context,
+        IEnumerable<string> productIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = productIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (ids.Count == 0)
+            return new Dictionary<string, int>(StringComparer.Ordinal);
+
+        var rows = await _dbContext.ParserCurrentProductRows
+            .AsNoTracking()
+            .Where(x =>
+                ids.Contains(x.WbProductId)
+                && x.SourceCategory == context.SourceCategory
+                && x.SourceSubcategory == context.SourceSubcategory
+                && x.SourceRegionDest == context.SourceRegionDest
+                && x.PositionState == "observed"
+                && x.PositionAbsolute != null)
+            .Select(x => new
+            {
+                x.WbProductId,
+                x.PositionAbsolute
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(
+                x => x.Key,
+                x => x.Min(row => row.PositionAbsolute!.Value),
+                StringComparer.Ordinal);
+    }
+
+    private static IReadOnlyDictionary<string, int> MergePositions(
+        IReadOnlyDictionary<string, int> rankPositions,
+        IReadOnlyDictionary<string, int> currentPositions)
+    {
+        if (currentPositions.Count == 0)
+            return rankPositions;
+
+        var merged = new Dictionary<string, int>(rankPositions, StringComparer.Ordinal);
+        foreach (var (productId, position) in currentPositions)
+        {
+            if (!merged.TryGetValue(productId, out var existing) || position < existing)
+                merged[productId] = position;
+        }
+
+        return merged;
     }
 
     private static PriceQualityMapDto BuildPriceQualityMap(

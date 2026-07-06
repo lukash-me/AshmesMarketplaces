@@ -21,6 +21,7 @@ $ApiUrl = "http://localhost:5019"
 $SwaggerUrl = "$ApiUrl/swagger"
 $FrontendUrl = "http://localhost:5173"
 $PgAdminUrl = "http://localhost:5050"
+$IntelligenceUrl = "http://localhost:8020"
 
 function Write-Step([string]$Message) {
     Write-Host "[dev] $Message"
@@ -152,18 +153,23 @@ New-Item -ItemType Directory -Force -Path $LogRoot, $PidRoot | Out-Null
 
 Assert-PortAvailable 5432 "PostgreSQL" "" "ashmes-postgres"
 Assert-PortAvailable 5050 "pgAdmin" "" "ashmes-pgadmin"
+Assert-PortAvailable 8020 "Intelligence" "" "ashmes-intelligence"
 Assert-PortAvailable 5019 "Backend API" $BackendPidFile ""
 Assert-PortAvailable 5173 "Frontend Vite" $FrontendPidFile ""
 
-Write-Step "Starting PostgreSQL and pgAdmin..."
-& docker compose -f $ComposeFile --env-file $EnvFile up -d postgres pgadmin
+Write-Step "Starting PostgreSQL, pgAdmin, and Intelligence..."
+& docker compose -f $ComposeFile --env-file $EnvFile up -d postgres pgadmin intelligence
 if ($LASTEXITCODE -ne 0) {
-    Stop-WithMessage "Docker compose failed to start postgres/pgadmin."
+    Stop-WithMessage "Docker compose failed to start postgres/pgadmin/intelligence."
 }
 
 Write-Step "Waiting for PostgreSQL health..."
 Wait-ContainerHealthy "ashmes-postgres"
 Write-Step "PostgreSQL started."
+
+Write-Step "Waiting for Intelligence health..."
+Wait-ContainerHealthy "ashmes-intelligence" 180
+Write-Step "Intelligence started."
 
 $backendPid = Get-ManagedPid $BackendPidFile
 if (-not $backendPid) {
@@ -193,6 +199,7 @@ Write-Host "  API:      $ApiUrl"
 Write-Host "  Swagger:  $SwaggerUrl"
 Write-Host "  Frontend: $FrontendUrl"
 Write-Host "  pgAdmin:  $PgAdminUrl"
+Write-Host "  Intelligence: $IntelligenceUrl"
 Write-Host ""
 Write-Host "Logs:"
 Write-Host "  Backend:  $BackendLog"

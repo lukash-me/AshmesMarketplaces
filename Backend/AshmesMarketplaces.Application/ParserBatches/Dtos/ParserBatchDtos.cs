@@ -10,7 +10,9 @@ public sealed record ParserBatchSubmitRequest(
     string? ProxyKey,
     string BatchKind,
     string? ContentHash,
-    JsonElement Payload);
+    JsonElement Payload,
+    string? ParserCycleId = null,
+    string? ExternalProxyRunId = null);
 
 public sealed record ParserBatchSubmitResponse(
     Guid Id,
@@ -54,7 +56,11 @@ public sealed record ParserProxyRunStartRequest(
     string? Phase = null,
     int? PlannedRangesCount = null,
     int? CompletedRangesCount = null,
-    double? RangeProgressPercent = null);
+    double? RangeProgressPercent = null,
+    int? RangeChecksCount = null,
+    int? FinalRangesCount = null,
+    int? EmptyRangesCount = null,
+    int? SplitRangesCount = null);
 
 public sealed record ParserProxyRunProgressRequest(
     string ParserInstanceId,
@@ -63,7 +69,11 @@ public sealed record ParserProxyRunProgressRequest(
     string? Phase = null,
     int? PlannedRangesCount = null,
     int? CompletedRangesCount = null,
-    double? RangeProgressPercent = null);
+    double? RangeProgressPercent = null,
+    int? RangeChecksCount = null,
+    int? FinalRangesCount = null,
+    int? EmptyRangesCount = null,
+    int? SplitRangesCount = null);
 
 public sealed record ParserProxyRunFinishRequest(
     string ParserInstanceId,
@@ -91,6 +101,10 @@ public sealed record ParserProxyRunResponse(
     int PlannedRangesCount,
     int CompletedRangesCount,
     double RangeProgressPercent,
+    int RangeChecksCount,
+    int FinalRangesCount,
+    int EmptyRangesCount,
+    int SplitRangesCount,
     DateTime StartedAtUtc,
     DateTime LastHeartbeatAtUtc,
     DateTime? FinishedAtUtc,

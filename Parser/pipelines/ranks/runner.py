@@ -86,6 +86,18 @@ def _make_manifest(config: RankParserConfig, run_dir: Path, parser_run_id: str) 
     return manifest
 
 
+def _ensure_contract_files(run_dir: Path) -> None:
+    for file_name in (
+        "product_rank_snapshots.jsonl",
+        "rank_page_fetches.jsonl",
+        "errors.jsonl",
+        "runner.log",
+    ):
+        path = run_dir / file_name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+
+
 def _acquire_cookies(
     config: RankParserConfig,
     manifest: RankRunManifest,
@@ -179,6 +191,7 @@ def run_rank_parser(
     run_dir.mkdir(parents=True, exist_ok=False)
 
     manifest = _make_manifest(config, run_dir, parser_run_id)
+    _ensure_contract_files(run_dir)
     log_sink_id = logger.add(run_dir / "runner.log", encoding="utf-8")
 
     rank_rows_path = run_dir / "product_rank_snapshots.jsonl"

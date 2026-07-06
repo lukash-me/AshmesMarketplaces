@@ -2,6 +2,7 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
 type AuthHandlers = {
   getAccessToken: () => string | null;
+  ensureFreshAccessToken: () => Promise<boolean>;
   refresh: () => Promise<boolean>;
   onUnauthorized: () => void;
 };
@@ -32,11 +33,17 @@ export function configureHttpAuth(handlers: AuthHandlers): void {
   authHandlers = handlers;
 }
 
-http.interceptors.request.use((config) => {
+http.interceptors.request.use(async (config) => {
+  if (authHandlers) {
+    await authHandlers.ensureFreshAccessToken();
+  }
+
   const token = authHandlers?.getAccessToken();
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  } else {
+    delete config.headers.Authorization;
   }
 
   return config;

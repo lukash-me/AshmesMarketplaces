@@ -38,7 +38,7 @@ public sealed class ParserDefectiveCardDetectorTests
     }
 
     [Fact]
-    public void Evaluate_RejectsMissingSuccessfulProductDetails()
+    public void Evaluate_AllowsMissingSuccessfulProductDetails()
     {
         using var row = ProductRow(imageUrls: ["https://cdn.example/1.webp"], imageCount: 1, wbRootId: "root-1");
         var evidence = new ParserCardCompletenessEvidence(
@@ -48,8 +48,8 @@ public sealed class ParserDefectiveCardDetectorTests
 
         var result = ParserDefectiveCardDetector.Evaluate(row, evidence);
 
-        Assert.True(result.IsDefective);
-        Assert.Contains(ParserDefectiveCardReasons.MissingDetails, result.Reasons);
+        Assert.False(result.IsDefective);
+        Assert.DoesNotContain(ParserDefectiveCardReasons.MissingDetails, result.Reasons);
     }
 
     [Fact]

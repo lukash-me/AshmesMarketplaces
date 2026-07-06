@@ -109,6 +109,23 @@ class SyncProxyRateLimiter:
             self._next_allowed_at[key] = now + next_allowed_value
             _write_persisted_next_allowed(self.state_dir, key, float(self.wall_clock()) + next_allowed_value)
 
+    def defer(self, proxy_key: str | None, seconds: float) -> None:
+        key = (proxy_key or "direct").strip() or "direct"
+        delay = max(0.0, float(seconds))
+        if delay <= 0:
+            return
+
+        with self._lock_for(key):
+            now = float(self.monotonic())
+            wall_now = float(self.wall_clock())
+            self._next_allowed_at[key] = max(
+                float(self._next_allowed_at.get(key, now)),
+                now + delay,
+            )
+            current_persisted = _read_persisted_next_allowed(self.state_dir, key)
+            next_wall_clock = max(float(current_persisted or wall_now), wall_now + delay)
+            _write_persisted_next_allowed(self.state_dir, key, next_wall_clock)
+
     def _lock_for(self, key: str) -> threading.Lock:
         with self._guard:
             lock = self._locks.get(key)

@@ -40,7 +40,11 @@ public sealed class ParserCompleteBatchPayloadProcessor : IParserBatchPayloadPro
 
             var result = await _ingestionService.StageCompleteBatchAsync(
                 restoreDirectory,
-                new ParserIngestionOptions(DryRun: false),
+                new ParserIngestionOptions(
+                    DryRun: false,
+                    CdcContext: batch.ParserProxyRunId.HasValue
+                        ? new ParserCdcApplyContext(batch.ParserProxyRunId.Value, batch.Id, batch.ParserCycleId)
+                        : null),
                 cancellationToken);
 
             return new ParserBatchPayloadProcessingSummary(

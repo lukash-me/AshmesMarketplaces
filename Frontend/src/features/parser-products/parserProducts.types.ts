@@ -267,6 +267,13 @@ export interface ParserProductReviewEvidence {
   isRootScoped: boolean;
   isFullHistoryUnknown: boolean;
   hasCappedRootPayload: boolean;
+  marketplaceFeedbackCount: number | null;
+  fetchedReviewsCount: number;
+  oldestReviewDateUtc: string | null;
+  latestReviewDateUtc: string | null;
+  coverageStatus: string;
+  coverageSource: string;
+  lastCoverageError: string | null;
 }
 
 export interface ParserProductListParams {

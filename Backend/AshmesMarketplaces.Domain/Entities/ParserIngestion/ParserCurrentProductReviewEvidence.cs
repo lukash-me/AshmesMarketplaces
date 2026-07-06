@@ -51,4 +51,16 @@ public sealed class ParserCurrentProductReviewEvidence
         BatchId = batchId;
         UpdatedAtUtc = DateTime.UtcNow;
     }
+
+    public void Restore(ParserCurrentReviewEvidenceSnapshot snapshot)
+    {
+        Update(
+            snapshot.WbRootId,
+            snapshot.ReviewHash,
+            snapshot.ReviewJson,
+            snapshot.Rating,
+            snapshot.CreatedAtOnMp,
+            snapshot.ObservedAtUtc,
+            snapshot.BatchId);
+    }
 }

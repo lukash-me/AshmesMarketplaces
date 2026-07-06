@@ -18,11 +18,18 @@ public sealed record ParserAdminProxyRunDto(
     int PlannedRangesCount,
     int CompletedRangesCount,
     double RangeProgressPercent,
+    int RangeChecksCount,
+    int FinalRangesCount,
+    int EmptyRangesCount,
+    int SplitRangesCount,
     double ProgressPercent,
     DateTime StartedAtUtc,
     DateTime LastHeartbeatAtUtc,
+    DateTime? LastLogAtUtc,
     DateTime? FinishedAtUtc,
     int RuntimeMinutes,
+    double ProductsPerSecond,
+    double RangesPerSecond,
     string? Error);
 
 public sealed record ParserAdminInstanceDto(
@@ -54,12 +61,22 @@ public sealed record ParserAdminProxyRunJournalDto(
     string Phase,
     int PlannedProductsCount,
     int DownloadedProductsCount,
+    int CreatedProductsCount,
+    int UpdatedProductsCount,
+    bool HasProductEffectsLedger,
     int PlannedRangesCount,
     int CompletedRangesCount,
     double RangeProgressPercent,
+    int RangeChecksCount,
+    int FinalRangesCount,
+    int EmptyRangesCount,
+    int SplitRangesCount,
     DateTime StartedAtUtc,
+    DateTime? LastLogAtUtc,
     DateTime? FinishedAtUtc,
     int RuntimeMinutes,
+    double ProductsPerSecond,
+    double RangesPerSecond,
     string? Error);
 
 public sealed record ParserAdminBatchListItemDto(
@@ -120,3 +137,23 @@ public sealed record ParserAdminRetryResponse(
     string ExternalBatchId,
     string Status,
     DateTime QueuedAtUtc);
+
+public sealed record ParserRunRollbackPreviewDto(
+    Guid ParserProxyRunId,
+    bool CanRollback,
+    string Message,
+    int CreatedProductsCount,
+    int UpdatedProductsCount,
+    int ConflictProductsCount,
+    int AlreadyRolledBackCount);
+
+public sealed record ParserRunRollbackResponseDto(
+    Guid RollbackId,
+    Guid ParserProxyRunId,
+    string Status,
+    string Message,
+    int CreatedProductsCount,
+    int UpdatedProductsCount,
+    int DeletedProductsCount,
+    int RestoredProductsCount,
+    int ConflictProductsCount);

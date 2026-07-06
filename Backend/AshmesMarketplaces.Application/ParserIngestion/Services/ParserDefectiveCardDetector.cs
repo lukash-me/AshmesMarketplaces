@@ -39,9 +39,6 @@ public static class ParserDefectiveCardDetector
         if (!HasImages(product))
             reasons.Add(ParserDefectiveCardReasons.MissingImages);
 
-        if (!evidence.HasSuccessfulProductDetails)
-            reasons.Add(ParserDefectiveCardReasons.MissingDetails);
-
         if (!evidence.HasLogisticsAttempt)
             reasons.Add(ParserDefectiveCardReasons.MissingLogistics);
 

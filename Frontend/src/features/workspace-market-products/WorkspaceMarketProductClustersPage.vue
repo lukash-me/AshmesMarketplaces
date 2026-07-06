@@ -537,7 +537,7 @@ function groupPriority(key: string): number {
     <template v-else>
     <p v-if="error" class="cluster-error">{{ error }}</p>
     <div v-if="analysisWarnings.length" class="cluster-warning app-surface">
-      <strong>РџСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ Р°РЅР°Р»РёР·Р°</strong>
+      <strong>Предупреждения анализа</strong>
       <ul>
         <li v-for="warning in analysisWarnings" :key="warning">{{ warning }}</li>
       </ul>

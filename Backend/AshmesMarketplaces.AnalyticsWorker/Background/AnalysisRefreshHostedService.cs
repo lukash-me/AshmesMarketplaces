@@ -1,7 +1,6 @@
 using AshmesMarketplaces.Application.Auth.Services;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
-using AshmesMarketplaces.Application.MarketRecommendations.Dtos;
-using AshmesMarketplaces.Application.MarketRecommendations.Services;
+using AshmesMarketplaces.Application.MarketplaceCategories.Services;
 using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.DataAccess;
@@ -54,86 +53,124 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
     private async Task ProcessDueSchedulesAsync(CancellationToken cancellationToken)
     {
         var nowUtc = DateTime.UtcNow;
-        await ProcessHotProductsDueAsync(nowUtc, cancellationToken);
-        await ProcessParserCurrentProductsDueAsync(nowUtc, cancellationToken);
+        await ProcessManualPublicAnalysisRequestAsync(nowUtc, cancellationToken);
         await ProcessMarketIntelligenceDueAsync(nowUtc, cancellationToken);
         await ProcessMarketLogisticsEventsDueAsync(nowUtc, cancellationToken);
         await ProcessProductAvailabilityDueAsync(nowUtc, cancellationToken);
+        await ProcessWildberriesCategoryCatalogDueAsync(nowUtc, cancellationToken);
         await ProcessMarketConcentrationDueAsync(nowUtc, cancellationToken);
         await ProcessTopForecastDueAsync(nowUtc, cancellationToken);
         await ProcessOverviewDueAsync(nowUtc, cancellationToken);
     }
 
-    private async Task ProcessParserCurrentProductsDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    private async Task ProcessManualPublicAnalysisRequestAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
-        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.ParserCurrentProductsScheduleKey, nowUtc, cancellationToken);
-        if (!scheduleId.HasValue)
+        var claim = await ClaimManualPublicAnalysisRequestAsync(nowUtc, cancellationToken);
+        if (!claim.HasValue)
             return;
 
         var startedAtUtc = DateTime.UtcNow;
         var memoryBeforeMb = CurrentMemoryMb();
         _logger.LogInformation(
-            "Scheduled parser current-products read-model refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
-            scheduleId.Value,
+            "Manual public analysis refresh started. requestId={RequestId} scheduleKey={ScheduleKey} memoryBeforeMb={MemoryBeforeMb}",
+            claim.Value.Id,
+            claim.Value.ScheduleKey,
             memoryBeforeMb);
 
         try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var service = scope.ServiceProvider.GetRequiredService<IPublicParserCurrentProductRefreshService>();
-            var result = await service.RefreshAsync(cancellationToken);
+            await RunManualPublicAnalysisRequestAsync(claim.Value.ScheduleKey, cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
-            if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
-
-            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            await CompleteManualPublicAnalysisRequestAsync(claim.Value.Id, claim.Value.ScheduleKey, completedAtUtc, cancellationToken);
             _logger.LogInformation(
-                "Scheduled parser current-products read-model refresh completed. scheduleId={ScheduleId} totalCount={TotalCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
-                scheduleId.Value,
-                result.Value!.TotalCount,
+                "Manual public analysis refresh completed. requestId={RequestId} scheduleKey={ScheduleKey} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                claim.Value.Id,
+                claim.Value.ScheduleKey,
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
+            await FailManualPublicAnalysisRequestAsync(claim.Value.Id, claim.Value.ScheduleKey, DateTime.UtcNow, ex.Message, cancellationToken);
             _logger.LogWarning(
                 ex,
-                "Scheduled parser current-products read-model refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
-                scheduleId.Value,
+                "Manual public analysis refresh failed. requestId={RequestId} scheduleKey={ScheduleKey} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                claim.Value.Id,
+                claim.Value.ScheduleKey,
                 (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
         }
     }
 
-    private async Task ProcessHotProductsDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    private async Task RunManualPublicAnalysisRequestAsync(string scheduleKey, CancellationToken cancellationToken)
     {
-        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.HotProductsScheduleKey, nowUtc, cancellationToken);
+        using var scope = _scopeFactory.CreateScope();
+        switch (scheduleKey)
+        {
+            case PublicAnalysisSchedule.MarketLogisticsEventsScheduleKey:
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IPublicParserObservedLogisticsRefreshService>();
+                var result = await service.RefreshAsync(cancellationToken);
+                if (!result.IsSuccess)
+                    throw new InvalidOperationException(result.Error!.Message);
+
+                return;
+            }
+
+            case PublicAnalysisSchedule.ProductAvailabilityScheduleKey:
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IPublicProductAvailabilityRefreshService>();
+                var result = await service.RefreshAsync(cancellationToken);
+                if (!result.IsSuccess)
+                    throw new InvalidOperationException(result.Error!.Message);
+
+                return;
+            }
+
+            case PublicAnalysisSchedule.ParserCurrentProductsScheduleKey:
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IPublicParserCurrentProductRefreshService>();
+                var result = await service.RefreshAsync(cancellationToken);
+                if (!result.IsSuccess)
+                    throw new InvalidOperationException(result.Error!.Message);
+
+                return;
+            }
+
+            default:
+                throw new InvalidOperationException($"Manual public analysis schedule '{scheduleKey}' is not supported.");
+        }
+    }
+
+    private async Task ProcessWildberriesCategoryCatalogDueAsync(DateTime nowUtc, CancellationToken cancellationToken)
+    {
+        var scheduleId = await ClaimPublicScheduleAsync(PublicAnalysisSchedule.WildberriesCategoryCatalogScheduleKey, nowUtc, cancellationToken);
         if (!scheduleId.HasValue)
             return;
 
         var startedAtUtc = DateTime.UtcNow;
         var memoryBeforeMb = CurrentMemoryMb();
         _logger.LogInformation(
-            "Scheduled public hot-products refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
+            "Scheduled WB category catalog refresh started. scheduleId={ScheduleId} memoryBeforeMb={MemoryBeforeMb}",
             scheduleId.Value,
             memoryBeforeMb);
 
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var service = scope.ServiceProvider.GetRequiredService<IMarketHotProductsRecalculationService>();
-            var result = await service.RecalculatePublicAsync(DefaultHotProductsRequest(), cancellationToken);
+            var service = scope.ServiceProvider.GetRequiredService<IWildberriesCategoryCatalogRefreshService>();
+            var result = await service.RefreshAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
                 throw new InvalidOperationException(result.Error!.Message);
 
-            await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
+            await CompletePublicWeeklyScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
-                "Scheduled public hot-products refresh completed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                "Scheduled WB category catalog refresh completed. scheduleId={ScheduleId} leavesCount={LeavesCount} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
                 scheduleId.Value,
+                result.Value!.LeavesCount,
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
@@ -143,7 +180,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             await FailPublicScheduleAsync(scheduleId.Value, DateTime.UtcNow, ex.Message, cancellationToken);
             _logger.LogWarning(
                 ex,
-                "Scheduled public hot-products refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
+                "Scheduled WB category catalog refresh failed. scheduleId={ScheduleId} durationMs={DurationMs} memoryBeforeMb={MemoryBeforeMb} memoryAfterMb={MemoryAfterMb}",
                 scheduleId.Value,
                 (DateTime.UtcNow - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
@@ -454,6 +491,33 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         return schedule.Id;
     }
 
+    private async Task<(Guid Id, string ScheduleKey)?> ClaimManualPublicAnalysisRequestAsync(
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var request = await dbContext.PublicAnalysisManualRunRequests
+            .Where(x => x.Status == PublicAnalysisManualRunRequest.QueuedStatus)
+            .OrderBy(x => x.RequestedAtUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (request is null)
+            return null;
+
+        var schedule = await dbContext.PublicAnalysisSchedules
+            .Where(x =>
+                x.ScheduleKey == request.ScheduleKey &&
+                (x.LockedUntilUtc == null || x.LockedUntilUtc <= nowUtc))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (schedule is null)
+            return null;
+
+        schedule.Lock(_workerId, nowUtc.Add(LockDuration), nowUtc);
+        request.MarkRunning(nowUtc);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return (request.Id, request.ScheduleKey);
+    }
+
     private async Task<Guid?> ClaimOverviewScheduleAsync(DateTime nowUtc, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -497,6 +561,34 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task CompletePublicWeeklyScheduleAsync(Guid scheduleId, DateTime completedAtUtc, CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var schedule = await dbContext.PublicAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
+        schedule.MarkCompleted(completedAtUtc, completedAtUtc.AddDays(7));
+        schedule.ReleaseLock(completedAtUtc);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task CompleteManualPublicAnalysisRequestAsync(
+        Guid requestId,
+        string scheduleKey,
+        DateTime completedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var request = await dbContext.PublicAnalysisManualRunRequests.FirstAsync(x => x.Id == requestId, cancellationToken);
+        request.MarkCompleted(completedAtUtc);
+
+        var schedule = await dbContext.PublicAnalysisSchedules
+            .FirstOrDefaultAsync(x => x.ScheduleKey == scheduleKey, cancellationToken);
+        schedule?.ReleaseLock(completedAtUtc);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task CompleteOverviewScheduleAsync(Guid scheduleId, DateTime completedAtUtc, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -521,6 +613,25 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task FailManualPublicAnalysisRequestAsync(
+        Guid requestId,
+        string scheduleKey,
+        DateTime failedAtUtc,
+        string error,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var request = await dbContext.PublicAnalysisManualRunRequests.FirstAsync(x => x.Id == requestId, cancellationToken);
+        request.MarkFailed(failedAtUtc, Truncate(error));
+
+        var schedule = await dbContext.PublicAnalysisSchedules
+            .FirstOrDefaultAsync(x => x.ScheduleKey == scheduleKey, cancellationToken);
+        schedule?.ReleaseLock(failedAtUtc);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task FailOverviewScheduleAsync(Guid scheduleId, DateTime failedAtUtc, string error, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -530,18 +641,6 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         schedule.ReleaseLock(failedAtUtc);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
-
-    private static RecalculateHotProductsRequest DefaultHotProductsRequest() =>
-        new(
-            SourceCategory: null,
-            SourceSubcategory: null,
-            ProductParserRunId: null,
-            RankParserRunId: null,
-            MaxProducts: 100000,
-            ForceRecalculate: true,
-            MaxRecommendations: 1000,
-            MinConfidence: null,
-            MinProductsForScoring: 5);
 
     private static long CurrentMemoryMb() =>
         GC.GetTotalMemory(false) / 1024 / 1024;

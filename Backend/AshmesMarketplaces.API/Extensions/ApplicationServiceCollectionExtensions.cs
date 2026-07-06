@@ -2,6 +2,7 @@ using AshmesMarketplaces.API.Filters;
 using AshmesMarketplaces.API.DevelopmentSeed;
 using AshmesMarketplaces.API.Security;
 using AshmesMarketplaces.API.Storage;
+using AshmesMarketplaces.Application.AdminCalculations.Services;
 using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Auth.Services;
 using AshmesMarketplaces.Application.Brands.Services;
@@ -26,6 +27,7 @@ using AshmesMarketplaces.Application.Reviews.Services;
 using AshmesMarketplaces.Application.RecommendationCategories.Services;
 using AshmesMarketplaces.Application.RecommendationProducts.Services;
 using AshmesMarketplaces.Application.Recommendations.Services;
+using AshmesMarketplaces.Application.RuleConstructor.Services;
 using AshmesMarketplaces.Application.RolePermissions.Services;
 using AshmesMarketplaces.Application.Roles.Services;
 using AshmesMarketplaces.Application.RoleSubroles.Services;
@@ -46,12 +48,18 @@ public static class ApplicationServiceCollectionExtensions
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
+        services.AddDataProtection();
+
         services.Configure<WorkspaceMarketProductMediaStorageOptions>(
             configuration.GetSection(WorkspaceMarketProductMediaStorageOptions.SectionName));
         services.AddScoped<IWorkspaceMarketProductMediaStorage, FileWorkspaceMarketProductMediaStorage>();
 
         services.AddScoped<IMarketplaceService, MarketplaceService>();
-        services.AddHttpClient<IWildberriesCategoryCatalogService, WildberriesCategoryCatalogService>();
+        services.AddHttpClient<WildberriesCategoryCatalogService>();
+        services.AddScoped<IWildberriesCategoryCatalogService>(serviceProvider =>
+            serviceProvider.GetRequiredService<WildberriesCategoryCatalogService>());
+        services.AddScoped<IWildberriesCategoryCatalogRefreshService>(serviceProvider =>
+            serviceProvider.GetRequiredService<WildberriesCategoryCatalogService>());
         services.AddScoped<IBrandService, BrandService>();
         services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IWarehouseService, WarehouseService>();
@@ -60,7 +68,12 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IParserBatchQueueService, ParserBatchQueueService>();
         services.AddScoped<IParserProxyRunService, ParserProxyRunService>();
         services.AddScoped<IParserPriceSplitQueueService, ParserPriceSplitQueueService>();
+        services.AddScoped<IParserProxySecretProtector, DataProtectionParserProxySecretProtector>();
+        services.AddScoped<IParserProxyManagementService, ParserProxyManagementService>();
+        services.AddScoped<IParserInstanceConfigurationService, ParserInstanceConfigurationService>();
+        services.AddScoped<IParserLaunchRequestService, ParserLaunchRequestService>();
         services.AddScoped<IParserAdminMonitoringService, ParserAdminMonitoringService>();
+        services.AddScoped<IParserRunRollbackService, ParserRunRollbackService>();
         services.AddScoped<IParserProductReadService, ParserProductReadService>();
         services.AddScoped<IParserObservedStockDecreaseReadService, CachedParserObservedStockDecreaseReadService>();
         services.AddScoped<IParserObservedMarketEventReadService, CachedParserObservedMarketEventReadService>();
@@ -72,6 +85,8 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<IPublicMarketConcentrationReadService, PublicMarketConcentrationReadService>();
         services.AddScoped<IPublicTopForecastReadService, PublicTopForecastReadService>();
         services.AddScoped<IPublicAnalysisRefreshScheduler, PublicAnalysisRefreshScheduler>();
+        services.AddScoped<IAdminCalculationService, AdminCalculationService>();
+        services.AddScoped<IRuleConstructorService, RuleConstructorService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<IReviewService, ReviewService>();
         services.AddScoped<IReviewReplyService, ReviewReplyService>();

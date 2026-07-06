@@ -183,6 +183,10 @@ class ParserConfig:
 class ReviewsParserConfig:
     marketplace: str = "wildberries"
     endpoint_base: str = "https://feedbacks1.wb.ru/feedbacks/v1"
+    fetch_mode: str = "product_full"
+    product_endpoint_template: str = "https://feedbacks1.wb.ru/feedbacks/v1/{wb_product_id}"
+    page_size: int = 100
+    max_pages_per_product: int = 50
     output_base_dir: Path = BASE_DIR / "output"
     max_concurrent: int = 3
     timeout_seconds: int = 10
@@ -206,6 +210,22 @@ class ReviewsParserConfig:
                 "PARSER_REVIEWS_ENDPOINT_BASE",
                 cls.endpoint_base,
             ).rstrip("/"),
+            fetch_mode=_env_value(
+                env_values,
+                "PARSER_REVIEWS_FETCH_MODE",
+                cls.fetch_mode,
+            ).strip().lower(),
+            product_endpoint_template=_env_value(
+                env_values,
+                "PARSER_REVIEWS_PRODUCT_ENDPOINT_TEMPLATE",
+                cls.product_endpoint_template,
+            ).strip(),
+            page_size=_env_int(env_values, "PARSER_REVIEWS_PAGE_SIZE", cls.page_size),
+            max_pages_per_product=_env_int(
+                env_values,
+                "PARSER_REVIEWS_MAX_PAGES_PER_PRODUCT",
+                cls.max_pages_per_product,
+            ),
             output_base_dir=Path(
                 _env_value(
                     env_values,
@@ -257,6 +277,18 @@ class ReviewsParserConfig:
 
         if not self.endpoint_base.strip():
             raise ValueError("PARSER_REVIEWS_ENDPOINT_BASE is required.")
+
+        if self.fetch_mode not in {"product_full", "root_capped_fallback"}:
+            raise ValueError("PARSER_REVIEWS_FETCH_MODE must be product_full or root_capped_fallback.")
+
+        if self.fetch_mode == "product_full" and "{wb_product_id}" not in self.product_endpoint_template:
+            raise ValueError("PARSER_REVIEWS_PRODUCT_ENDPOINT_TEMPLATE must contain {wb_product_id}.")
+
+        if self.page_size < 1:
+            raise ValueError("PARSER_REVIEWS_PAGE_SIZE must be positive.")
+
+        if self.max_pages_per_product < 1:
+            raise ValueError("PARSER_REVIEWS_MAX_PAGES_PER_PRODUCT must be positive.")
 
         if self.max_concurrent < 1 or self.max_concurrent > 12:
             raise ValueError("PARSER_REVIEWS_MAX_CONCURRENT must be between 1 and 12.")

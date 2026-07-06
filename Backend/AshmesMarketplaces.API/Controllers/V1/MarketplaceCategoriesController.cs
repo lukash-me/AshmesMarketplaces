@@ -45,10 +45,10 @@ public sealed class MarketplaceCategoriesController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<IReadOnlyList<WildberriesCategoryNodeDto>>> SearchWildberriesLeaves(
-        [FromQuery] WildberriesCategorySearchQuery query,
+        [FromQuery] string? query,
         CancellationToken cancellationToken)
     {
-        var result = await _wildberriesCategoryCatalogService.SearchAsync(query, cancellationToken);
+        var result = await _wildberriesCategoryCatalogService.SearchAsync(new WildberriesCategorySearchQuery(query), cancellationToken);
         return ToActionResult(result);
     }
 

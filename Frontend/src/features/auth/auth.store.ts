@@ -8,6 +8,7 @@ import { useAuthPromptStore } from './authPrompt.store';
 import type { AuthUser, LoginRequest, LoginResponse, RegisterRequest, StoredAuthSession } from './auth.types';
 
 const STORAGE_KEY = 'ashmes.auth.session';
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
 
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(null);
@@ -18,11 +19,13 @@ export const useAuthStore = defineStore('auth', () => {
   const user = ref<AuthUser | null>(null);
   const ready = ref(false);
   const bootstrapping = ref(false);
+  let refreshInFlight: Promise<boolean> | null = null;
 
   const isAuthenticated = computed(() => Boolean(accessToken.value));
 
   configureHttpAuth({
     getAccessToken: () => accessToken.value,
+    ensureFreshAccessToken,
     refresh: refreshSession,
     onUnauthorized: handleUnauthorized
   });
@@ -91,6 +94,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function refreshSession(): Promise<boolean> {
+    if (refreshInFlight) {
+      return refreshInFlight;
+    }
+
+    refreshInFlight = refreshSessionInternal().finally(() => {
+      refreshInFlight = null;
+    });
+
+    return refreshInFlight;
+  }
+
+  async function refreshSessionInternal(): Promise<boolean> {
     if (!refreshToken.value || !sessionId.value) {
       return false;
     }
@@ -107,6 +122,27 @@ export const useAuthStore = defineStore('auth', () => {
       clearSession();
       return false;
     }
+  }
+
+  async function ensureFreshAccessToken(): Promise<boolean> {
+    if (!accessToken.value) {
+      return false;
+    }
+
+    if (!accessTokenExpiresAtUtc.value) {
+      return true;
+    }
+
+    const expiresAt = Date.parse(accessTokenExpiresAtUtc.value);
+    if (Number.isNaN(expiresAt)) {
+      return true;
+    }
+
+    if (expiresAt - Date.now() > ACCESS_TOKEN_REFRESH_SKEW_MS) {
+      return true;
+    }
+
+    return refreshSession();
   }
 
   function applySession(session: LoginResponse | StoredAuthSession): void {
@@ -169,6 +205,7 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     logout,
     refreshSession,
+    ensureFreshAccessToken,
     clearSession
   };
 });

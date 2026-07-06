@@ -53,7 +53,7 @@ public sealed class PublicParserCurrentProductRefreshService : IPublicParserCurr
                 SELECT r.parser_run_id
                 FROM "ParserRuns" r
                 WHERE r.kind = 'ranks'
-                  AND r.manifest_status = 'succeeded'
+                  AND (r.manifest_status = 'succeeded' OR r.manifest_status = 'partial')
                   AND COALESCE(lower(r.requested_scope ->> 'is_test_run'), 'false') <> 'true'
                 ORDER BY
                     (r.finished_at_utc IS NOT NULL) DESC,

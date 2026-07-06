@@ -1,9 +1,12 @@
+using AshmesMarketplaces.Application.ParserIngestion.Services;
+
 namespace AshmesMarketplaces.Application.ParserIngestion.Dtos;
 
 public sealed record ParserIngestionOptions(
     int BatchSize = 5000,
     long? MaxRowsPerFile = null,
-    bool DryRun = false)
+    bool DryRun = false,
+    ParserCdcApplyContext? CdcContext = null)
 {
     public int NormalizedBatchSize => Math.Clamp(BatchSize, 1, 10000);
 }

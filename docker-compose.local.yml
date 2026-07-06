@@ -65,8 +65,37 @@ services:
       retries: 5
     restart: unless-stopped
 
+  intelligence:
+    build:
+      context: .
+      dockerfile: Intelligence/Dockerfile
+    container_name: ashmes-intelligence
+    environment:
+      INTELLIGENCE_ENV: development
+      INTELLIGENCE_API_PREFIX: /api/v1
+      INTELLIGENCE_ENABLE_DEBUG: "false"
+      INTELLIGENCE_TOP_FORECAST_MODEL_DIR: /app/data/top_forecast_models
+    ports:
+      - "${INTELLIGENCE_PORT:-8020}:8020"
+    volumes:
+      - ashmes_intelligence_data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/health/live', timeout=5).read()"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    restart: unless-stopped
+
 volumes:
   ashmes_postgres_data:
   ashmes_pgadmin_data:
   ashmes_redis_data:
   ashmes_minio_data:
+  ashmes_intelligence_data:

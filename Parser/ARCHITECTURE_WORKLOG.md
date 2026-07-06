@@ -1,5 +1,36 @@
 # Parser Architecture Worklog
 
+## 2026-07-02 proxy source of truth update
+
+- Production proxy credentials and niche assignments are now stored in backend
+  DB tables `ParserProxies` and `ParserProxyNicheAssignments`.
+- Admins manage proxies from the service UI: Parser monitoring -> Proxies.
+- Parser supervisor loads launch assignments from
+  `GET /api/v1/parser/runtime/proxy-assignments`.
+- `proxy_mapping.json` is only a dev fallback without credentials.
+- `proxy_mapping.local.json` must not be used as the production source of truth.
+- Runtime assignments create temporary snapshot files only for child-process
+  compatibility. Those files are derived from the backend response and are not
+  edited by hand.
+- Proxy passwords are protected by backend DataProtection and are never returned
+  by admin API responses. The parser runtime endpoint is the only endpoint that
+  returns credentials, and it may be protected by `X-Parser-Api-Key`.
+
+## 2026-07-02 parser search text decision
+
+- WB menu `searchQuery` is a service identifier for validating the selected
+  leaf category. Do not use it as the marketplace search phrase.
+- Parser marketplace search text is `parserSearchText`.
+- For proxy assignments created from the service UI, `parserSearchText` is
+  always the selected WB leaf niche name (`sourceSubcategory`).
+- Runtime assignment payloads and generated child-process JSON files must carry
+  both fields:
+  - `searchQuery`: original WB menu query, for validation/diagnostics;
+  - `parserSearchText`: actual text passed to `SearchPhraseParser` and catalog
+    fetch.
+- If old dev configs do not contain `parserSearchText`, parser falls back to
+  `sourceSubcategory`, not to WB `searchQuery`.
+
 Этот файл обязателен к проверке перед любыми задачами, запуском или исправлениями,
 связанными с parser-архитектурой. Цель файла - не решать повторно одни и те же
 проблемы с кодировками, названиями ниш, proxy, мониторингом и batch-flow.
@@ -140,8 +171,14 @@ Docker/prod запуск:
 Правила:
 
 - Не уменьшать batch size, чтобы "обойти" 429.
-- При 429 не продолжать долбить WB тем же proxy.
-- Переводить текущий proxy-run в failed/cooldown с понятной причиной.
+- При 429 не инвалидировать token/session и не падать после короткой серии
+  ответов.
+- Сначала замедлять только текущий proxy: короткий backoff, затем длинный
+  `PARSER_FILTER_RATE_LIMIT_COOLDOWN_SECONDS`, после чего повторять тот же
+  price range.
+- Переводить текущий proxy-run в failed только после hard-limit
+  `PARSER_FILTERS_MAX_TOTAL_RETRYABLE_ATTEMPTS`, чтобы не получить
+  бесконечный цикл при полностью заблокированном proxy.
 - Проверять, что задержки есть:
   - между filter/full split запросами;
   - между окончанием split и catalog fetch;
@@ -176,7 +213,11 @@ token/session, WB response pattern и timing, а не повторять те ж
 - `batching.batch_size` означает 100 карточек в batch для server queue.
 - `PARSER_CATALOG_REQUEST_GROUP_SIZE` означает размер группы catalog page-запросов. В production preset он равен `10`.
 - `PARSER_BATCH_SIZE` больше не используется в production preset как catalog group; он остается только как backward-compatible alias.
-- `429` не должен инвалидировать token/session. Это rate-limit/cooldown текущего proxy-run.
+- `429` не должен инвалидировать token/session. Это adaptive rate-limit/cooldown текущего proxy.
+- `PARSER_FILTERS_MAX_RETRYABLE_STATUSES` теперь soft threshold для перехода
+  на длинный cooldown, а не причина немедленного падения.
+- `PARSER_FILTERS_MAX_TOTAL_RETRYABLE_ATTEMPTS` остается аварийным hard-limit
+  для полностью заблокированного proxy/range.
 - `401/403/498` должны инвалидировать только session соответствующего proxy.
 - Catalog request не должен иметь двойную задержку: если включен pre-request limiter, post-delay по умолчанию равен `0`.
 - Live smoke не запускать в рамках правок лимитов; сначала проходятся unit/backend/frontend проверки.
@@ -201,5 +242,6 @@ token/session, WB response pattern и timing, а не повторять те ж
 6. Проверить наличие `proxy_mapping.local.json`; credentials не коммитить.
 7. Запустить proxy preflight: external IP уникальны, token/session по proxy
    отдельные.
-8. Если появляется 429, остановить повторные запросы, закрыть proxy-run
-   failed/cooldown и зафиксировать причину в этом файле.
+8. Если появляется 429, проверить, что включился per-proxy cooldown и тот же
+   range повторяется после паузы. Закрывать proxy-run нужно только после
+   hard-limit или другой реальной ошибки.

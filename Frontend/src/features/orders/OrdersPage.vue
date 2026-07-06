@@ -43,6 +43,7 @@ const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
 const selectedProduct = ref<ParserProductListItem | null>(null);
+const summaryQueryKey = ref('');
 
 const tabs: Array<{ key: ObservedMarketEventTab; label: string }> = [
   { key: 'assumed-orders', label: 'Уменьшения остатков' },
@@ -73,12 +74,18 @@ async function loadObservedMarketEvents() {
   error.value = '';
 
   try {
+    const nextSummaryQueryKey = buildSummaryQueryKey(queryState.value);
+    const shouldLoadSummary = summaryResponse.value === null || summaryQueryKey.value !== nextSummaryQueryKey;
+    const summaryPromise = shouldLoadSummary
+      ? getObservedMarketEvents(toObservedMarketEventSummaryApiParams(queryState.value))
+      : Promise.resolve(summaryResponse.value);
     const [summaryResult, listResult] = await Promise.all([
-      getObservedMarketEvents(toObservedMarketEventSummaryApiParams(queryState.value)),
+      summaryPromise,
       loadTabResponse(queryState.value)
     ]);
 
     summaryResponse.value = summaryResult;
+    summaryQueryKey.value = nextSummaryQueryKey;
     response.value = listResult.response;
     observedMarketEvents.value = listResult.items;
     totalCount.value = listResult.totalCount;
@@ -91,6 +98,16 @@ async function loadObservedMarketEvents() {
   } finally {
     loading.value = false;
   }
+}
+
+function buildSummaryQueryKey(state: ObservedMarketEventQueryState): string {
+  return JSON.stringify({
+    search: state.search,
+    sourceCategory: state.sourceCategory,
+    sourceSubcategory: state.sourceSubcategory,
+    brandName: state.brandName,
+    sellerName: state.sellerName
+  });
 }
 
 async function loadTabResponse(state: ObservedMarketEventQueryState): Promise<{
@@ -294,6 +311,7 @@ function getEmptyState(tab: ObservedMarketEventTab): { title: string; descriptio
       <ObservedMarketEventTable
         v-else
         :rows="observedMarketEvents"
+        :tab="queryState.tab"
         :page="queryState.page"
         :page-size="queryState.pageSize"
         :total-count="totalCount"

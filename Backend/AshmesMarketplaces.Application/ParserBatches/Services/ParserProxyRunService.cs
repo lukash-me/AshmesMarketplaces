@@ -68,7 +68,11 @@ public sealed class ParserProxyRunService : IParserProxyRunService
                 request.Phase,
                 request.PlannedRangesCount ?? 0,
                 request.CompletedRangesCount ?? 0,
-                request.RangeProgressPercent ?? 0);
+                request.RangeProgressPercent ?? 0,
+                request.RangeChecksCount ?? 0,
+                request.FinalRangesCount ?? 0,
+                request.EmptyRangesCount ?? 0,
+                request.SplitRangesCount ?? 0);
             _dbContext.ParserProxyRuns.Add(run);
         }
         else
@@ -81,7 +85,11 @@ public sealed class ParserProxyRunService : IParserProxyRunService
                 request.Phase,
                 request.PlannedRangesCount,
                 request.CompletedRangesCount,
-                request.RangeProgressPercent);
+                request.RangeProgressPercent,
+                request.RangeChecksCount,
+                request.FinalRangesCount,
+                request.EmptyRangesCount,
+                request.SplitRangesCount);
         }
 
         try
@@ -119,7 +127,11 @@ public sealed class ParserProxyRunService : IParserProxyRunService
             request.Phase,
             request.PlannedRangesCount,
             request.CompletedRangesCount,
-            request.RangeProgressPercent);
+            request.RangeProgressPercent,
+            request.RangeChecksCount,
+            request.FinalRangesCount,
+            request.EmptyRangesCount,
+            request.SplitRangesCount);
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ServiceResult<ParserProxyRunResponse>.Success(Map(run));
     }
@@ -239,6 +251,10 @@ public sealed class ParserProxyRunService : IParserProxyRunService
             run.PlannedRangesCount,
             run.CompletedRangesCount,
             run.RangeProgressPercent,
+            run.RangeChecksCount,
+            run.FinalRangesCount,
+            run.EmptyRangesCount,
+            run.SplitRangesCount,
             run.StartedAtUtc,
             run.LastHeartbeatAtUtc,
             run.FinishedAtUtc,

@@ -39,6 +39,70 @@ public sealed class ParserProductCdcServiceTests
     }
 
     [Fact]
+    public async Task SameProductStateUpdatesLastSeenWithoutRunEffect()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProductCdcService(context);
+        var runId = Guid.NewGuid();
+        var batchId = Guid.NewGuid();
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-1",
+            new ParserCdcApplyContext(runId, batchId),
+            CancellationToken.None);
+
+        var current = await context.ParserCurrentProductRows.SingleAsync();
+        current.MarkSeen(
+            "old-cycle",
+            Guid.NewGuid(),
+            DateTime.SpecifyKind(new DateTime(2026, 7, 1, 10, 0, 0), DateTimeKind.Utc));
+        await context.SaveChangesAsync();
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-2",
+            new ParserCdcApplyContext(runId, batchId),
+            CancellationToken.None);
+
+        var stored = await context.ParserCurrentProductRows.SingleAsync();
+        Assert.Equal("1001", stored.WbProductId);
+        Assert.Equal(runId.ToString("D"), stored.LastSeenParserProxyRunId);
+        Assert.Equal(ParserMarketplacePresenceStatuses.Active, stored.MarketplacePresenceStatus);
+        Assert.Equal(1, await context.ParserRunProductEffects.CountAsync());
+    }
+
+    [Fact]
+    public async Task MissingProductSeenAgainBecomesActiveAndWritesPresenceEvent()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProductCdcService(context);
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-1",
+            CancellationToken.None);
+
+        var current = await context.ParserCurrentProductRows.SingleAsync();
+        current.MarkMissingInFullScan("cycle-old", DateTime.SpecifyKind(new DateTime(2026, 7, 1, 10, 0, 0), DateTimeKind.Utc));
+        await context.SaveChangesAsync();
+
+        var runId = Guid.NewGuid();
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-2",
+            new ParserCdcApplyContext(runId, Guid.NewGuid()),
+            CancellationToken.None);
+
+        var stored = await context.ParserCurrentProductRows.SingleAsync();
+        var presenceEvent = await context.ParserProductPresenceEvents.SingleAsync();
+        Assert.Equal(ParserMarketplacePresenceStatuses.Active, stored.MarketplacePresenceStatus);
+        Assert.Equal(ParserMarketplacePresenceStatuses.MissingInLatestFullScan, presenceEvent.OldStatus);
+        Assert.Equal(ParserMarketplacePresenceStatuses.Active, presenceEvent.NewStatus);
+        Assert.Equal("seen_after_missing", presenceEvent.Reason);
+    }
+
+    [Fact]
     public async Task PriceChangeCreatesOnlyPriceEvent()
     {
         await using var context = CreateContext();
@@ -52,6 +116,48 @@ public sealed class ParserProductCdcServiceTests
             .Select(x => x.FieldGroup)
             .ToListAsync();
         Assert.Equal(["price"], updates);
+    }
+
+    [Fact]
+    public async Task ApplyProductRowsAsync_records_run_effects_when_context_is_provided()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProductCdcService(context);
+        var runId = Guid.NewGuid();
+        var batchId = Guid.NewGuid();
+        var contextInfo = new ParserCdcApplyContext(runId, batchId);
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-1",
+            contextInfo,
+            CancellationToken.None);
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 120, quantity: 10)],
+            "batch-2",
+            contextInfo,
+            CancellationToken.None);
+
+        var productEffects = await context.ParserRunProductEffects
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => x.EffectType)
+            .ToListAsync();
+        var entityEffects = await context.ParserRunCurrentEntityEffects
+            .OrderBy(x => x.CreatedAtUtc)
+            .Select(x => new { x.EntityKind, x.EffectType, x.OldValueJson, x.NewValueJson })
+            .ToListAsync();
+
+        Assert.Equal([ParserRunProductEffectTypes.Created, ParserRunProductEffectTypes.Updated], productEffects);
+        Assert.Contains(entityEffects, x =>
+            x.EntityKind == ParserRunCurrentEntityKinds.Product &&
+            x.EffectType == ParserRunCurrentEntityEffectTypes.Created &&
+            x.OldValueJson == null &&
+            x.NewValueJson != null);
+        Assert.Contains(entityEffects, x =>
+            x.EntityKind == ParserRunCurrentEntityKinds.Product &&
+            x.EffectType == ParserRunCurrentEntityEffectTypes.Updated &&
+            x.OldValueJson != null &&
+            x.NewValueJson != null);
     }
 
     [Fact]
@@ -115,6 +221,42 @@ public sealed class ParserProductCdcServiceTests
     }
 
     [Fact]
+    public async Task ReviewCoverageWithoutReviewRowsCreatesCurrentSummary()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProductCdcService(context);
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("175139943", priceDiscounted: 556, quantity: 1)],
+            "batch-products",
+            CancellationToken.None);
+
+        await service.ApplyReviewCoverageRowsAsync(
+            [
+                new ParserReviewCoverageSnapshot(
+                    WbProductId: "175139943",
+                    WbRootId: "174524123",
+                    MarketplaceFeedbackCount: 0,
+                    FetchedReviewsCount: 0,
+                    CoverageStatus: "full",
+                    CoverageSource: "root_variant_filtered",
+                    LastCoverageError: null,
+                    ObservedAtUtc: DateTime.SpecifyKind(new DateTime(2026, 7, 5, 11, 1, 9), DateTimeKind.Utc))
+            ],
+            "batch-coverage",
+            CancellationToken.None);
+
+        var summary = await context.ParserCurrentProductReviewsSummaries.SingleAsync();
+        Assert.Equal("175139943", summary.WbProductId);
+        Assert.Equal("174524123", summary.WbRootId);
+        Assert.Equal(0, summary.ReviewsCount);
+        Assert.Equal(0, summary.MarketplaceFeedbackCount);
+        Assert.Equal(0, summary.FetchedReviewsCount);
+        Assert.Equal("full", summary.CoverageStatus);
+        Assert.Equal("root_variant_filtered", summary.CoverageSource);
+    }
+
+    [Fact]
     public async Task ExistingProductChangesFromDifferentTablesCreateEventsForEachChangedGroup()
     {
         await using var context = CreateContext();
@@ -147,6 +289,50 @@ public sealed class ParserProductCdcServiceTests
         Assert.Equal(2, updates.Count);
         Assert.Contains(updates, x => x.FieldGroup == "logistics" && x.ChangeType == "updated");
         Assert.Contains(updates, x => x.FieldGroup == "reviews" && x.ChangeType == "review_updated");
+    }
+
+    [Fact]
+    public async Task RankRowsUpdateExistingCurrentProductPosition()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProductCdcService(context);
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-products",
+            CancellationToken.None);
+
+        await service.ApplyRankRowsAsync(
+            [RankRow("1001", absolutePosition: 7)],
+            "batch-ranks",
+            CancellationToken.None);
+
+        var current = await context.ParserCurrentProductRows.SingleAsync();
+        Assert.Equal("observed", current.PositionState);
+        Assert.Equal(7, current.PositionAbsolute);
+        Assert.Equal("Платья и сарафаны", current.PositionQuery);
+    }
+
+    [Fact]
+    public async Task ProductRowsAppliedAfterRanksStillReceivePosition()
+    {
+        await using var context = CreateContext();
+        var service = new ParserProductCdcService(context);
+
+        await service.ApplyRankRowsAsync(
+            [RankRow("1001", absolutePosition: 11)],
+            "batch-ranks",
+            CancellationToken.None);
+
+        await service.ApplyProductRowsAsync(
+            [ProductRow("1001", priceDiscounted: 100, quantity: 10)],
+            "batch-products",
+            CancellationToken.None);
+
+        var current = await context.ParserCurrentProductRows.SingleAsync();
+        Assert.Equal("observed", current.PositionState);
+        Assert.Equal(11, current.PositionAbsolute);
+        Assert.Equal("Платья и сарафаны", current.PositionQuery);
     }
 
     private static ApplicationDbContext CreateContext()
@@ -199,6 +385,35 @@ public sealed class ParserProductCdcServiceTests
             1,
             2,
             null);
+    }
+
+    private static ParserRankSnapshotRow RankRow(string wbProductId, int absolutePosition)
+    {
+        return new ParserRankSnapshotRow(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            absolutePosition,
+            $"rank-{wbProductId}-{absolutePosition}",
+            1,
+            "ranks-run",
+            DateTime.SpecifyKind(new DateTime(2026, 6, 29, 10, 0, 0), DateTimeKind.Utc),
+            "wildberries",
+            "proxy-1-Платья",
+            "search_query",
+            "Товары для дома",
+            "Коврики для ванной",
+            "Платья и сарафаны",
+            "12354108",
+            "popular",
+            null,
+            "request",
+            1,
+            absolutePosition,
+            absolutePosition,
+            wbProductId,
+            $"root-{wbProductId}",
+            1000,
+            "ok");
     }
 
     private static ParserLogisticsSnapshotRow LogisticsRow(
@@ -306,7 +521,11 @@ public sealed class ParserProductCdcServiceTests
                 typeof(ParserCurrentProductRank),
                 typeof(ParserCurrentProductReviewEvidence),
                 typeof(ParserCurrentProductReviewsSummary),
-                typeof(ParserProductChangeEvent)
+                typeof(ParserRankSnapshotRow),
+                typeof(ParserProductChangeEvent),
+                typeof(ParserProductPresenceEvent),
+                typeof(ParserRunProductEffect),
+                typeof(ParserRunCurrentEntityEffect)
             };
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes().ToList())
@@ -326,9 +545,14 @@ public sealed class ParserProductCdcServiceTests
             modelBuilder.Entity<ParserCurrentProductReviewEvidence>().Ignore(x => x.ReviewJson);
             modelBuilder.Entity<ParserCurrentProductReviewsSummary>().HasKey(x => x.Id);
             modelBuilder.Entity<ParserCurrentProductReviewsSummary>().Ignore(x => x.ReviewsJson);
+            modelBuilder.Entity<ParserRankSnapshotRow>().HasKey(x => x.Id);
+            modelBuilder.Entity<ParserRankSnapshotRow>().Ignore(x => x.Filters);
             modelBuilder.Entity<ParserProductChangeEvent>().HasKey(x => x.Id);
             modelBuilder.Entity<ParserProductChangeEvent>().Ignore(x => x.OldValueJson);
             modelBuilder.Entity<ParserProductChangeEvent>().Ignore(x => x.NewValueJson);
+            modelBuilder.Entity<ParserProductPresenceEvent>().HasKey(x => x.Id);
+            modelBuilder.Entity<ParserRunProductEffect>().HasKey(x => x.Id);
+            modelBuilder.Entity<ParserRunCurrentEntityEffect>().HasKey(x => x.Id);
         }
     }
 }

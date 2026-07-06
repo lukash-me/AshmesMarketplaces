@@ -6,6 +6,8 @@ import MarketConcentrationPage from '@/features/market-intelligence/MarketConcen
 import MarketIntelligencePage from '@/features/market-intelligence/MarketIntelligencePage.vue';
 import MarketTopForecastPage from '@/features/market-intelligence/MarketTopForecastPage.vue';
 import MarketOpportunitiesPage from '@/features/market-opportunities/MarketOpportunitiesPage.vue';
+import AdminCatalogsPage from '@/features/admin-catalogs/AdminCatalogsPage.vue';
+import AdminCalculationsPage from '@/features/admin-calculations/AdminCalculationsPage.vue';
 import ParserAdminMonitoringPage from '@/features/parser-admin-monitoring/ParserAdminMonitoringPage.vue';
 import ParserTestingPage from '@/features/parser-testing/ParserTestingPage.vue';
 import ParserProductsPage from '@/features/parser-products/ParserProductsPage.vue';
@@ -65,6 +67,9 @@ export const router = createRouter({
         { path: 'expenses', name: 'expenses', component: ExpensesPage },
         { path: 'management/workspaces', name: 'management-workspaces', component: WorkspaceManagementPage },
         { path: 'admin/parser', name: 'admin-parser-monitoring', component: ParserAdminMonitoringPage },
+        { path: 'admin/calculations', name: 'admin-calculations', component: AdminCalculationsPage },
+        { path: 'admin/references', redirect: { name: 'admin-catalogs' } },
+        { path: 'admin/catalogs', name: 'admin-catalogs', component: AdminCatalogsPage },
         { path: 'settings/access', redirect: { name: 'management-workspaces' } }
       ]
     },

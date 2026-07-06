@@ -109,6 +109,7 @@ Never commit `deploy/docker/.env`. It contains production secrets. The committed
 Run:
 
 ```bash
+python tools/check_encoding.py
 ./deploy/docker/scripts/check-prerequisites.sh
 ./deploy/docker/scripts/build.sh
 ```
@@ -118,6 +119,9 @@ Raw command equivalent:
 ```bash
 docker compose -f deploy/docker/compose.prod.yml --env-file deploy/docker/.env build
 ```
+
+The encoding check is mandatory before build/test/deploy. It fails if broken
+UTF-8/mojibake text is committed to source files.
 
 ## 7. Start Infrastructure
 

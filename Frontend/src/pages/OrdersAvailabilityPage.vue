@@ -20,7 +20,7 @@ import type {
   ParserProductListItem
 } from '@/features/parser-products/parserProducts.types';
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 10;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
 const DELIVERY_CITY_ORDER = [
@@ -63,6 +63,9 @@ let loadVersion = 0;
 let detailLoadVersion = 0;
 
 const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / PAGE_SIZE)));
+const pageStart = computed(() => (totalCount.value === 0 ? 0 : (page.value - 1) * PAGE_SIZE + 1));
+const pageEnd = computed(() => (rows.value.length === 0 ? 0 : pageStart.value + rows.value.length - 1));
+const paginationItems = computed(() => buildPaginationItems(page.value, pageCount.value));
 
 function destinationsFor(row: ParserProductListItem): ParserProductDeliveryDestinationSignal[] {
   const items = detailFor(row)?.deliveryProfile?.destinations ?? [];
@@ -169,6 +172,40 @@ function resetSearch() {
   searchDraft.value = '';
   search.value = '';
   page.value = 1;
+}
+
+function setPage(nextPage: number) {
+  if (nextPage < 1 || nextPage > pageCount.value || nextPage === page.value || loading.value) {
+    return;
+  }
+
+  page.value = nextPage;
+}
+
+function buildPaginationItems(currentPage: number, totalPages: number): Array<number | string> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, 'end-ellipsis', totalPages];
+  }
+
+  if (currentPage >= totalPages - 3) {
+    return [1, 'start-ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+  }
+
+  return [
+    1,
+    'start-ellipsis',
+    currentPage - 2,
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    currentPage + 2,
+    'end-ellipsis',
+    totalPages
+  ];
 }
 
 function openProduct(row: ParserProductListItem) {
@@ -504,10 +541,34 @@ function formatNumber(value: number | null | undefined): string {
         </footer>
       </article>
 
-      <footer v-if="pageCount > 1" class="pagination">
-        <Button variant="secondary" :disabled="page <= 1 || loading" @click="page--">Назад</Button>
-        <span>Страница {{ page }} из {{ pageCount }}</span>
-        <Button variant="secondary" :disabled="page >= pageCount || loading" @click="page++">Далее</Button>
+      <footer class="table-footer">
+        <span class="numeric">
+          Показаны {{ pageStart }}-{{ pageEnd }} из {{ totalCount }}
+        </span>
+        <div class="pager">
+          <Button class="pager__nav" variant="secondary" :disabled="page <= 1 || loading" @click="setPage(page - 1)">
+            Назад
+          </Button>
+          <div class="pager__pages" aria-label="Страницы доступности товара">
+            <template v-for="item in paginationItems" :key="item">
+              <span v-if="typeof item === 'string'" class="pager__ellipsis" aria-hidden="true">...</span>
+              <button
+                v-else
+                class="pager__page"
+                :class="{ 'pager__page--active': item === page }"
+                type="button"
+                :aria-current="item === page ? 'page' : undefined"
+                :disabled="loading"
+                @click="setPage(item)"
+              >
+                {{ item }}
+              </button>
+            </template>
+          </div>
+          <Button class="pager__nav" variant="secondary" :disabled="page >= pageCount || loading" @click="setPage(page + 1)">
+            Далее
+          </Button>
+        </div>
       </footer>
     </section>
 
@@ -722,14 +783,104 @@ function formatNumber(value: number | null | undefined): string {
   justify-content: space-between;
 }
 
-.pagination {
+.table-footer,
+.pager {
   display: flex;
+  gap: var(--space-3);
+}
+
+.table-footer {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  padding: var(--space-3);
+  font-size: 0.8125rem;
+}
+
+.pager {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pager__pages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pager__page,
+.pager__ellipsis {
+  display: inline-flex;
+  min-width: 2rem;
+  height: 2rem;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  color: var(--color-muted);
-  font-size: 13px;
-  font-weight: 700;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.pager__page {
+  border: 1px solid rgb(249 115 22 / 0.18);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.pager__page:hover {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.09), transparent),
+    var(--color-surface-hover);
+  color: var(--accent-ember-text-strong);
+}
+
+.pager__page--active {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.22), rgb(249 115 22 / 0.08)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 8px 20px rgb(249 115 22 / 0.08);
+}
+
+.pager__page:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.pager__page:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.pager__ellipsis {
+  color: var(--color-text-muted);
+}
+
+.pager__nav {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.14), rgb(249 115 22 / 0.05)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  font-weight: 720;
+}
+
+.pager__nav:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.2), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.pager__nav:disabled {
+  border-color: var(--color-border);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  opacity: 0.58;
 }
 
 @media (max-width: 900px) {
@@ -741,6 +892,15 @@ function formatNumber(value: number | null | undefined): string {
   .availability-detail__image {
     width: 140px;
     height: 140px;
+  }
+
+  .table-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pager {
+    justify-content: flex-start;
   }
 }
 </style>

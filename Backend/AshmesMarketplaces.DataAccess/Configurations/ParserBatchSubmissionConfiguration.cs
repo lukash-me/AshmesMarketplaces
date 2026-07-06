@@ -17,6 +17,9 @@ public sealed class ParserBatchSubmissionConfiguration : IEntityTypeConfiguratio
         builder.Property(x => x.SourceCategory).IsRequired().HasMaxLength(512).HasColumnName("source_category");
         builder.Property(x => x.SourceSubcategory).IsRequired().HasMaxLength(512).HasColumnName("source_subcategory");
         builder.Property(x => x.ProxyKey).HasMaxLength(160).HasColumnName("proxy_key");
+        builder.Property(x => x.ParserCycleId).HasMaxLength(200).HasColumnName("parser_cycle_id");
+        builder.Property(x => x.ExternalProxyRunId).HasMaxLength(260).HasColumnName("external_proxy_run_id");
+        builder.Property(x => x.ParserProxyRunId).HasColumnName("parser_proxy_run_id");
         builder.Property(x => x.BatchKind).IsRequired().HasMaxLength(80).HasColumnName("batch_kind");
         builder.Property(x => x.ContentHash).IsRequired().HasMaxLength(128).HasColumnName("content_hash");
         builder.Property(x => x.Status).IsRequired().HasMaxLength(32).HasColumnName("status");
@@ -34,5 +37,7 @@ public sealed class ParserBatchSubmissionConfiguration : IEntityTypeConfiguratio
         builder.HasIndex(x => x.Status);
         builder.HasIndex(x => new { x.SourceCategory, x.SourceSubcategory });
         builder.HasIndex(x => x.AcceptedAtUtc);
+        builder.HasIndex(x => x.ParserProxyRunId);
+        builder.HasIndex(x => new { x.ParserInstanceId, x.ExternalProxyRunId });
     }
 }

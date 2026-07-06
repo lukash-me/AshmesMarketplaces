@@ -121,6 +121,11 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             options,
             summary,
             cancellationToken);
+        await ScanReviewCoverageAsync(
+            RequiredFile(runDirectory, "review_coverage.jsonl"),
+            options,
+            summary,
+            cancellationToken);
 
         return summary.ToResult();
     }
@@ -225,6 +230,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             [
                 "manifest.json",
                 "review_fetch_results.jsonl",
+                "review_coverage.jsonl",
                 "reviews.jsonl",
                 "review_replies.jsonl",
                 "errors.jsonl",
@@ -265,6 +271,12 @@ public sealed partial class ParserIngestionService : IParserIngestionService
                 rootFetches,
                 options,
                 summary,
+                cancellationToken);
+            await StageReviewCoverageAsync(
+                RequiredFile(runDirectory, "review_coverage.jsonl"),
+                options,
+                summary,
+                manifest.ParserRunId,
                 cancellationToken);
             await FinishExecutionAsync(execution, summary, "succeeded", cancellationToken);
         }
@@ -446,7 +458,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
                 summary.Absorb(await StageLogisticsAsync(runDirectory, options, cancellationToken));
             foreach (var runDirectory in batch.ReviewRunDirectories)
                 summary.Absorb(await StageReviewsAsync(runDirectory, options, cancellationToken));
-            foreach (var runDirectory in batch.ProductDetailsRunDirectories)
+            foreach (var runDirectory in ExistingProductDetailsRunDirectories(batch.ProductDetailsRunDirectories))
                 summary.Absorb(await StageProductDetailsAsync(runDirectory, options, cancellationToken));
             summary.Increment("promote-products_skipped_dry_run");
             return summary.ToResult();
@@ -458,7 +470,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             summary.Absorb(await StageLogisticsAsync(runDirectory, options, cancellationToken));
         foreach (var runDirectory in batch.ReviewRunDirectories)
             summary.Absorb(await StageReviewsAsync(runDirectory, options, cancellationToken));
-        foreach (var runDirectory in batch.ProductDetailsRunDirectories)
+        foreach (var runDirectory in ExistingProductDetailsRunDirectories(batch.ProductDetailsRunDirectories))
             summary.Absorb(await StageProductDetailsAsync(runDirectory, options, cancellationToken));
         await RejectDefectiveBatchCardsAsync(batch, summary, cancellationToken);
         summary.Absorb(await PromoteProductsAsync(batch.ProductParserRunId, options, cancellationToken));
@@ -953,10 +965,10 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             }
 
             if (rows.Count + errors.Count >= options.NormalizedBatchSize)
-                await FlushProductBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+                await FlushProductBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         }
 
-        await FlushProductBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        await FlushProductBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         summary.Increment("product_rows_staged", summary.RowsWritten);
     }
 
@@ -965,6 +977,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         List<ParserProductRow> rows,
         List<ParserImportError> errors,
         ImportSummary summary,
+        ParserIngestionOptions options,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0 && errors.Count == 0)
@@ -986,7 +999,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserProductRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await _cdcService.ApplyProductRowsAsync(newRows, BatchId(newRows), cancellationToken);
+        await _cdcService.ApplyProductRowsAsync(newRows, BatchId(newRows), options.CdcContext, cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1085,10 +1098,10 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             }
 
             if (rows.Count + errors.Count >= options.NormalizedBatchSize)
-                await FlushLogisticsSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+                await FlushLogisticsSnapshotBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         }
 
-        await FlushLogisticsSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        await FlushLogisticsSnapshotBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         summary.Increment("logistics_snapshot_rows_staged", summary.RowsWritten - writtenBefore);
         summary.Increment("logistics_snapshot_rows_skipped", summary.RowsSkipped - skippedBefore);
     }
@@ -1098,6 +1111,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         List<ParserLogisticsSnapshotRow> rows,
         List<ParserImportError> errors,
         ImportSummary summary,
+        ParserIngestionOptions options,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0 && errors.Count == 0)
@@ -1119,7 +1133,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserLogisticsSnapshotRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await _cdcService.ApplyLogisticsRowsAsync(newRows, BatchId(newRows), cancellationToken);
+        await _cdcService.ApplyLogisticsRowsAsync(newRows, BatchId(newRows), options.CdcContext, cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1273,6 +1287,73 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         }
     }
 
+    private async Task ScanReviewCoverageAsync(
+        string path,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                _ = ParseReviewCoverageSnapshot(source);
+                summary.RowsWritten++;
+            }
+            catch
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+            }
+        }
+    }
+
+    private async Task StageReviewCoverageAsync(
+        string path,
+        ParserIngestionOptions options,
+        ImportSummary summary,
+        string batchId,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<ParserReviewCoverageSnapshot>(options.NormalizedBatchSize);
+        await foreach (var source in ReadJsonLinesAsync(path, options.MaxRowsPerFile, cancellationToken))
+        {
+            using var sourceScope = source;
+            summary.RowsRead++;
+            try
+            {
+                rows.Add(ParseReviewCoverageSnapshot(source));
+            }
+            catch
+            {
+                summary.RowsSkipped++;
+                summary.Errors++;
+            }
+
+            if (rows.Count >= options.NormalizedBatchSize)
+                await FlushReviewCoverageBatchAsync(rows, summary, batchId, options, cancellationToken);
+        }
+
+        await FlushReviewCoverageBatchAsync(rows, summary, batchId, options, cancellationToken);
+    }
+
+    private async Task FlushReviewCoverageBatchAsync(
+        List<ParserReviewCoverageSnapshot> rows,
+        ImportSummary summary,
+        string batchId,
+        ParserIngestionOptions options,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0)
+            return;
+
+        await _cdcService.ApplyReviewCoverageRowsAsync(rows, batchId, options.CdcContext, cancellationToken);
+        summary.RowsWritten += rows.Count;
+        rows.Clear();
+    }
+
     private async Task StageReviewRootFetchesAsync(
         string path,
         ManifestInfo manifest,
@@ -1375,10 +1456,10 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             }
 
             if (rows.Count + errors.Count >= options.NormalizedBatchSize)
-                await FlushReviewBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+                await FlushReviewBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         }
 
-        await FlushReviewBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        await FlushReviewBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
     }
 
     private async Task FlushReviewBatchAsync(
@@ -1386,6 +1467,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         List<ParserReviewRow> rows,
         List<ParserImportError> errors,
         ImportSummary summary,
+        ParserIngestionOptions options,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0 && errors.Count == 0)
@@ -1416,7 +1498,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserReviewRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await _cdcService.ApplyReviewRowsAsync(candidateRows, BatchId(candidateRows), cancellationToken);
+        await _cdcService.ApplyReviewRowsAsync(candidateRows, BatchId(candidateRows), options.CdcContext, cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1684,10 +1766,10 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             }
 
             if (rows.Count + errors.Count >= options.NormalizedBatchSize)
-                await FlushRankSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+                await FlushRankSnapshotBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         }
 
-        await FlushRankSnapshotBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        await FlushRankSnapshotBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         summary.Increment("rank_snapshot_rows_staged", summary.RowsWritten - writtenBefore);
         summary.Increment("rank_snapshot_rows_skipped", summary.RowsSkipped - skippedBefore);
     }
@@ -1697,6 +1779,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         List<ParserRankSnapshotRow> rows,
         List<ParserImportError> errors,
         ImportSummary summary,
+        ParserIngestionOptions options,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0 && errors.Count == 0)
@@ -1718,7 +1801,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserRankSnapshotRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await _cdcService.ApplyRankRowsAsync(newRows, BatchId(newRows), cancellationToken);
+        await _cdcService.ApplyRankRowsAsync(newRows, BatchId(newRows), options.CdcContext, cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -1912,9 +1995,6 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             throw new InvalidDataException("Complete batch manifest does not contain logistics output run directories.");
         if (reviews.Count == 0)
             throw new InvalidDataException("Complete batch manifest does not contain reviews output run directories.");
-        if (productDetails.Count == 0)
-            throw new InvalidDataException("Complete batch manifest does not contain product details output run directories.");
-
         return new BatchManifestInfo(
             RequiredString(root, "batch_id"),
             ReadInt(root, "size") ?? 0,
@@ -1923,6 +2003,15 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             logistics,
             reviews,
             productDetails);
+    }
+
+    private static IEnumerable<string> ExistingProductDetailsRunDirectories(IEnumerable<string> runDirectories)
+    {
+        foreach (var runDirectory in runDirectories)
+        {
+            if (File.Exists(Path.Combine(runDirectory, "product_details.jsonl")))
+                yield return runDirectory;
+        }
     }
 
     private static List<string> StepOutputRunDirectories(JsonElement root, string batchDirectory, string stepName)
@@ -2105,10 +2194,10 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             }
 
             if (rows.Count + errors.Count >= options.NormalizedBatchSize)
-                await FlushProductDetailBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+                await FlushProductDetailBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         }
 
-        await FlushProductDetailBatchAsync(file.Id, rows, errors, summary, cancellationToken);
+        await FlushProductDetailBatchAsync(file.Id, rows, errors, summary, options, cancellationToken);
         summary.Increment("product_detail_rows_staged", summary.RowsWritten - writtenBefore);
         summary.Increment("product_detail_rows_skipped", summary.RowsSkipped - skippedBefore);
     }
@@ -2118,6 +2207,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         List<ParserProductDetailRow> rows,
         List<ParserImportError> errors,
         ImportSummary summary,
+        ParserIngestionOptions options,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0 && errors.Count == 0)
@@ -2139,7 +2229,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
         _dbContext.ParserProductDetailRows.AddRange(newRows);
         _dbContext.ParserImportErrors.AddRange(errors);
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await _cdcService.ApplyProductDetailRowsAsync(newRows, BatchId(newRows), cancellationToken);
+        await _cdcService.ApplyProductDetailRowsAsync(newRows, BatchId(newRows), options.CdcContext, cancellationToken);
         _dbContext.ChangeTracker.Clear();
         rows.Clear();
         errors.Clear();
@@ -2530,6 +2620,21 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             manifest.IsPartialSnapshot,
             feedbackCount.HasValue && feedbackCount.Value > feedbackRowsSeen,
             isFullHistoryUnknown: true);
+    }
+
+    private static ParserReviewCoverageSnapshot ParseReviewCoverageSnapshot(JsonLine source)
+    {
+        source.ThrowIfInvalid();
+        var row = source.Payload.RootElement;
+        return new ParserReviewCoverageSnapshot(
+            RequiredString(row, "source_wb_product_id"),
+            ReadString(row, "source_wb_root_id"),
+            ReadInt(row, "marketplace_feedback_count"),
+            ReadInt(row, "fetched_reviews_count") ?? 0,
+            RequiredString(row, "coverage_status"),
+            RequiredString(row, "coverage_source"),
+            ReadString(row, "last_coverage_error"),
+            RequiredUtcDate(row, "timestamp_utc"));
     }
 
     private static ParserReviewRow ParseReviewRow(

@@ -46,10 +46,11 @@ from models import Items
 from run_scope import parser_run_scope_from_env
 from SearchPhraseParser import SearchPhraseParser
 from WbCatalogFetcher import WbCatalogFetcher
-from app.browser_sessions import COOKIE_NAME, get_cookies_for_proxy
+from app.browser_sessions import COOKIE_NAME, get_cookies_for_proxy, session_snapshot
 from app.proxy_mapping import ProxyMapping
 from app.proxy_rate_limiter import global_sync_proxy_rate_limiter
 from app.proxy_transport import http_proxy_url_from_definition, requests_proxy_kwargs
+from app.wb_proxy_preflight import run_wb_proxy_preflight
 
 
 STATIC_MENU_URL = "https://static-basket-01.wbbasket.ru/vol0/data/main-menu-ru-ru-v3.json"
@@ -125,6 +126,7 @@ def _load_explicit_niches() -> list[dict[str, Any]]:
         source_category = str(item.get("sourceCategory") or "").strip()
         source_subcategory = str(item.get("sourceSubcategory") or "").strip()
         search_query = str(item.get("searchQuery") or "").strip()
+        parser_search_text = str(item.get("parserSearchText") or source_subcategory).strip()
         source_path = str(item.get("sourcePath") or "").strip()
 
         if not wb_category_id:
@@ -133,6 +135,8 @@ def _load_explicit_niches() -> list[dict[str, Any]]:
             raise ValueError(f"Duplicate explicit niche wbCategoryId: {wb_category_id}")
         if not source_category or not source_subcategory or not search_query:
             raise ValueError(f"Explicit niche {wb_category_id} requires sourceCategory, sourceSubcategory and searchQuery.")
+        if not parser_search_text:
+            raise ValueError(f"Explicit niche {wb_category_id} requires parserSearchText or sourceSubcategory.")
 
         seen_ids.add(wb_category_id)
         selected.append(
@@ -140,6 +144,7 @@ def _load_explicit_niches() -> list[dict[str, Any]]:
                 "id": int(wb_category_id),
                 "name": source_subcategory,
                 "searchQuery": search_query,
+                "parserSearchText": parser_search_text,
                 "sourceCategory": source_category,
                 "sourcePath": source_path,
             }
@@ -175,6 +180,7 @@ def _resolve_explicit_niches_against_wb_menu(selected: list[dict[str, Any]]) -> 
                 "sourceCategory": source_category,
                 "sourceSubcategory": source_subcategory,
                 "sourcePath": source_path,
+                "parserSearchText": str(item.get("parserSearchText") or source_subcategory).strip(),
             }
         )
 
@@ -433,8 +439,32 @@ def _acquire_cookies(
         )
         return None
 
-    manifest.token_acquisition_status = {"status": "ok" if cookies and cookies.get(COOKIE_NAME) else "empty", "proxyKey": proxy_key}
+    snapshot = session_snapshot(proxy_key)
+    manifest.token_acquisition_status = {
+        "status": "ok" if cookies and cookies.get(COOKIE_NAME) else "empty",
+        "proxyKey": proxy_key,
+        "tokenRef": snapshot.token_ref,
+        "userAgent": snapshot.user_agent,
+        "profileDir": str(snapshot.profile_dir),
+    }
     return cookies
+
+
+def _is_filters_preflight_payload_valid(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return isinstance(payload.get("metadata"), dict) and isinstance(payload.get("data"), dict)
+
+
+def _filters_preflight_error(parser: Any, *, proxy_key: str, source_query: str) -> str:
+    if getattr(parser, "aborted_by_rate_limit", False):
+        reason = getattr(parser, "final_error", None) or "WB filters rate limit before split."
+    else:
+        reason = getattr(parser, "final_error", None) or "metadata was not found in WB filters response."
+    return (
+        "WB filters preflight failed: "
+        f"endpoint=search.wb.ru proxy={proxy_key} query={source_query!r} reason={reason}"
+    )
 
 
 def _write_raw_samples(run_dir: Path, subcategory_name: str, results: list[dict], limit: int) -> None:
@@ -486,6 +516,7 @@ def _run_parser_core(
     streaming_batch_index = 0
     stop_discovery = False
     interrupted = False
+    current_monitored_total = 0
 
     def monitoring_planned_products(discovered_total: int | None) -> int:
         total = max(0, int(discovered_total or 0))
@@ -510,7 +541,11 @@ def _run_parser_core(
             phase: str | None = None,
             planned_ranges_count: int | None = None,
             completed_ranges_count: int | None = None,
-            range_progress_percent: float | None = None) -> None:
+            range_progress_percent: float | None = None,
+            range_checks_count: int | None = None,
+            final_ranges_count: int | None = None,
+            empty_ranges_count: int | None = None,
+            split_ranges_count: int | None = None) -> None:
         if category_lifecycle_handler is None:
             return
         try:
@@ -527,6 +562,10 @@ def _run_parser_core(
                     "planned_ranges_count": planned_ranges_count,
                     "completed_ranges_count": completed_ranges_count,
                     "range_progress_percent": range_progress_percent,
+                    "range_checks_count": range_checks_count,
+                    "final_ranges_count": final_ranges_count,
+                    "empty_ranges_count": empty_ranges_count,
+                    "split_ranges_count": split_ranges_count,
                 }
             )
         except Exception as exception:
@@ -539,6 +578,14 @@ def _run_parser_core(
                 details={"exception": str(exception), "event": event, "proxyKey": proxy_key},
             )
 
+    def emit_parser_event(event: str, **fields: Any) -> None:
+        payload = {
+            "event": event,
+            "timestampUtc": utc_now_iso(),
+            **fields,
+        }
+        logger.info("PARSER_EVENT {}", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
     def flush_streaming_batch() -> bool:
         nonlocal pending_streaming_rows, streaming_batch_index
         if streaming_batch_size is None or batch_handler is None or not pending_streaming_rows:
@@ -550,6 +597,17 @@ def _run_parser_core(
             rows=list(pending_streaming_rows),
             parent_run_dir=run_dir,
             parent_parser_run_id=parser_run_id,
+        )
+        emit_parser_event(
+            "stream_batch_start",
+            proxyKey=proxy_key,
+            phase="download",
+            sourceCategory=source_category,
+            sourceSubcategory=subcategory_name,
+            batchIndex=streaming_batch_index,
+            size=len(batch.rows),
+            downloadedProductsCount=manifest.row_counts["unique_rows"],
+            plannedProductsCount=current_monitored_total,
         )
         pending_streaming_rows = []
         result = batch_handler(batch)
@@ -565,6 +623,17 @@ def _run_parser_core(
                 details={"batch_index": streaming_batch_index, "reason": result.reason if result else None},
             )
             return False
+        emit_parser_event(
+            "stream_batch_enqueued",
+            proxyKey=proxy_key,
+            phase="download",
+            sourceCategory=source_category,
+            sourceSubcategory=subcategory_name,
+            batchIndex=streaming_batch_index,
+            size=len(batch.rows),
+            downloadedProductsCount=manifest.row_counts["unique_rows"],
+            plannedProductsCount=current_monitored_total,
+        )
         return True
 
     try:
@@ -584,8 +653,12 @@ def _run_parser_core(
         for selected_category in selected:
             subcategory_name = selected_category.get("name")
             source_category = _category_source_category(config, selected_category)
-            source_query = subcategory_name or selected_category.get("searchQuery")
-            source_query = selected_category.get("searchQuery") or source_query
+            wb_search_query = selected_category.get("searchQuery")
+            source_query = (
+                selected_category.get("parserSearchText")
+                or subcategory_name
+                or wb_search_query
+            )
             category_result = CategoryResult(
                 source_subcategory=subcategory_name,
                 source_query=source_query,
@@ -613,12 +686,51 @@ def _run_parser_core(
                     source_category=source_category,
                     source_subcategory=subcategory_name,
                     planned_products_count=monitoring_planned_products(None),
-                    phase="ranges",
+                    phase="wb_preflight",
                     planned_ranges_count=0,
                     completed_ranges_count=0,
                     range_progress_percent=0.0,
+                    range_checks_count=0,
+                    final_ranges_count=0,
+                    empty_ranges_count=0,
+                    split_ranges_count=0,
                 )
                 proxy_url = http_proxy_url_from_definition(resolved_proxy.proxy) if resolved_proxy else None
+                transport_preflight_result = None
+                if resolved_proxy and resolved_proxy.proxy.type != "direct":
+                    transport_preflight_result = run_wb_proxy_preflight(resolved_proxy.proxy)
+                    if not transport_preflight_result.is_transport_success:
+                        preflight_error = transport_preflight_result.diagnostic_message()
+                        category_result.status = "failed"
+                        emit_category_lifecycle(
+                            event="finish",
+                            proxy_key=proxy_key,
+                            source_category=source_category,
+                            source_subcategory=subcategory_name,
+                            status="failed",
+                            error=preflight_error,
+                        )
+                        manifest.record_error(
+                            phase="wb_preflight",
+                            source_category=source_category,
+                            source_subcategory=subcategory_name,
+                            source_query=source_query,
+                            message=preflight_error,
+                            action="skipped",
+                            details={
+                                "proxyKey": proxy_key,
+                                "connectStatus": transport_preflight_result.connect_status,
+                                "tlsEstablished": transport_preflight_result.tls_established,
+                                "server": transport_preflight_result.server,
+                                "xWbaasToken": transport_preflight_result.x_wbaas_token,
+                                "elapsedMs": transport_preflight_result.elapsed_ms,
+                            },
+                        )
+                        manifest.add_category_result(category_result)
+                        if config.fail_fast:
+                            break
+                        continue
+
                 cookies = _acquire_cookies(
                     config,
                     manifest,
@@ -650,6 +762,7 @@ def _run_parser_core(
                     if config.fail_fast:
                         break
                     continue
+
                 smoke_direct_discovery = os.environ.get("PARSER_SMOKE_DIRECT_DISCOVERY", "").strip().lower() in {
                     "1",
                     "true",
@@ -658,6 +771,81 @@ def _run_parser_core(
                     "on",
                 }
                 price_split_enabled = config.product_fetch_mode == "price_split" and not smoke_direct_discovery
+                if price_split_enabled and resolved_proxy and resolved_proxy.proxy.type != "direct":
+                    filters_preflight_parser = SearchPhraseParser(
+                        search_phrase=source_query,
+                        cookies=cookies,
+                        dest=config.source_region_dest,
+                        timeout=config.timeout_seconds,
+                        max_retries=config.max_retries,
+                        request_delay_bounds=(
+                            config.request_delay_min_seconds,
+                            config.request_delay_max_seconds,
+                        ),
+                        event_recorder=manifest.record_error,
+                        source_category=source_category,
+                        source_subcategory=subcategory_name,
+                        proxy_url=proxy_url,
+                        proxy_key=proxy_key,
+                    )
+                    filters_preflight_payload = filters_preflight_parser.fetch_data()
+                    if not _is_filters_preflight_payload_valid(filters_preflight_payload):
+                        filters_preflight_error = _filters_preflight_error(
+                            filters_preflight_parser,
+                            proxy_key=proxy_key,
+                            source_query=source_query,
+                        )
+                        category_result.status = "failed"
+                        emit_category_lifecycle(
+                            event="finish",
+                            proxy_key=proxy_key,
+                            source_category=source_category,
+                            source_subcategory=subcategory_name,
+                            status="failed",
+                            error=filters_preflight_error,
+                        )
+                        manifest.record_error(
+                            phase="wb_preflight",
+                            source_category=source_category,
+                            source_subcategory=subcategory_name,
+                            source_query=source_query,
+                            message=filters_preflight_error,
+                            action="skipped",
+                            details={
+                                "proxyKey": proxy_key,
+                                "endpoint": "search.wb.ru",
+                                "transportConnectStatus": (
+                                    transport_preflight_result.connect_status
+                                    if transport_preflight_result is not None
+                                    else 0
+                                ),
+                                "transportTlsEstablished": (
+                                    transport_preflight_result.tls_established
+                                    if transport_preflight_result is not None
+                                    else False
+                                ),
+                            },
+                        )
+                        manifest.add_category_result(category_result)
+                        if config.fail_fast:
+                            break
+                        continue
+
+                emit_category_lifecycle(
+                    event="progress",
+                    proxy_key=proxy_key,
+                    source_category=source_category,
+                    source_subcategory=subcategory_name,
+                    planned_products_count=monitoring_planned_products(None),
+                    phase="ranges",
+                    planned_ranges_count=0,
+                    completed_ranges_count=0,
+                    range_progress_percent=0.0,
+                    range_checks_count=0,
+                    final_ranges_count=0,
+                    empty_ranges_count=0,
+                    split_ranges_count=0,
+                )
                 if smoke_direct_discovery and config.product_fetch_mode == "price_split":
                     logger.info("Smoke direct discovery enabled: skipping price split for {}", subcategory_name)
                 if price_split_enabled:
@@ -665,7 +853,11 @@ def _run_parser_core(
                             *,
                             processed_ranges: int,
                             pending_ranges: int,
-                            progress_percent: float) -> None:
+                            progress_percent: float,
+                            range_checks_count: int,
+                            final_ranges_count: int,
+                            empty_ranges_count: int,
+                            split_ranges_count: int) -> None:
                         planned_ranges = max(0, int(processed_ranges) + int(pending_ranges))
                         emit_category_lifecycle(
                             event="progress",
@@ -677,6 +869,10 @@ def _run_parser_core(
                             planned_ranges_count=planned_ranges,
                             completed_ranges_count=max(0, int(processed_ranges)),
                             range_progress_percent=float(progress_percent),
+                            range_checks_count=range_checks_count,
+                            final_ranges_count=final_ranges_count,
+                            empty_ranges_count=empty_ranges_count,
+                            split_ranges_count=split_ranges_count,
                         )
 
                     price_split_parser = SearchPhraseParser(
@@ -700,7 +896,9 @@ def _run_parser_core(
 
                     if not price_ranges:
                         no_ranges_error = "No price ranges were discovered."
-                        if price_split_parser.aborted_by_rate_limit:
+                        if getattr(price_split_parser, "final_error", None):
+                            no_ranges_error = str(price_split_parser.final_error)
+                        elif price_split_parser.aborted_by_rate_limit:
                             no_ranges_error = "WB filters rate limit while processing full price split."
                         category_result.status = "failed"
                         emit_category_lifecycle(
@@ -710,6 +908,10 @@ def _run_parser_core(
                             source_subcategory=subcategory_name,
                             status="failed",
                             error=no_ranges_error,
+                            range_checks_count=getattr(price_split_parser, "range_checks_count", 0),
+                            final_ranges_count=getattr(price_split_parser, "final_ranges_count", 0),
+                            empty_ranges_count=getattr(price_split_parser, "empty_ranges_count", 0),
+                            split_ranges_count=getattr(price_split_parser, "split_ranges_count", 0),
                         )
                         manifest.record_error(
                             phase="filters",
@@ -728,6 +930,20 @@ def _run_parser_core(
                         for price_range in price_ranges
                     )
                     monitored_total = monitoring_planned_products(discovered_total)
+                    current_monitored_total = monitored_total
+                    emit_parser_event(
+                        "split_completed",
+                        proxyKey=proxy_key,
+                        phase="download",
+                        sourceCategory=source_category,
+                        sourceSubcategory=subcategory_name,
+                        plannedProductsCount=monitored_total,
+                        downloadedProductsCount=manifest.row_counts["unique_rows"],
+                        rangeChecksCount=getattr(price_split_parser, "range_checks_count", len(price_ranges)),
+                        finalRangesCount=getattr(price_split_parser, "final_ranges_count", len(price_ranges)),
+                        emptyRangesCount=getattr(price_split_parser, "empty_ranges_count", 0),
+                        splitRangesCount=getattr(price_split_parser, "split_ranges_count", 0),
+                    )
                     emit_category_lifecycle(
                         event="progress",
                         proxy_key=proxy_key,
@@ -738,6 +954,10 @@ def _run_parser_core(
                         planned_ranges_count=len(price_ranges),
                         completed_ranges_count=len(price_ranges),
                         range_progress_percent=100.0,
+                        range_checks_count=getattr(price_split_parser, "range_checks_count", len(price_ranges)),
+                        final_ranges_count=getattr(price_split_parser, "final_ranges_count", len(price_ranges)),
+                        empty_ranges_count=getattr(price_split_parser, "empty_ranges_count", 0),
+                        split_ranges_count=getattr(price_split_parser, "split_ranges_count", 0),
                     )
                 else:
                     price_ranges = []
@@ -907,7 +1127,7 @@ def _run_parser_core(
                     results = asyncio.run(fetcher.fetch_all())
                     process_result_batch(results)
 
-                if getattr(fetcher, "stop_requested", False):
+                if getattr(fetcher, "stop_requested", False) and not stop_discovery:
                     raise RuntimeError("WB catalog rate limit while fetching price ranges.")
 
                 if streaming_batch_size is not None and pending_streaming_rows:

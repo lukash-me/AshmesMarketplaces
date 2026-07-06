@@ -8,12 +8,15 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 REVIEW_ATTRIBUTION_MODE = "root_payload"
+PRODUCT_FULL_ATTRIBUTION_MODE = "product_full"
+ROOT_VARIANT_FILTERED_ATTRIBUTION_MODE = "root_variant_filtered"
 
 
 @dataclass(frozen=True)
 class SelectedProduct:
     wb_product_id: str
     wb_root_id: str
+    feedback_count: int | None = None
     source_category: str | None = None
     source_subcategory: str | None = None
     source_query: str | None = None
@@ -35,6 +38,8 @@ class MappedReviewRows:
     payload_feedback_count: int | None = None
     payload_feedback_rows_seen: int = 0
     selected_review_rows_seen: int = 0
+    foreign_review_rows_seen: int = 0
+    foreign_wb_product_ids: set[str] = field(default_factory=set)
     replies_seen: int = 0
 
 
@@ -101,6 +106,7 @@ def map_feedback_payload(
     input_products_parser_run_id: str | None,
     input_products_jsonl: str,
     source_wb_root_id: str,
+    review_attribution_mode: str = REVIEW_ATTRIBUTION_MODE,
 ) -> MappedReviewRows:
     mapped = MappedReviewRows(
         payload_feedback_count=_int_or_none(payload.get("feedbackCount")),
@@ -135,6 +141,9 @@ def map_feedback_payload(
 
         wb_product_id = _string_id(_value(feedback, "nmId", "wbProductId"))
         if not wb_product_id or wb_product_id not in selected_products:
+            if wb_product_id:
+                mapped.foreign_review_rows_seen += 1
+                mapped.foreign_wb_product_ids.add(wb_product_id)
             continue
 
         mapped.selected_review_rows_seen += 1
@@ -165,7 +174,7 @@ def map_feedback_payload(
             "input_products_jsonl": input_products_jsonl,
             "source_wb_root_id": source_wb_root_id,
             "wb_product_id": wb_product_id,
-            "review_attribution_mode": REVIEW_ATTRIBUTION_MODE,
+            "review_attribution_mode": review_attribution_mode,
             "review_id_on_mp": review_id,
             "rating": _int_or_none(_value(feedback, "productValuation", "rating")),
             "text": _value(feedback, "text"),
@@ -201,7 +210,7 @@ def map_feedback_payload(
             "input_products_jsonl": input_products_jsonl,
             "source_wb_root_id": source_wb_root_id,
             "wb_product_id": wb_product_id,
-            "review_attribution_mode": REVIEW_ATTRIBUTION_MODE,
+            "review_attribution_mode": review_attribution_mode,
             "review_id_on_mp": review_id,
             "reply_id_on_mp": reply_id,
             "reply_fallback_hash": None,

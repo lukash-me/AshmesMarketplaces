@@ -21,7 +21,11 @@ public sealed class ParserProxyRun
         string? phase = null,
         int plannedRangesCount = 0,
         int completedRangesCount = 0,
-        double rangeProgressPercent = 0)
+        double rangeProgressPercent = 0,
+        int rangeChecksCount = 0,
+        int finalRangesCount = 0,
+        int emptyRangesCount = 0,
+        int splitRangesCount = 0)
         : this(
             parserInstanceId,
             externalProxyRunId,
@@ -39,7 +43,11 @@ public sealed class ParserProxyRun
             phase,
             plannedRangesCount,
             completedRangesCount,
-            rangeProgressPercent)
+            rangeProgressPercent,
+            rangeChecksCount,
+            finalRangesCount,
+            emptyRangesCount,
+            splitRangesCount)
     {
     }
 
@@ -60,7 +68,11 @@ public sealed class ParserProxyRun
         string? phase = null,
         int plannedRangesCount = 0,
         int completedRangesCount = 0,
-        double rangeProgressPercent = 0)
+        double rangeProgressPercent = 0,
+        int rangeChecksCount = 0,
+        int finalRangesCount = 0,
+        int emptyRangesCount = 0,
+        int splitRangesCount = 0)
     {
         if (string.IsNullOrWhiteSpace(parserInstanceId))
             throw new ArgumentException("Parser instance id is required.", nameof(parserInstanceId));
@@ -95,6 +107,10 @@ public sealed class ParserProxyRun
         PlannedRangesCount = Math.Max(0, plannedRangesCount);
         CompletedRangesCount = Math.Max(0, completedRangesCount);
         RangeProgressPercent = ClampPercent(rangeProgressPercent);
+        RangeChecksCount = Math.Max(0, rangeChecksCount);
+        FinalRangesCount = Math.Max(0, finalRangesCount);
+        EmptyRangesCount = Math.Max(0, emptyRangesCount);
+        SplitRangesCount = Math.Max(0, splitRangesCount);
         StartedAtUtc = startedAtUtc;
         LastHeartbeatAtUtc = startedAtUtc;
         CreatedAtUtc = startedAtUtc;
@@ -119,6 +135,10 @@ public sealed class ParserProxyRun
     public int PlannedRangesCount { get; private set; }
     public int CompletedRangesCount { get; private set; }
     public double RangeProgressPercent { get; private set; }
+    public int RangeChecksCount { get; private set; }
+    public int FinalRangesCount { get; private set; }
+    public int EmptyRangesCount { get; private set; }
+    public int SplitRangesCount { get; private set; }
     public DateTime StartedAtUtc { get; private set; }
     public DateTime LastHeartbeatAtUtc { get; private set; }
     public DateTime? FinishedAtUtc { get; private set; }
@@ -133,7 +153,11 @@ public sealed class ParserProxyRun
         string? phase = null,
         int? plannedRangesCount = null,
         int? completedRangesCount = null,
-        double? rangeProgressPercent = null)
+        double? rangeProgressPercent = null,
+        int? rangeChecksCount = null,
+        int? finalRangesCount = null,
+        int? emptyRangesCount = null,
+        int? splitRangesCount = null)
     {
         EnsureUtc(nowUtc);
         PlannedProductsCount = Math.Max(PlannedProductsCount, plannedProductsCount);
@@ -146,6 +170,14 @@ public sealed class ParserProxyRun
             CompletedRangesCount = Math.Max(CompletedRangesCount, completedRangesCount.Value);
         if (rangeProgressPercent.HasValue)
             RangeProgressPercent = ClampPercent(rangeProgressPercent.Value);
+        if (rangeChecksCount.HasValue)
+            RangeChecksCount = Math.Max(RangeChecksCount, rangeChecksCount.Value);
+        if (finalRangesCount.HasValue)
+            FinalRangesCount = Math.Max(FinalRangesCount, finalRangesCount.Value);
+        if (emptyRangesCount.HasValue)
+            EmptyRangesCount = Math.Max(EmptyRangesCount, emptyRangesCount.Value);
+        if (splitRangesCount.HasValue)
+            SplitRangesCount = Math.Max(SplitRangesCount, splitRangesCount.Value);
         LastHeartbeatAtUtc = nowUtc;
         UpdatedAtUtc = nowUtc;
     }
@@ -170,6 +202,18 @@ public sealed class ParserProxyRun
         Finish(ParserProxyRunStatuses.Failed, plannedProductsCount, downloadedProductsCount, error, nowUtc);
     }
 
+    public void Interrupt(int plannedProductsCount, int downloadedProductsCount, string error, DateTime nowUtc)
+    {
+        EnsureUtc(nowUtc);
+        Status = ParserProxyRunStatuses.Interrupted;
+        Phase = ParserProxyRunPhases.Interrupted;
+        PlannedProductsCount = Math.Max(PlannedProductsCount, plannedProductsCount);
+        DownloadedProductsCount = Math.Max(DownloadedProductsCount, downloadedProductsCount);
+        Error = string.IsNullOrWhiteSpace(error) ? null : error.Trim();
+        FinishedAtUtc = nowUtc;
+        UpdatedAtUtc = nowUtc;
+    }
+
     private void Finish(
         string status,
         int plannedProductsCount,
@@ -179,9 +223,12 @@ public sealed class ParserProxyRun
     {
         EnsureUtc(nowUtc);
         Status = status;
-        Phase = status == ParserProxyRunStatuses.Failed
-            ? ParserProxyRunPhases.Failed
-            : ParserProxyRunPhases.Completed;
+        Phase = status switch
+        {
+            ParserProxyRunStatuses.Failed => ParserProxyRunPhases.Failed,
+            ParserProxyRunStatuses.Interrupted => ParserProxyRunPhases.Interrupted,
+            _ => ParserProxyRunPhases.Completed
+        };
         PlannedProductsCount = Math.Max(PlannedProductsCount, plannedProductsCount);
         DownloadedProductsCount = Math.Max(DownloadedProductsCount, downloadedProductsCount);
         if (status == ParserProxyRunStatuses.Completed)
@@ -219,7 +266,7 @@ public sealed class ParserProxyRun
             return ParserProxyRunPhases.Download;
 
         var normalized = value.Trim().ToLowerInvariant();
-        return normalized is ParserProxyRunPhases.Ranges or ParserProxyRunPhases.Download or ParserProxyRunPhases.Completed or ParserProxyRunPhases.Failed
+        return normalized is ParserProxyRunPhases.WbPreflight or ParserProxyRunPhases.Ranges or ParserProxyRunPhases.Download or ParserProxyRunPhases.Completed or ParserProxyRunPhases.Failed or ParserProxyRunPhases.Interrupted
             ? normalized
             : ParserProxyRunPhases.Download;
     }

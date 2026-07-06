@@ -13,15 +13,16 @@ import {
   formatObservedMoney,
   formatObservedNumber,
   formatObservedQuantityChange,
-  getObservedMarketEventLabel,
   observedFieldValue
 } from './orderDisplay';
 import type {
-  ObservedMarketEventItem
+  ObservedMarketEventItem,
+  ObservedMarketEventTab
 } from './orders.types';
 
 const props = defineProps<{
   rows: ObservedMarketEventItem[];
+  tab: ObservedMarketEventTab;
   page: number;
   pageSize: number;
   totalCount: number;
@@ -34,8 +35,7 @@ const emit = defineEmits<{
   open: [row: ObservedMarketEventItem];
 }>();
 
-const columns: Array<DataTableColumn<ObservedMarketEventItem>> = [
-  { key: 'eventType', label: 'Событие', sortable: true },
+const stockChangeColumns: Array<DataTableColumn<ObservedMarketEventItem>> = [
   { key: 'product', label: 'Товар', className: 'table__cell--product' },
   { key: 'brandSeller', label: 'Бренд / продавец' },
   { key: 'category', label: 'Категория' },
@@ -48,6 +48,22 @@ const columns: Array<DataTableColumn<ObservedMarketEventItem>> = [
   { key: 'feedbackCount', label: 'Отзывы WB', align: 'right' }
 ];
 
+const newProductColumns: Array<DataTableColumn<ObservedMarketEventItem>> = [
+  { key: 'product', label: 'Товар', className: 'table__cell--product' },
+  { key: 'brandSeller', label: 'Бренд / продавец' },
+  { key: 'category', label: 'Категория' },
+  { key: 'currentQuantity', label: 'Остаток', sortable: true, className: 'table__cell--stock' },
+  { key: 'observedAtUtc', label: 'Дата обнаружения', sortable: true },
+  { key: 'price', label: 'Цена', className: 'table__cell--price' },
+  { key: 'rating', label: 'Рейтинг', align: 'right' },
+  { key: 'feedbackCount', label: 'Отзывы WB', align: 'right' }
+];
+
+const columns = computed(() =>
+  props.tab === 'new-products'
+    ? newProductColumns
+    : stockChangeColumns
+);
 const pageCount = computed(() => Math.max(1, Math.ceil(props.totalCount / props.pageSize)));
 const pageStart = computed(() => (props.totalCount === 0 ? 0 : (props.page - 1) * props.pageSize + 1));
 const pageEnd = computed(() => Math.min(props.totalCount, props.page * props.pageSize));
@@ -111,6 +127,10 @@ function eventObservedAt(row: ObservedMarketEventItem): string | null {
   return row.currentObservedAtUtc ?? row.previousObservedAtUtc;
 }
 
+function showObservationRange(row: ObservedMarketEventItem): boolean {
+  return props.tab !== 'new-products' && Boolean(row.previousObservedAtUtc && row.currentObservedAtUtc);
+}
+
 function drawerAlignedPrice(row: ObservedMarketEventItem): number | null {
   return row.priceDiscounted;
 }
@@ -164,12 +184,6 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
       @sort="emit('sort', $event)"
       @row-click="openRow"
     >
-      <template #cell-eventType="{ row }">
-        <span class="event-pill" :class="`event-pill--${row.eventType}`">
-          {{ getObservedMarketEventLabel(row.eventType) }}
-        </span>
-      </template>
-
       <template #cell-product="{ row }">
         <div class="product-cell">
           <span class="thumb">
@@ -222,7 +236,7 @@ function buildPaginationItems(currentPage: number, totalPages: number): Array<nu
 
       <template #cell-observedAtUtc="{ row }">
         <span class="period-cell">
-          <template v-if="row.previousObservedAtUtc && row.currentObservedAtUtc">
+          <template v-if="showObservationRange(row)">
             <span class="numeric">{{ formatObservedDateTime(row.previousObservedAtUtc) }}</span>
             <span aria-hidden="true">→</span>
             <span class="numeric">{{ formatObservedDateTime(row.currentObservedAtUtc) }}</span>

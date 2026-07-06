@@ -379,13 +379,17 @@ def _existing_run_dirs(output_base_dir: Path) -> set[Path]:
 
 def _build_rank_plan(mode_config: dict[str, Any], *, repo_root: Path, python_executable: str) -> PipelineStepPlan:
     rank = dict(mode_config.get("rank") or {})
+    configured_rank_path = os.environ.get("PARSER_RUNTIME_RANK_CONFIG_FILE") or rank.get("config")
     command = [
         python_executable,
         str(repo_root / "Parser" / "pipelines" / "ranks" / "runner.py"),
         "--config",
-        str(_to_abs(rank["config"], base_dir=repo_root)),
+        str(_to_abs(configured_rank_path, base_dir=repo_root)),
     ]
-    if rank.get("context_id"):
+    runtime_rank_context_id = os.environ.get("PARSER_RUNTIME_RANK_CONTEXT_ID")
+    if runtime_rank_context_id:
+        command.extend(["--context-id", runtime_rank_context_id])
+    elif rank.get("context_id"):
         command.extend(["--context-id", str(rank["context_id"])])
     if rank.get("top_n") is not None:
         command.extend(["--top-n", str(rank["top_n"])])
@@ -1064,6 +1068,38 @@ def _batch_outbox_payload(
         "batchManifest": batch_manifest,
         "parentProductRunDir": str(parent_product_run_dir) if parent_product_run_dir else None,
         "batchDir": str(batch.batch_dir),
+        "artifacts": artifacts,
+    }
+
+
+def _rank_outbox_payload(
+    *,
+    pipeline_run_id: str,
+    rank_run_dir: Path,
+    rank_record: dict[str, Any],
+) -> dict[str, Any]:
+    artifacts: dict[str, str] = {}
+    for path in sorted(rank_run_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".json", ".jsonl"}:
+            continue
+        artifacts[path.relative_to(rank_run_dir).as_posix()] = path.read_text(encoding="utf-8")
+
+    manifest_path = rank_run_dir / "manifest.json"
+    rank_manifest: dict[str, Any] = {}
+    if manifest_path.exists():
+        try:
+            parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                rank_manifest = parsed
+        except json.JSONDecodeError:
+            rank_manifest = {}
+
+    return {
+        "schemaVersion": 1,
+        "pipelineRunId": pipeline_run_id,
+        "rankRunDir": str(rank_run_dir),
+        "rankRecord": rank_record,
+        "rankManifest": rank_manifest,
         "artifacts": artifacts,
     }
 
@@ -1991,6 +2027,52 @@ def _run_batched_pipeline(
 
     rank_staging_command: dict[str, Any] | None = None
     rank_record = _record_for(manifest, "rank")
+    if effective_batch_outbox and not dry_run and _step_is_stageable(rank_record) and rank_record.get("output_run_dirs"):
+        try:
+            rank_dir = Path(str(rank_record["output_run_dirs"][-1]))
+            rank_payload = _rank_outbox_payload(
+                pipeline_run_id=pipeline_run_id,
+                rank_run_dir=rank_dir,
+                rank_record=rank_record,
+            )
+            rank_manifest = rank_payload.get("rankManifest") or {}
+            requested_scope = rank_manifest.get("requested_scope") or {}
+            contexts = requested_scope.get("contexts") if isinstance(requested_scope, dict) else None
+            context = contexts[0] if isinstance(contexts, list) and contexts and isinstance(contexts[0], dict) else {}
+            source_category = str(context.get("source_category") or "unknown")
+            source_subcategory = str(context.get("source_subcategory") or "unknown")
+            proxy_key = (
+                os.environ.get("PARSER_PROXY_KEY")
+                or os.environ.get("PARSER_ONLY_PROXY")
+                or "unknown"
+            )
+            parser_cycle_id = os.environ.get("PARSER_CYCLE_ID", "").strip() or pipeline_run_id
+            external_proxy_run_id = f"{pipeline_run_id}:{proxy_key}:{source_category}:{source_subcategory}"
+            external_batch_id = f"{pipeline_run_id}:rank:{proxy_key}:{rank_dir.name}"
+            effective_batch_outbox.enqueue_batch(
+                external_batch_id=external_batch_id,
+                source_category=source_category,
+                source_subcategory=source_subcategory,
+                proxy_key=proxy_key,
+                batch_kind="rank_snapshot_batch",
+                payload=rank_payload,
+                parser_cycle_id=parser_cycle_id,
+                external_proxy_run_id=external_proxy_run_id,
+            )
+            manifest["batching"]["outbox"]["enqueued_batches"] += 1
+            effective_batch_outbox.send_pending_once()
+            effective_batch_outbox.poll_active_once()
+            manifest["batching"]["outbox"]["send_attempts"] += 1
+            manifest["batching"]["outbox"]["poll_attempts"] += 1
+            _emit_pipeline(
+                pipeline_run_dir,
+                f"RANK OUTBOX ENQUEUED: {external_batch_id}",
+            )
+            _write_manifest(pipeline_run_dir, manifest)
+        except Exception as exception:
+            manifest["batching"]["outbox"]["last_error"] = str(exception)
+            _emit_pipeline(pipeline_run_dir, f"RANK OUTBOX FAILED: {exception}")
+            _write_manifest(pipeline_run_dir, manifest)
     if stage_to_db and not dry_run and _step_is_stageable(rank_record) and rank_record.get("output_run_dirs"):
         rank_dir = str(rank_record["output_run_dirs"][-1])
         command = [
@@ -2063,6 +2145,10 @@ def _run_batched_pipeline(
             planned_ranges_count: int | None = None,
             completed_ranges_count: int | None = None,
             range_progress_percent: float | None = None,
+            range_checks_count: int | None = None,
+            final_ranges_count: int | None = None,
+            empty_ranges_count: int | None = None,
+            split_ranges_count: int | None = None,
         ) -> dict[str, Any]:
             key = proxy_run_key(proxy_key, source_category, source_subcategory)
             state = proxy_run_state.get(key)
@@ -2078,6 +2164,14 @@ def _run_batched_pipeline(
                     state["completed_ranges"] = max(0, int(completed_ranges_count))
                 if range_progress_percent is not None:
                     state["range_progress_percent"] = max(0.0, min(100.0, float(range_progress_percent)))
+                if range_checks_count is not None:
+                    state["range_checks_count"] = max(0, int(range_checks_count))
+                if final_ranges_count is not None:
+                    state["final_ranges_count"] = max(0, int(final_ranges_count))
+                if empty_ranges_count is not None:
+                    state["empty_ranges_count"] = max(0, int(empty_ranges_count))
+                if split_ranges_count is not None:
+                    state["split_ranges_count"] = max(0, int(split_ranges_count))
                 if effective_batch_outbox and hasattr(effective_batch_outbox, "update_proxy_run_progress"):
                     try:
                         effective_batch_outbox.update_proxy_run_progress(
@@ -2088,6 +2182,10 @@ def _run_batched_pipeline(
                             planned_ranges_count=state.get("planned_ranges"),
                             completed_ranges_count=state.get("completed_ranges"),
                             range_progress_percent=state.get("range_progress_percent"),
+                            range_checks_count=state.get("range_checks_count"),
+                            final_ranges_count=state.get("final_ranges_count"),
+                            empty_ranges_count=state.get("empty_ranges_count"),
+                            split_ranges_count=state.get("split_ranges_count"),
                         )
                     except Exception as exception:
                         manifest["batching"]["outbox"]["last_error"] = str(exception)
@@ -2111,6 +2209,10 @@ def _run_batched_pipeline(
                 "planned_ranges": max(0, int(planned_ranges_count or 0)),
                 "completed_ranges": max(0, int(completed_ranges_count or 0)),
                 "range_progress_percent": max(0.0, min(100.0, float(range_progress_percent or 0))),
+                "range_checks_count": max(0, int(range_checks_count or 0)),
+                "final_ranges_count": max(0, int(final_ranges_count or 0)),
+                "empty_ranges_count": max(0, int(empty_ranges_count or 0)),
+                "split_ranges_count": max(0, int(split_ranges_count or 0)),
             }
             proxy_run_state[key] = state
             if effective_batch_outbox and hasattr(effective_batch_outbox, "start_proxy_run"):
@@ -2132,6 +2234,10 @@ def _run_batched_pipeline(
                         planned_ranges_count=state.get("planned_ranges"),
                         completed_ranges_count=state.get("completed_ranges"),
                         range_progress_percent=state.get("range_progress_percent"),
+                        range_checks_count=state.get("range_checks_count"),
+                        final_ranges_count=state.get("final_ranges_count"),
+                        empty_ranges_count=state.get("empty_ranges_count"),
+                        split_ranges_count=state.get("split_ranges_count"),
                     )
                 except Exception as exception:
                     manifest["batching"]["outbox"]["last_error"] = str(exception)
@@ -2148,6 +2254,10 @@ def _run_batched_pipeline(
             planned_ranges_count: int | None = None,
             completed_ranges_count: int | None = None,
             range_progress_percent: float | None = None,
+            range_checks_count: int | None = None,
+            final_ranges_count: int | None = None,
+            empty_ranges_count: int | None = None,
+            split_ranges_count: int | None = None,
         ) -> None:
             state["downloaded"] = max(0, int(state.get("downloaded") or 0) + max(0, int(downloaded_delta)))
             if planned is not None:
@@ -2161,6 +2271,14 @@ def _run_batched_pipeline(
                 state["completed_ranges"] = max(0, int(completed_ranges_count))
             if range_progress_percent is not None:
                 state["range_progress_percent"] = max(0.0, min(100.0, float(range_progress_percent)))
+            if range_checks_count is not None:
+                state["range_checks_count"] = max(0, int(range_checks_count))
+            if final_ranges_count is not None:
+                state["final_ranges_count"] = max(0, int(final_ranges_count))
+            if empty_ranges_count is not None:
+                state["empty_ranges_count"] = max(0, int(empty_ranges_count))
+            if split_ranges_count is not None:
+                state["split_ranges_count"] = max(0, int(split_ranges_count))
             if effective_batch_outbox and hasattr(effective_batch_outbox, "update_proxy_run_progress"):
                 try:
                     effective_batch_outbox.update_proxy_run_progress(
@@ -2171,6 +2289,10 @@ def _run_batched_pipeline(
                         planned_ranges_count=state.get("planned_ranges"),
                         completed_ranges_count=state.get("completed_ranges"),
                         range_progress_percent=state.get("range_progress_percent"),
+                        range_checks_count=state.get("range_checks_count"),
+                        final_ranges_count=state.get("final_ranges_count"),
+                        empty_ranges_count=state.get("empty_ranges_count"),
+                        split_ranges_count=state.get("split_ranges_count"),
                     )
                 except Exception as exception:
                     manifest["batching"]["outbox"]["last_error"] = str(exception)
@@ -2227,6 +2349,10 @@ def _run_batched_pipeline(
                     planned_ranges_count=event.get("planned_ranges_count"),
                     completed_ranges_count=event.get("completed_ranges_count"),
                     range_progress_percent=event.get("range_progress_percent"),
+                    range_checks_count=event.get("range_checks_count"),
+                    final_ranges_count=event.get("final_ranges_count"),
+                    empty_ranges_count=event.get("empty_ranges_count"),
+                    split_ranges_count=event.get("split_ranges_count"),
                 )
                 return
 
@@ -2240,6 +2366,10 @@ def _run_batched_pipeline(
                     planned_ranges_count=event.get("planned_ranges_count"),
                     completed_ranges_count=event.get("completed_ranges_count"),
                     range_progress_percent=event.get("range_progress_percent"),
+                    range_checks_count=event.get("range_checks_count"),
+                    final_ranges_count=event.get("final_ranges_count"),
+                    empty_ranges_count=event.get("empty_ranges_count"),
+                    split_ranges_count=event.get("split_ranges_count"),
                 )
                 notify_proxy_run_progress(
                     state,
@@ -2249,6 +2379,10 @@ def _run_batched_pipeline(
                     planned_ranges_count=event.get("planned_ranges_count"),
                     completed_ranges_count=event.get("completed_ranges_count"),
                     range_progress_percent=event.get("range_progress_percent"),
+                    range_checks_count=event.get("range_checks_count"),
+                    final_ranges_count=event.get("final_ranges_count"),
+                    empty_ranges_count=event.get("empty_ranges_count"),
+                    split_ranges_count=event.get("split_ranges_count"),
                 )
                 return
 
@@ -2258,6 +2392,10 @@ def _run_batched_pipeline(
                     source_category=source_category,
                     source_subcategory=source_subcategory,
                     planned_products_count=int(event.get("planned_products_count") or 0),
+                    range_checks_count=event.get("range_checks_count"),
+                    final_ranges_count=event.get("final_ranges_count"),
+                    empty_ranges_count=event.get("empty_ranges_count"),
+                    split_ranges_count=event.get("split_ranges_count"),
                 )
                 notify_proxy_run_finish(
                     state,
@@ -2457,8 +2595,9 @@ def _run_batched_pipeline(
                 step_record["step"] = step_name
                 batch_record["steps"].append(step_record)
                 if step_record.get("status") not in {"succeeded", "partial", "skipped"}:
-                    batch_steps_failed = True
-                    break
+                    if step_name != "product_details":
+                        batch_steps_failed = True
+                        break
 
             _write_batch_manifest(batch, batch_manifest)
             validation_ok = False
@@ -2470,7 +2609,7 @@ def _run_batched_pipeline(
                         batch_manifest=batch_manifest,
                         require_logistics=not skip_logistics,
                         require_reviews=not skip_reviews,
-                        require_product_details=not skip_product_details,
+                        require_product_details=False,
                     )
                 except Exception as exception:
                     validation_reason = str(exception)
@@ -2511,6 +2650,8 @@ def _run_batched_pipeline(
                         proxy_key=proxy_key,
                         batch_kind="complete_card_batch",
                         payload=payload,
+                        parser_cycle_id=parser_cycle_id,
+                        external_proxy_run_id=proxy_run["external_proxy_run_id"],
                     )
                     manifest["batching"]["outbox"]["enqueued_batches"] += 1
                     effective_batch_outbox.send_pending_once()

@@ -52,6 +52,9 @@ public sealed class ParserBatchSubmission
     public string SourceCategory { get; private set; } = string.Empty;
     public string SourceSubcategory { get; private set; } = string.Empty;
     public string? ProxyKey { get; private set; }
+    public string? ParserCycleId { get; private set; }
+    public string? ExternalProxyRunId { get; private set; }
+    public Guid? ParserProxyRunId { get; private set; }
     public string BatchKind { get; private set; } = string.Empty;
     public string ContentHash { get; private set; } = string.Empty;
     public string Status { get; private set; } = string.Empty;
@@ -69,6 +72,23 @@ public sealed class ParserBatchSubmission
         EnsureUtc(nowUtc);
         Status = ParserBatchStatuses.Queued;
         UpdatedAtUtc = nowUtc;
+    }
+
+    public void AttachRunMetadata(string? parserCycleId, string? externalProxyRunId, Guid? parserProxyRunId, DateTime nowUtc)
+    {
+        EnsureUtc(nowUtc);
+        ParserCycleId = string.IsNullOrWhiteSpace(parserCycleId) ? ParserCycleId : parserCycleId.Trim();
+        ExternalProxyRunId = string.IsNullOrWhiteSpace(externalProxyRunId) ? ExternalProxyRunId : externalProxyRunId.Trim();
+        ParserProxyRunId = parserProxyRunId ?? ParserProxyRunId;
+        UpdatedAtUtc = nowUtc;
+    }
+
+    public void AssignProxyRun(Guid parserProxyRunId)
+    {
+        if (parserProxyRunId == Guid.Empty)
+            throw new ArgumentException("Parser proxy run id is required.", nameof(parserProxyRunId));
+
+        ParserProxyRunId = parserProxyRunId;
     }
 
     public void Retry(DateTime nowUtc)

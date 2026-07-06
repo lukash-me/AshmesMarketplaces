@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Radar,
   Settings,
+  ShieldCheck,
   X
 } from 'lucide-vue-next';
 import { useAuthStore } from '@/features/auth/auth.store';
@@ -27,7 +28,7 @@ const workspaceMarketProductsPath = '/workspace/market-products';
 const workspaceMarketProductCreatePath = '/workspace/market-products/create';
 const workspaceMarketProductClustersPath = '/workspace/market-products/clusters';
 const marketProductsPath = '/market/products';
-const marketOpportunitiesPath = '/market/opportunities';
+const ruleConstructorPath = '/market/opportunities';
 const marketTopForecastPath = '/market/intelligence/top-forecast';
 const marketIntelligencePath = '/market/intelligence';
 const marketIntelligenceConcentrationPath = '/market/intelligence/concentration';
@@ -37,6 +38,8 @@ const ordersAvailabilityPath = '/orders/availability';
 const expensesPath = '/expenses';
 const managementWorkspacesPath = '/management/workspaces';
 const adminParserPath = '/admin/parser';
+const adminCalculationsPath = '/admin/calculations';
+const adminCatalogsPath = '/admin/catalogs';
 const ordersSections: Array<{ key: OrdersSection; label: string }> = [
   { key: 'assumed-orders', label: 'Уменьшения остатков' },
   { key: 'new-products', label: 'Новые карточки' },
@@ -50,7 +53,7 @@ const primaryNavItems = [
 ];
 
 const isMarketIntelligenceRoute = computed(() =>
-  route.path === marketOpportunitiesPath
+  route.path === ruleConstructorPath
   || route.path === marketProductsPath
   || route.path === marketTopForecastPath
   || route.path === marketIntelligencePath
@@ -61,8 +64,8 @@ const activeMarketIntelligenceSection = computed(() => {
     return 'top-forecast';
   }
 
-  if (route.path === marketOpportunitiesPath) {
-    return 'market-opportunities';
+  if (route.path === ruleConstructorPath) {
+    return 'rule-constructor';
   }
 
   if (route.path === marketProductsPath) {
@@ -85,11 +88,16 @@ const isWorkspaceMarketProductClustersRoute = computed(() => route.path === work
 const isOrdersRoute = computed(() => route.path === ordersPath || route.path === ordersAvailabilityPath);
 const isAdmin = computed(() => auth.user?.roleName === 'Admin');
 const isManagementRoute = computed(() =>
-  route.path === expensesPath || route.path === managementWorkspacesPath || route.path === adminParserPath
+  route.path === expensesPath || route.path === managementWorkspacesPath
 );
 const isExpensesRoute = computed(() => route.path === expensesPath);
 const isManagementWorkspacesRoute = computed(() => route.path === managementWorkspacesPath);
+const isAdminRoute = computed(() =>
+  route.path === adminParserPath || route.path === adminCalculationsPath || route.path === adminCatalogsPath
+);
 const isAdminParserRoute = computed(() => route.path === adminParserPath);
+const isAdminCalculationsRoute = computed(() => route.path === adminCalculationsPath);
+const isAdminCatalogsRoute = computed(() => route.path === adminCatalogsPath);
 const activeOrdersSection = computed(() =>
   route.path === ordersAvailabilityPath
     ? 'availability'
@@ -127,7 +135,6 @@ function ordersSectionTo(section: OrdersSection) {
     query: section === 'assumed-orders' ? {} : { tab: section }
   };
 }
-
 </script>
 
 <template>
@@ -228,11 +235,11 @@ function ordersSectionTo(section: OrdersSection) {
           </RouterLink>
           <RouterLink
             class="sidebar__sublink"
-            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'market-opportunities' }"
-            :to="{ path: marketOpportunitiesPath }"
+            :class="{ 'sidebar__sublink--active': activeMarketIntelligenceSection === 'rule-constructor' }"
+            :to="{ path: ruleConstructorPath }"
             @click="$emit('close')"
           >
-            Перспективные товары
+            Конструктор правил
           </RouterLink>
           <RouterLink
             class="sidebar__sublink"
@@ -314,14 +321,44 @@ function ordersSectionTo(section: OrdersSection) {
           >
             Рабочие области
           </RouterLink>
+        </div>
+      </div>
+
+      <div v-if="isAdmin" class="sidebar__group">
+        <RouterLink
+          class="sidebar__link"
+          :class="{ 'sidebar__link--active': isAdminRoute }"
+          :to="{ path: adminParserPath }"
+          @click="$emit('close')"
+        >
+          <ShieldCheck :size="17" />
+          <span>Администратор</span>
+        </RouterLink>
+
+        <div class="sidebar__subnav" aria-label="Разделы администратора">
           <RouterLink
-            v-if="isAdmin"
             class="sidebar__sublink"
             :class="{ 'sidebar__sublink--active': isAdminParserRoute }"
             :to="{ path: adminParserPath }"
             @click="$emit('close')"
           >
-            Parser мониторинг
+            Парсинг
+          </RouterLink>
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isAdminCalculationsRoute }"
+            :to="{ path: adminCalculationsPath }"
+            @click="$emit('close')"
+          >
+            Расчеты
+          </RouterLink>
+          <RouterLink
+            class="sidebar__sublink"
+            :class="{ 'sidebar__sublink--active': isAdminCatalogsRoute }"
+            :to="{ path: adminCatalogsPath }"
+            @click="$emit('close')"
+          >
+            Справочники
           </RouterLink>
         </div>
       </div>

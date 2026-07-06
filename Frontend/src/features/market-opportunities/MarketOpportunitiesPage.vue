@@ -1,1630 +1,806 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
-import { SlidersHorizontal, X } from 'lucide-vue-next';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { RotateCcw, SlidersHorizontal } from 'lucide-vue-next';
 
-import MarketFilterSelect from '@/features/parser-products/MarketFilterSelect.vue';
-import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
-import { getHotProductsRecommendations } from '@/features/parser-products/hotProductsRecommendations.api';
-import type {
-  HotProductRecommendationFactor,
-  HotProductRecommendationItem,
-  HotProductsGroup,
-  HotProductsListResponse
-} from '@/features/parser-products/hotProductsRecommendations.types';
+import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import { getParserProductFilterOptions } from '@/features/parser-products/parserProducts.api';
-import type { ParserProductFilterOptions, ParserProductListItem } from '@/features/parser-products/parserProducts.types';
-import { getProblemMessage } from '@/shared/api/problemDetails';
-import Button from '@/shared/ui/Button.vue';
-import EmptyState from '@/shared/ui/EmptyState.vue';
-import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
-import Input from '@/shared/ui/Input.vue';
-import LoadingState from '@/shared/ui/LoadingState.vue';
+import type {
+  ParserProductListItem,
+  ParserProductPositionState
+} from '@/features/parser-products/parserProducts.types';
+import {
+  getRuleConstructorCounts,
+  getRuleConstructorFilters,
+  searchRuleConstructor
+} from '@/features/rule-constructor/ruleConstructor.api';
+import type {
+  RuleConstructorFilter,
+  RuleConstructorRuleCount,
+  RuleConstructorSearchItem,
+  RuleGroupOperator
+} from '@/features/rule-constructor/ruleConstructor.types';
 import PageHeader from '@/widgets/PageHeader.vue';
-import { hotProductsHeuristicsHelpText } from './hotProductsHeuristicsCatalog';
+import { getProblemMessage } from '@/shared/api/problemDetails';
+import EmptyState from '@/shared/ui/EmptyState.vue';
+import LoadingState from '@/shared/ui/LoadingState.vue';
+import RuleFormulaBuilder from './RuleFormulaBuilder.vue';
+import {
+  collectRuleIds,
+  compileRuleFormula,
+  insertBracketPair,
+  removeBracketPair,
+  type RuleFormulaToken
+} from './ruleFormulaCompiler';
 
-type FactorMode = 'any' | 'all';
-const OPPORTUNITY_ITEMS_PER_PAGE = 14;
-
-type OpportunityFilters = {
-  search: string;
-  sourceSubcategory: string;
-  groupKey: string;
-  factorKeys: string[];
-  factorMode: FactorMode;
+type FilterGroup = {
+  name: string;
+  filters: RuleConstructorFilter[];
 };
 
-const groupPriority = [
-  'good_reviews_weak_visibility',
-  'bad_recent_reviews',
-  'low_review_count_top_position',
-  'high_position_weak_card',
-  'good_reviews_weak_card',
-  'expensive_without_advantage',
-  'top_low_stock',
-  'good_reviews_low_stock',
-  'good_reviews_high_price',
-  'duplicate_cards',
-  'repeated_review_complaint',
-  'weak_description',
-  'weak_visible_description',
-  'missing_key_specs',
-  'fast_position_growth',
-  'slow_delivery',
-  'top_low_stock_slow_central_delivery',
-  'faster_than_peers_region_delivery'
-];
-
-const factorCatalog: Record<string, { label: string; help: string }> = {
-  good_reviews_weak_visibility: {
-    label: 'Хорошие отзывы, слабая видимость',
-    help: 'Товар нравится покупателям, но находится ниже похожих товаров в выдаче.'
-  },
-  bad_recent_reviews: {
-    label: 'Плохие последние отзывы',
-    help: 'Последние отзывы с оценкой 3 и ниже. Текст отзыва временно не анализируется.'
-  },
-  low_review_count_top_position: {
-    label: 'Мало отзывов в топе',
-    help: 'Карточка заметна в выдаче, но отзывов меньше, чем у похожих товаров.'
-  },
-  high_position_weak_card: {
-    label: 'Слабая карточка в топе',
-    help: 'Карточка видима в выдаче, но у нее найдены проверяемые слабые места в описании, характеристиках или визуальной подаче.'
-  },
-  good_reviews_weak_card: {
-    label: 'Хороший товар, слабая карточка',
-    help: 'Отзывы выглядят сильными, но карточке не хватает проверяемой информации или визуального качества.'
-  },
-  expensive_without_advantage: {
-    label: 'Высокая цена',
-    help: 'Цена выше похожих товаров без видимых преимуществ в наблюдаемых данных.'
-  },
-  top_low_stock: {
-    label: 'Низкий остаток',
-    help: 'Товар заметен в выдаче, но остаток ниже типичного уровня в похожей выборке.'
-  },
-  good_reviews_low_stock: {
-    label: 'Хорошие отзывы, низкий остаток',
-    help: 'Покупатели оценивают товар хорошо, но остаток выглядит низким.'
-  },
-  good_reviews_high_price: {
-    label: 'Хорошие отзывы, высокая цена',
-    help: 'У товара хорошие отзывы, но цена выше похожих товаров.'
-  },
-  duplicate_cards: {
-    label: 'Одинаковые карточки',
-    help: 'В нише найдены группы похожих или почти одинаковых карточек.'
-  },
-  repeated_review_complaint: {
-    label: 'Повторяющаяся жалоба',
-    help: 'В текстах отзывов повторяется одна и та же жалоба.'
-  },
-  weak_description: {
-    label: 'Слабое описание',
-    help: 'Описание получено и выглядит слишком коротким или неполным.'
-  },
-  weak_visible_description: {
-    label: 'Слабое описание',
-    help: 'У видимых конкурентов описание выглядит неполным.'
-  },
-  missing_key_specs: {
-    label: 'Мало характеристик',
-    help: 'Характеристики получены, но их мало для проверки товара.'
-  },
-  fast_position_growth: {
-    label: 'Быстрый рост',
-    help: 'Позиция товара заметно улучшилась между наблюдениями.'
-  },
-  seller_stock_slow_central_delivery: {
-    label: 'Долгая доставка со склада продавца',
-    help: 'До московской контрольной точки доставка дольше послезавтра, источник доставки - склад продавца.'
-  },
-  top_low_stock_slow_central_delivery: {
-    label: 'Топ, низкий остаток и долгая доставка',
-    help: 'Товар высоко в выдаче, остаток низкий, доставка до Центрального региона дольше послезавтра.'
-  },
-  top_slow_cluster_region_delivery: {
-    label: 'Топ, долгая доставка в регион кластера',
-    help: 'Товар высоко в выдаче, но доставка в характерный регион похожих товаров дольше послезавтра.'
-  },
-  top_slow_central_delivery: {
-    label: 'Топ, долгая доставка в Центральный регион',
-    help: 'Товар высоко в выдаче, но доставка до московской контрольной точки дольше послезавтра.'
-  },
-  peers_slow_region_delivery: {
-    label: 'Похожие доставляются с задержкой',
-    help: 'У похожих карточек в выбранном регионе доставка обычно дольше послезавтра.'
-  },
-  faster_than_peers_region_delivery: {
-    label: 'Быстрее похожих',
-    help: 'Карточка доставляется в регион быстрее медианы похожих товаров.'
-  }
-};
-
-const deprecatedFactorCodes = new Set(['high_position_weak_reviews']);
-const contentEvidenceFactorCodes = new Set([
-  'high_position_weak_card',
-  'good_reviews_weak_card',
-  'weak_description',
-  'weak_visible_description',
-  'missing_key_specs'
-]);
-const negativeFactorCodes = new Set([
-  'good_reviews_weak_visibility',
-  'bad_recent_reviews',
-  'low_review_count_top_position',
-  'high_position_weak_card',
-  'good_reviews_weak_card',
-  'expensive_without_advantage',
-  'top_low_stock',
-  'good_reviews_low_stock',
-  'good_reviews_high_price',
-  'duplicate_cards',
-  'weak_description',
-  'weak_visible_description',
-  'missing_key_specs',
-  'repeated_review_complaint',
-  'seller_stock_slow_central_delivery',
-  'top_low_stock_slow_central_delivery',
-  'top_slow_central_delivery',
-  'top_slow_cluster_region_delivery',
-  'peers_slow_region_delivery',
-  'slow_delivery'
-]);
-
-const hiddenFactorCodes = new Set([
-  'top_slow_cluster_region_delivery'
-]);
-
-const factorLabelOverrides: Record<string, string> = {
-  slow_delivery: 'Долгая доставка',
-  seller_stock_slow_central_delivery: 'Долгая доставка со склада продавца',
-  top_slow_central_delivery: 'Товар в топе, доставка дольше похожих',
-  peers_slow_region_delivery: 'Похожие доставляются долго',
-  faster_than_peers_region_delivery: 'Быстрее похожих'
-};
-
-const factorHelpOverrides: Record<string, string> = {
-  slow_delivery: 'Карточки с долгой доставкой в значимые регионы.',
-  seller_stock_slow_central_delivery: 'Доставка до Центрального региона дольше послезавтра, источник - склад продавца.',
-  top_slow_central_delivery: 'Товар в топе, но доставка до региона дольше медианы похожих товаров минимум на сутки.',
-  peers_slow_region_delivery: 'У похожих карточек в регионе доставка обычно дольше послезавтра.',
-  faster_than_peers_region_delivery: 'Карточка доставляется в регион быстрее медианы похожих товаров.'
-};
-
-const compositeGroupFactorCodes: Record<string, string[]> = {
-  slow_delivery: [
-    'seller_stock_slow_central_delivery',
-    'top_slow_central_delivery',
-    'top_low_stock_slow_central_delivery'
-  ]
-};
-
-const combinableLogisticsFactorCodes = new Set([
-  'peers_slow_region_delivery',
-  'faster_than_peers_region_delivery',
-  'seller_stock_slow_central_delivery',
-  'top_slow_central_delivery',
-  'top_low_stock_slow_central_delivery'
-]);
-
-const emptyFilterOptions: ParserProductFilterOptions = {
-  categories: [],
-  subcategories: [],
-  brands: [],
-  sellers: []
-};
-
-const response = ref<HotProductsListResponse | null>(null);
-const filterOptions = ref<ParserProductFilterOptions>(emptyFilterOptions);
-const selectedProduct = ref<ParserProductListItem | null>(null);
+const filters = ref<RuleConstructorFilter[]>([]);
+const filterOptions = ref({
+  categories: [] as string[],
+  subcategories: [] as string[],
+  brands: [] as string[],
+  sellers: [] as string[]
+});
+const tokens = ref<RuleFormulaToken[]>([]);
+const pendingRule = ref<RuleConstructorFilter | null>(null);
+const bracketDraftBoundary = ref<number | null>(null);
+const formulaNotice = ref('');
+const rows = ref<RuleConstructorSearchItem[]>([]);
+const total = ref(0);
+const constructorTotal = ref(0);
+const ruleCounts = ref<Record<string, RuleConstructorRuleCount>>({});
+const page = ref(1);
+const pageSize = 5;
 const loading = ref(false);
-const filterOptionsLoading = ref(false);
+const loadingFilters = ref(false);
 const error = ref('');
-const filterError = ref('');
-const currentPage = ref(1);
-const pageTop = ref<HTMLElement | null>(null);
-let loadVersion = 0;
+const filtersError = ref('');
+const selectedProduct = ref<ParserProductListItem | null>(null);
+let refreshTimer: number | undefined;
+let refreshVersion = 0;
+let tokenCounter = 0;
 
-const filters = reactive<OpportunityFilters>({
-  search: '',
-  sourceSubcategory: '',
-  groupKey: '',
-  factorKeys: [],
-  factorMode: 'any'
+const criteria = reactive({
+  sourceCategory: '',
+  sourceSubcategory: ''
 });
 
-const groups = computed(() => response.value?.groups.filter((group) => groupVisibleCount(group) > 0) ?? []);
+const groupedFilters = computed<FilterGroup[]>(() => {
+  const groups = new Map<string, RuleConstructorFilter[]>();
 
-const orderedGroups = computed(() =>
-  [...groups.value].sort((left, right) => groupOrder(left.key) - groupOrder(right.key))
+  for (const filter of filters.value) {
+    const list = groups.get(filter.group) ?? [];
+    list.push(filter);
+    groups.set(filter.group, list);
+  }
+
+  return Array.from(groups.entries()).map(([name, groupFilters]) => ({
+    name,
+    filters: groupFilters
+  }));
+});
+const filtersById = computed<Record<string, RuleConstructorFilter>>(() =>
+  Object.fromEntries(filters.value.map((filter) => [filter.id, filter]))
 );
-
-const selectedGroup = computed(() =>
-  filters.groupKey && filters.factorKeys.includes(filters.groupKey)
-    ? orderedGroups.value.find((group) => group.key === filters.groupKey) ?? null
-    : null
+const compileResult = computed(() => compileRuleFormula(tokens.value));
+const expressionSignature = computed(() =>
+  compileResult.value.valid && compileResult.value.expression
+    ? JSON.stringify(compileResult.value.expression)
+    : ''
 );
-
-const hotProductsRunWarnings = computed(() => response.value?.run?.warnings ?? []);
-
-const factorSourceItems = computed(() => {
-  if (!selectedGroup.value) {
-    return filterBySearch(response.value?.items ?? []);
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
+const paginationItems = computed(() => buildPaginationItems(page.value, totalPages.value));
+const usedRuleIds = computed(() => new Set(collectRuleIds(tokens.value)));
+const ruleTokenCount = computed(() => tokens.value.filter((token) => token.kind === 'rule').length);
+const builderStatus = computed(() => {
+  if (pendingRule.value) {
+    return 'Выберите И или ИЛИ, чтобы добавить следующее правило.';
   }
 
-  const items = selectedGroup.value.key === 'duplicate_cards'
-    ? selectedGroup.value.clusters.flatMap((cluster) => cluster.items)
-    : visibleGroupItems(selectedGroup.value);
-
-  return filterBySearch(items);
-});
-
-const availableFactors = computed(() => {
-  const map = new Map<string, { key: string; label: string; count: number }>();
-
-  factorSourceItems.value.forEach((item) => {
-    visibleFactorTags(item).forEach((factor) => {
-      const existing = map.get(factor.code);
-      if (existing) {
-        existing.count += 1;
-        return;
-      }
-
-      map.set(factor.code, {
-        key: factor.code,
-        label: factorLabel(factor.code, factor.label),
-        count: 1
-      });
-    });
-  });
-
-  return [...map.values()].sort((left, right) => groupOrder(left.key) - groupOrder(right.key));
-});
-
-const activeItems = computed(() => {
-  if (!selectedGroup.value || selectedGroup.value.key === 'duplicate_cards') {
-    return [];
+  if (bracketDraftBoundary.value !== null) {
+    return 'Выберите место закрывающей скобки правее выбранной границы.';
   }
 
-  return filterItems(visibleGroupItems(selectedGroup.value));
-});
-
-const activeTotalPages = computed(() => pageCount(activeItems.value.length));
-const paginatedActiveItems = computed(() => paginateItems(activeItems.value, currentPage.value));
-const activePaginationItems = computed(() => buildPaginationItems(currentPage.value, activeTotalPages.value));
-
-const activeClusters = computed(() => {
-  if (selectedGroup.value?.key !== 'duplicate_cards') {
-    return [];
+  if (!compileResult.value.valid) {
+    return compileResult.value.error;
   }
 
-  return selectedGroup.value.clusters
-    .map((cluster) => ({
-      ...cluster,
-      items: filterItems(cluster.items.filter((item) => matchesGroupFactor(item, selectedGroup.value!.key)))
-    }))
-    .filter((cluster) => cluster.items.length > 0);
+  return formulaNotice.value || null;
 });
 
-const fallbackItems = computed(() => (orderedGroups.value.length ? [] : filterItems(response.value?.items ?? [])));
-const fallbackTotalPages = computed(() => pageCount(fallbackItems.value.length));
-const paginatedFallbackItems = computed(() => paginateItems(fallbackItems.value, currentPage.value));
-const fallbackPaginationItems = computed(() => buildPaginationItems(currentPage.value, fallbackTotalPages.value));
+onMounted(async () => {
+  await Promise.all([loadFilters(), loadFilterOptions()]);
+  await refreshData();
+});
 
 watch(
-  () => [activeItems.value.length, fallbackItems.value.length, activeTotalPages.value, fallbackTotalPages.value] as const,
+  [
+    expressionSignature,
+    () => criteria.sourceCategory,
+    () => criteria.sourceSubcategory
+  ],
   () => {
-    const totalPages = activeItems.value.length ? activeTotalPages.value : fallbackTotalPages.value;
-    if (currentPage.value > totalPages) {
-      currentPage.value = totalPages;
-    }
+    page.value = 1;
+    scheduleRefresh();
   }
 );
 
-watch(
-  () => filters.sourceSubcategory,
-  () => {
-    resetPagination();
-    void loadOpportunities();
-  }
-);
-
-const chips = computed(() => {
-  const result: Array<{ key: string; label: string; value: string }> = [];
-
-  if (filters.search.trim()) {
-    result.push({ key: 'search', label: 'Поиск', value: filters.search.trim() });
-  }
-  if (filters.sourceSubcategory.trim()) {
-    result.push({ key: 'sourceSubcategory', label: 'Ниша', value: filters.sourceSubcategory.trim() });
-  }
-  filters.factorKeys.forEach((key) => {
-    result.push({ key: `factor:${key}`, label: 'Тег', value: factorLabel(key) });
-  });
-
-  return result;
+watch(page, () => {
+  scheduleRefresh();
 });
 
-void loadFilterOptions();
-void loadOpportunities();
-
-async function loadFilterOptions(): Promise<void> {
-  filterOptionsLoading.value = true;
-  filterError.value = '';
+async function loadFilters() {
+  loadingFilters.value = true;
+  filtersError.value = '';
 
   try {
-    filterOptions.value = await getParserProductFilterOptions({});
+    filters.value = await getRuleConstructorFilters();
   } catch (err) {
-    filterError.value = getProblemMessage(err, 'Не удалось загрузить варианты фильтров.');
+    filtersError.value = getProblemMessage(err, 'Не удалось загрузить фильтры конструктора.');
   } finally {
-    filterOptionsLoading.value = false;
+    loadingFilters.value = false;
   }
 }
 
-async function loadOpportunities(): Promise<void> {
-  const version = ++loadVersion;
+async function loadFilterOptions() {
+  try {
+    filterOptions.value = await getParserProductFilterOptions({});
+  } catch (err) {
+    filtersError.value = getProblemMessage(err, 'Не удалось загрузить справочник ниш.');
+  }
+}
+
+function scheduleRefresh() {
+  window.clearTimeout(refreshTimer);
+  refreshTimer = window.setTimeout(() => {
+    void refreshData();
+  }, 320);
+}
+
+async function refreshData() {
+  if (!compileResult.value.valid || !compileResult.value.expression || pendingRule.value || bracketDraftBoundary.value !== null) {
+    return;
+  }
+
+  const version = ++refreshVersion;
   loading.value = true;
   error.value = '';
 
   try {
-    const data = await getHotProductsRecommendations({
-      page: 1,
-      pageSize: 50,
-      ...(filters.sourceSubcategory ? { sourceSubcategory: filters.sourceSubcategory } : {})
-    });
+    const requestBase = {
+      expression: compileResult.value.expression,
+      sourceCategory: criteria.sourceCategory || undefined,
+      sourceSubcategory: criteria.sourceSubcategory || undefined
+    };
+    const [countsResponse, searchResponse] = await Promise.all([
+      getRuleConstructorCounts(requestBase),
+      searchRuleConstructor({
+        ...requestBase,
+        ruleIds: [],
+        combineMode: 'all',
+        page: page.value,
+        pageSize
+      })
+    ]);
 
-    if (version !== loadVersion) {
+    if (version !== refreshVersion) {
       return;
     }
 
-    response.value = data;
-    if (filters.groupKey && !data.groups.some((group) => group.key === filters.groupKey)) {
-      filters.groupKey = '';
-    }
+    constructorTotal.value = countsResponse.total;
+    ruleCounts.value = Object.fromEntries(countsResponse.ruleCounts.map((item) => [item.ruleId, item]));
+    rows.value = searchResponse.items;
+    total.value = searchResponse.total;
+    formulaNotice.value = '';
   } catch (err) {
-    if (version !== loadVersion) {
+    if (version !== refreshVersion) {
       return;
     }
 
-    response.value = null;
-    error.value = getProblemMessage(err, 'Не удалось загрузить перспективные товары.');
+    rows.value = [];
+    total.value = 0;
+    constructorTotal.value = 0;
+    ruleCounts.value = {};
+    error.value = getProblemMessage(err, 'Не удалось пересчитать конструктор правил.');
   } finally {
-    if (version === loadVersion) {
+    if (version === refreshVersion) {
       loading.value = false;
     }
   }
 }
 
-function resetFilters(): void {
-  const sourceSubcategoryChanged = Boolean(filters.sourceSubcategory);
-  filters.search = '';
-  filters.sourceSubcategory = '';
-  filters.groupKey = '';
-  filters.factorKeys = [];
-  filters.factorMode = 'any';
-  resetPagination();
-  if (!sourceSubcategoryChanged && !response.value) {
-    void loadOpportunities();
-  }
-}
-
-function removeFilter(key: string): void {
-  if (key === 'search') {
-    filters.search = '';
-  } else if (key === 'sourceSubcategory') {
-    filters.sourceSubcategory = '';
-  } else if (key.startsWith('factor:')) {
-    removeFactorFilter(key.slice('factor:'.length));
+function addRule(filter: RuleConstructorFilter) {
+  if (filter.status === 'disabled') {
     return;
   }
 
-  resetPagination();
-  void loadOpportunities();
-}
-
-function selectGroup(group: HotProductsGroup): void {
-  filters.groupKey = group.key;
-  filters.factorKeys = [group.key];
-  resetPagination();
-}
-
-function toggleFactor(key: string): void {
-  const nextFactorKeys = filters.factorKeys.includes(key)
-    ? filters.factorKeys.filter((value) => value !== key)
-    : [...filters.factorKeys, key];
-
-  filters.factorKeys = nextFactorKeys;
-  if (key === filters.groupKey && !nextFactorKeys.includes(key)) {
-    filters.groupKey = '';
-  }
-  resetPagination();
-}
-
-function removeFactorFilter(key: string): void {
-  if (filters.factorKeys[0] === key) {
-    filters.factorKeys = [];
-    filters.groupKey = '';
-    resetPagination();
+  if (usedRuleIds.value.has(filter.id)) {
+    formulaNotice.value = 'Это правило уже есть в формуле.';
     return;
   }
 
-  toggleFactor(key);
-}
+  formulaNotice.value = '';
 
-function setFactorMode(mode: FactorMode): void {
-  filters.factorMode = mode;
-  resetPagination();
-}
-
-function resetPagination(): void {
-  currentPage.value = 1;
-}
-
-function pageCount(totalItems: number): number {
-  return Math.max(1, Math.ceil(totalItems / OPPORTUNITY_ITEMS_PER_PAGE));
-}
-
-function paginateItems<T>(items: T[], page: number): T[] {
-  const start = (page - 1) * OPPORTUNITY_ITEMS_PER_PAGE;
-  return items.slice(start, start + OPPORTUNITY_ITEMS_PER_PAGE);
-}
-
-function setPage(page: number, totalPages: number): void {
-  currentPage.value = Math.min(Math.max(page, 1), totalPages);
-  scrollToPageTop();
-}
-
-function scrollToPageTop(): void {
-  requestAnimationFrame(() => {
-    pageTop.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-}
-
-function buildPaginationItems(current: number, totalPages: number): Array<number | string> {
-  if (totalPages <= 7) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  if (!hasRuleTokens()) {
+    tokens.value = [createRuleToken(filter.id)];
+    pendingRule.value = null;
+    bracketDraftBoundary.value = null;
+    return;
   }
 
-  if (current <= 4) {
-    return [1, 2, 3, 4, 5, 'end-ellipsis', totalPages];
+  pendingRule.value = filter;
+}
+
+function commitPendingRule(operator: RuleGroupOperator) {
+  if (!pendingRule.value) {
+    return;
   }
 
-  if (current >= totalPages - 3) {
-    return [1, 'start-ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-  }
-
-  return [
-    1,
-    'start-ellipsis',
-    current - 2,
-    current - 1,
-    current,
-    current + 1,
-    current + 2,
-    'end-ellipsis',
-    totalPages
+  tokens.value = [
+    ...tokens.value,
+    createOperatorToken(operator),
+    createRuleToken(pendingRule.value.id)
   ];
+  pendingRule.value = null;
+  formulaNotice.value = '';
 }
 
-function groupOrder(key: string): number {
-  const index = groupPriority.indexOf(key);
-  return index === -1 ? groupPriority.length : index;
+function cancelPendingRule() {
+  pendingRule.value = null;
+  formulaNotice.value = '';
 }
 
-function factorLabel(key: string, fallback?: string): string {
-  return factorLabelOverrides[key] ?? factorCatalog[key]?.label ?? fallback ?? key;
+function setOperator(tokenId: string, operator: RuleGroupOperator) {
+  tokens.value = tokens.value.map((token) =>
+    token.id === tokenId && token.kind === 'operator'
+      ? { ...token, operator }
+      : token
+  );
 }
 
-function factorHelp(key: string, fallback?: string, value?: HotProductRecommendationFactor['value']): string {
-  if (key === 'bad_recent_reviews') {
-    const scope = value !== null && typeof value === 'object' && value.reviewScope === 'root'
-      ? ' Использован fallback по общей карточке/вариациям, потому что для выбранного WB id не было собственных отзывов.'
-      : '';
-    const base = `Анализируются последние 10 отзывов: сначала отзывы за 14 дней, затем более старые до набора 10. Плохими временно считаются только оценки 1-3. Текст отзыва, плюсы и минусы сейчас не анализируются.${scope}`;
-    const evidence = formatNegativeReviewEvidence(value);
-    return evidence ? `${base} ${evidence}` : base;
-  }
-
-  if (factorHelpOverrides[key]) {
-    return factorHelpOverrides[key];
-  }
-
-  return factorCatalog[key]?.help ?? fallback ?? 'Фактор рассчитан по сохраненным рыночным данным.';
-}
-
-function formatNegativeReviewEvidence(value: HotProductRecommendationFactor['value']): string {
-  if (value === null || typeof value !== 'object') {
-    return '';
-  }
-
-  const evidence = value.negativeReviewEvidence;
-  if (!Array.isArray(evidence) || evidence.length === 0) {
-    return '';
-  }
-
-  const snippets = evidence
-    .slice(0, 3)
-    .map((item) => {
-      if (item === null || typeof item !== 'object') {
-        return '';
-      }
-
-      const rating = 'rating' in item && typeof item.rating === 'number'
-        ? `оценка ${item.rating}`
-        : 'оценка не указана';
-      const wbProductId = 'sourceWbProductId' in item && typeof item.sourceWbProductId === 'string'
-        ? `WB ${item.sourceWbProductId}`
-        : '';
-      const reasons = 'reasonCodes' in item && Array.isArray(item.reasonCodes)
-        ? item.reasonCodes
-            .map((reason) => typeof reason === 'string' ? reasonLabel(reason) : '')
-            .filter(Boolean)
-            .join(', ')
-        : '';
-      const snippet = 'snippet' in item && typeof item.snippet === 'string'
-        ? item.snippet.trim()
-        : '';
-      const meta = [rating, wbProductId, reasons].filter(Boolean).join(', ');
-      return snippet ? `${meta}: ${snippet}` : meta;
-    })
-    .filter(Boolean);
-
-  return snippets.length ? `Проверочные примеры: ${snippets.join('; ')}.` : '';
-}
-
-function reasonLabel(reason: string): string {
-  const labels: Record<string, string> = {
-    low_rating: 'низкая оценка',
-  };
-  return labels[reason] ?? reason;
-}
-
-function filterItems(items: HotProductRecommendationItem[]): HotProductRecommendationItem[] {
-  return filterBySearch(items).filter((item) => matchesFactorFilter(item));
-}
-
-function filterBySearch(items: HotProductRecommendationItem[]): HotProductRecommendationItem[] {
-  return items.filter((item) => matchesSearch(item));
-}
-
-function matchesSearch(item: HotProductRecommendationItem): boolean {
-  const search = filters.search.trim().toLocaleLowerCase('ru-RU');
-  if (!search) {
-    return true;
-  }
-
-  return [
-    item.productName,
-    item.wbProductId,
-    item.wbRootId,
-    item.brandName,
-    item.sellerName,
-    item.sourceSubcategory
-  ].some((value) => value?.toLocaleLowerCase('ru-RU').includes(search));
-}
-
-function matchesFactorFilter(item: HotProductRecommendationItem): boolean {
-  if (filters.factorKeys.length === 0) {
-    return true;
-  }
-
-  const codes = new Set(visibleFactorTags(item).map((factor) => factor.code));
-  return filters.factorMode === 'all'
-    ? filters.factorKeys.every((key) => matchesFactorKey(codes, key))
-    : filters.factorKeys.some((key) => matchesFactorKey(codes, key));
-}
-
-function matchesFactorKey(codes: Set<string>, key: string): boolean {
-  return (compositeGroupFactorCodes[key] ?? [key]).some((code) => codes.has(code));
-}
-
-function visibleFactorTags(item: HotProductRecommendationItem): HotProductRecommendationFactor[] {
-  return combineLogisticsFactorTags(item.factors.filter((factor) => !isHiddenLegacyFactor(factor)));
-}
-
-function combineLogisticsFactorTags(factors: HotProductRecommendationFactor[]): HotProductRecommendationFactor[] {
-  const result: HotProductRecommendationFactor[] = [];
-  const grouped = new Map<string, HotProductRecommendationFactor[]>();
-
-  factors.forEach((factor) => {
-    if (!combinableLogisticsFactorCodes.has(factor.code)) {
-      result.push(factor);
-      return;
-    }
-
-    const existing = grouped.get(factor.code);
-    if (existing) {
-      existing.push(factor);
-      return;
-    }
-
-    grouped.set(factor.code, [factor]);
-  });
-
-  grouped.forEach((items) => {
-    if (items.length === 1) {
-      result.push(items[0]);
-      return;
-    }
-
-    result.push({
-      ...items[0],
-      value: {
-        items: items
-          .map((item) => item.value)
-          .filter((value): value is Record<string, unknown> => value !== null && typeof value === 'object')
-      }
-    });
-  });
-
-  return result;
-}
-
-function visibleGroupItems(group: HotProductsGroup): HotProductRecommendationItem[] {
-  return group.items.filter((item) => matchesGroupFactor(item, group.key));
-}
-
-function matchesGroupFactor(item: HotProductRecommendationItem, groupKey: string): boolean {
-  const groupCodes = compositeGroupFactorCodes[groupKey] ?? [groupKey];
-  return visibleFactorTags(item).some((factor) => groupCodes.includes(factor.code));
-}
-
-function groupVisibleCount(group: HotProductsGroup): number {
-  if (group.key === 'duplicate_cards') {
-    return group.clusters.reduce(
-      (count, cluster) => count + cluster.items.filter((item) => matchesGroupFactor(item, group.key)).length,
-      0
-    );
-  }
-
-  return visibleGroupItems(group).length;
-}
-
-function isHiddenLegacyFactor(factor: HotProductRecommendationFactor): boolean {
-  return hiddenFactorCodes.has(factor.code)
-    || deprecatedFactorCodes.has(factor.code)
-    || (contentEvidenceFactorCodes.has(factor.code)
-      && (factor.value === null || typeof factor.value !== 'object'))
-    || isInvalidTopSlowCentralDeliveryFactor(factor)
-    || isInvalidBadRecentReviewsFactor(factor)
-    || isInvalidLowReviewCountFactor(factor);
-}
-
-function isInvalidTopSlowCentralDeliveryFactor(factor: HotProductRecommendationFactor): boolean {
-  if (factor.code !== 'top_slow_central_delivery') {
-    return false;
-  }
-
-  if (factor.value === null || typeof factor.value !== 'object') {
-    return true;
-  }
-
-  const deliveryHours = optionalNumericFactorField(factor.value, 'deliveryHours');
-  const peerMedianDeliveryHours = optionalNumericFactorField(factor.value, 'peerMedianDeliveryHours');
-  const peerSampleSize = optionalNumericFactorField(factor.value, 'peerSampleSize');
-
-  return deliveryHours === null
-    || peerMedianDeliveryHours === null
-    || peerSampleSize === null
-    || peerSampleSize < 5
-    || deliveryHours < peerMedianDeliveryHours + 24;
-}
-
-function isInvalidBadRecentReviewsFactor(factor: HotProductRecommendationFactor): boolean {
-  if (factor.code !== 'bad_recent_reviews') {
-    return false;
-  }
-
-  const serialized = `${factor.label} ${JSON.stringify(factor.value ?? '')}`.toLocaleLowerCase('ru-RU');
-  if (serialized.includes('оценка 0') || serialized.includes('averageRating":0') || serialized.includes('reviewRating":0')) {
-    return true;
-  }
-
-  if (factor.value === null || typeof factor.value !== 'object') {
-    return true;
-  }
-
-  if (optionalNumericFactorField(factor.value, 'averageRating') === 0
-    || optionalNumericFactorField(factor.value, 'reviewRating') === 0) {
-    return true;
-  }
-
-  const lowRatingReviews = numericFactorField(factor.value, 'lowRatingReviews');
-  const negativeTextReviews = numericFactorField(factor.value, 'negativeTextReviews');
-  const badReviewCount = numericFactorField(factor.value, 'badReviewCount');
-  const sentimentVersion = numericFactorField(factor.value, 'sentimentVersion');
-  const reviewScope = typeof factor.value.reviewScope === 'string' ? factor.value.reviewScope : '';
-  if (sentimentVersion < 2) {
-    return true;
-  }
-
-  if (reviewScope !== 'product' && reviewScope !== 'root') {
-    return true;
-  }
-
-  if (negativeTextReviews > 0) {
-    return true;
-  }
-
-  return badReviewCount <= 0 || lowRatingReviews <= 0;
-}
-
-function isInvalidLowReviewCountFactor(factor: HotProductRecommendationFactor): boolean {
-  if (factor.code !== 'low_review_count_top_position') {
-    return false;
-  }
-
-  if (factor.value === null || typeof factor.value !== 'object') {
-    return true;
-  }
-
-  const reviewCount = optionalNumericFactorField(factor.value, 'reviewCount');
-  const peerMedianReviewCount = optionalNumericFactorField(factor.value, 'peerMedianReviewCount');
-  const peerSampleSize = optionalNumericFactorField(factor.value, 'peerSampleSize');
-  return reviewCount === null || reviewCount < 0
-    || peerMedianReviewCount === null || peerMedianReviewCount <= 0
-    || peerSampleSize === null || peerSampleSize < 5;
-}
-
-function numericFactorField(value: Record<string, unknown>, key: string): number {
-  return optionalNumericFactorField(value, key) ?? 0;
-}
-
-function optionalNumericFactorField(value: Record<string, unknown>, key: string): number | null {
-  const raw = value[key];
-  return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
-}
-
-function optionalStringFactorField(value: Record<string, unknown>, key: string): string | null {
-  const raw = value[key];
-  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
-}
-
-function deliveryDays(hours: number | null): number | null {
-  if (hours === null || hours <= 0) {
-    return null;
-  }
-
-  return Math.ceil(hours / 24);
-}
-
-function deliveryDaysText(hours: number | null): string | null {
-  const days = deliveryDays(hours);
-  return days === null ? null : `${days} д`;
-}
-
-function deliverySourcePhrase(value: Record<string, unknown>): string {
-  const sourceType = optionalStringFactorField(value, 'deliverySourceType');
-  if (sourceType === 'wb_warehouse') {
-    return 'со склада WB';
-  }
-
-  if (sourceType === 'seller_warehouse') {
-    return 'со склада продавца';
-  }
-
-  return '';
-}
-
-function logisticsRegionName(value: Record<string, unknown>): string {
-  return optionalStringFactorField(value, 'regionName')
-    ?? optionalStringFactorField(value, 'destinationCity')
-    ?? 'регион';
-}
-
-function withSource(text: string, source: string): string {
-  return source ? `${text} ${source}` : text;
-}
-
-function combinedLogisticsFactorHeader(code: string): string | null {
-  switch (code) {
-    case 'peers_slow_region_delivery':
-      return 'Похожие доставляются долго:';
-    case 'faster_than_peers_region_delivery':
-      return 'Доставляется быстрее похожих:';
-    case 'seller_stock_slow_central_delivery':
-      return 'Долгая доставка со склада продавца:';
-    case 'top_slow_central_delivery':
-      return 'Товар в топе, но доставка дольше похожих:';
-    case 'top_low_stock_slow_central_delivery':
-      return 'Топ, низкий остаток и долгая доставка:';
-    default:
-      return null;
-  }
-}
-
-function logisticsFactorLine(code: string, value: Record<string, unknown>): string | null {
-  const region = logisticsRegionName(value);
-  const days = deliveryDaysText(optionalNumericFactorField(value, 'deliveryHours'));
-  const peerDays = deliveryDaysText(optionalNumericFactorField(value, 'peerMedianDeliveryHours'));
-  const source = deliverySourcePhrase(value);
-
-  switch (code) {
-    case 'peers_slow_region_delivery':
-      return peerDays ? `${region}: медиана около ${peerDays}` : null;
-    case 'faster_than_peers_region_delivery':
-      return days && peerDays
-        ? `${withSource(`${region}: ${days}`, source)} против медианы похожих ${peerDays}`
-        : null;
-    case 'seller_stock_slow_central_delivery':
-      return days ? `${region}: ${days}` : null;
-    case 'top_slow_central_delivery':
-      return days && peerDays
-        ? `${withSource(`${region}: ${days}`, source)} против ${peerDays} у похожих`
-        : null;
-    case 'top_low_stock_slow_central_delivery':
-      return days ? withSource(`${region}: ${days}`, source) : null;
-    default:
-      return null;
-  }
-}
-
-function logisticsFactorText(factor: HotProductRecommendationFactor): string | null {
-  if (factor.value === null || typeof factor.value !== 'object') {
-    return null;
-  }
-
-  const value = factor.value;
-  if (Array.isArray(value.items)) {
-    const header = combinedLogisticsFactorHeader(factor.code);
-    const lines = value.items
-      .filter((item): item is Record<string, unknown> => item !== null && typeof item === 'object')
-      .map((item) => logisticsFactorLine(factor.code, item))
-      .filter((line): line is string => Boolean(line));
-
-    return header && lines.length > 0
-      ? `${header}\n  ${lines.join('\n  ')}`
-      : null;
-  }
-
-  const region = logisticsRegionName(value);
-  const days = deliveryDaysText(optionalNumericFactorField(value, 'deliveryHours'));
-  const peerDays = deliveryDaysText(optionalNumericFactorField(value, 'peerMedianDeliveryHours'));
-  const source = deliverySourcePhrase(value);
-
-  switch (factor.code) {
-    case 'peers_slow_region_delivery':
-      return peerDays ? `Похожие доставляются долго: ${region}: медиана около ${peerDays}` : null;
-    case 'faster_than_peers_region_delivery':
-      return days && peerDays
-        ? `${withSource(`Доставляется быстрее похожих: ${region}: ${days}`, source)} против медианы похожих ${peerDays}`
-        : null;
-    case 'seller_stock_slow_central_delivery':
-      return days ? `Долгая доставка в ${region} со склада продавца: ${days}` : null;
-    case 'top_slow_central_delivery':
-      return days && peerDays
-        ? `${withSource(`Товар в топе, но доставка в ${region} дольше похожих: ${days}`, source)} против ${peerDays} у похожих`
-        : null;
-    case 'top_low_stock_slow_central_delivery':
-      return days ? withSource(`Топ, низкий остаток и долгая доставка в ${region}: ${days}`, source) : null;
-    case 'top_slow_cluster_region_delivery':
-      return days && peerDays
-        ? `${withSource(`Топ, но похожие доставляются быстрее в ${region}: ${days}`, source)} против ${peerDays} у похожих`
-        : null;
-    default:
-      return null;
-  }
-}
-
-function factorText(factor: HotProductRecommendationFactor): string {
-  const logisticsText = logisticsFactorText(factor);
-  if (logisticsText) {
-    return logisticsText;
-  }
-
-  const label = factorLabel(factor.code, factor.label);
-  const value = factor.value;
-
-  if (value === null || value === undefined || value === '') {
-    return label;
-  }
-
-  if (typeof value === 'object') {
-    const objectLabel = 'label' in value ? value.label : null;
-    if (factor.code === 'low_review_count_top_position' && !hasPeerReviewComparison(objectLabel)) {
-      return label;
-    }
-
-    return typeof objectLabel === 'string' && objectLabel.trim()
-      ? `${label}: ${objectLabel}`
-      : label;
-  }
-
-  if (factor.code === 'low_review_count_top_position' && !hasPeerReviewComparison(value)) {
-    return label;
-  }
-
-  return `${label}: ${value}`;
-}
-
-function factorTextParts(factor: HotProductRecommendationFactor): { title: string; details: string } {
-  const text = factorText(factor);
-  const delimiterIndex = text.indexOf(':');
-
-  if (delimiterIndex < 0) {
-    return { title: text, details: '' };
-  }
-
-  return {
-    title: text.slice(0, delimiterIndex),
-    details: text.slice(delimiterIndex)
-  };
-}
-
-function factorTagClasses(factor: HotProductRecommendationFactor): string[] {
-  const text = factorText(factor);
-  return [
-    `opportunity-tag--${factorTone(factor)}`,
-    text.includes('\n') ? 'opportunity-tag--multiline' : ''
-  ].filter(Boolean);
-}
-
-function hasPeerReviewComparison(value: unknown): boolean {
-  return typeof value === 'string' && value.toLocaleLowerCase('ru-RU').includes('против');
-}
-
-function factorTone(factor: HotProductRecommendationFactor): string {
-  if (factor.direction === 'negative' || negativeFactorCodes.has(factor.code)) {
-    return 'negative';
-  }
-
-  if (factor.direction === 'positive') {
-    return 'positive';
-  }
-
-  return 'neutral';
-}
-
-function openProduct(item: HotProductRecommendationItem): void {
-  if (!item.parserProductRowId) {
+function removeRule(tokenId: string) {
+  const index = tokens.value.findIndex((token) => token.id === tokenId);
+  if (index < 0) {
     return;
   }
 
-  selectedProduct.value = toParserProduct(item);
+  const next = [...tokens.value];
+  next.splice(index, 1);
+
+  if (next[index - 1]?.kind === 'operator') {
+    next.splice(index - 1, 1);
+  } else if (next[index]?.kind === 'operator') {
+    next.splice(index, 1);
+  }
+
+  tokens.value = normalizeAfterRemoval(next);
+  pendingRule.value = null;
+  bracketDraftBoundary.value = null;
 }
 
-function toParserProduct(item: HotProductRecommendationItem): ParserProductListItem {
+function onBracketBoundary(boundary: number) {
+  if (!hasRuleTokens()) {
+    return;
+  }
+
+  if (ruleTokenCount.value < 2) {
+    formulaNotice.value = 'Скобки можно ставить только вокруг фрагмента из двух или более правил.';
+    return;
+  }
+
+  if (bracketDraftBoundary.value === null || boundary <= bracketDraftBoundary.value) {
+    bracketDraftBoundary.value = boundary;
+    formulaNotice.value = 'Теперь выберите место закрывающей скобки правее.';
+    return;
+  }
+
+  const pairId = createTokenId('paren');
+  const candidate = insertBracketPair(tokens.value, bracketDraftBoundary.value, boundary, pairId);
+  if (countRulesBetween(tokens.value, bracketDraftBoundary.value, boundary) < 2) {
+    formulaNotice.value = 'Скобки должны охватывать минимум два правила и операцию между ними.';
+    return;
+  }
+
+  const result = compileRuleFormula(candidate);
+  if (!result.valid) {
+    formulaNotice.value = result.error ?? 'Такую скобку нельзя поставить.';
+    return;
+  }
+
+  tokens.value = candidate;
+  bracketDraftBoundary.value = null;
+  formulaNotice.value = '';
+}
+
+function removeBracket(pairId: string) {
+  tokens.value = removeBracketPair(tokens.value, pairId);
+  bracketDraftBoundary.value = null;
+  formulaNotice.value = '';
+}
+
+function cancelBracketDraft() {
+  bracketDraftBoundary.value = null;
+  formulaNotice.value = '';
+}
+
+function resetBuilder() {
+  tokens.value = [];
+  pendingRule.value = null;
+  bracketDraftBoundary.value = null;
+  formulaNotice.value = '';
+  criteria.sourceCategory = '';
+  criteria.sourceSubcategory = '';
+  page.value = 1;
+  scheduleRefresh();
+}
+
+function createRuleToken(ruleId: string): RuleFormulaToken {
   return {
-    id: item.parserProductRowId!,
+    id: createTokenId('rule'),
+    kind: 'rule',
+    ruleId
+  };
+}
+
+function createOperatorToken(operator: RuleGroupOperator): RuleFormulaToken {
+  return {
+    id: createTokenId('operator'),
+    kind: 'operator',
+    operator
+  };
+}
+
+function createTokenId(prefix: string): string {
+  tokenCounter += 1;
+  return `${prefix}-${Date.now()}-${tokenCounter}`;
+}
+
+function hasRuleTokens(): boolean {
+  return tokens.value.some((token) => token.kind === 'rule');
+}
+
+function countRulesBetween(source: RuleFormulaToken[], startBoundary: number, endBoundary: number): number {
+  return source
+    .slice(startBoundary, endBoundary)
+    .filter((token) => token.kind === 'rule')
+    .length;
+}
+
+function normalizeAfterRemoval(next: RuleFormulaToken[]): RuleFormulaToken[] {
+  let normalized = next.filter((token, index, list) => {
+    if (token.kind !== 'operator') {
+      return true;
+    }
+
+    const previous = list[index - 1];
+    const following = list[index + 1];
+    return previous?.kind === 'rule' || previous?.kind === 'paren'
+      ? following?.kind === 'rule' || following?.kind === 'paren'
+      : false;
+  });
+
+  if (!compileRuleFormula(normalized).valid) {
+    normalized = normalized.filter((token) => token.kind !== 'paren');
+  }
+
+  return compileRuleFormula(normalized).valid ? normalized : normalized.filter((token) => token.kind === 'rule');
+}
+
+function isRuleUsed(filterId: string): boolean {
+  return usedRuleIds.value.has(filterId) || pendingRule.value?.id === filterId;
+}
+
+function isZeroCountRule(filter: RuleConstructorFilter): boolean {
+  return filter.status !== 'disabled' && ruleCounts.value[filter.id]?.count === 0;
+}
+
+function ruleCountText(filter: RuleConstructorFilter): string {
+  if (filter.status === 'disabled') {
+    return '-';
+  }
+
+  const count = ruleCounts.value[filter.id]?.count;
+  return count === null || count === undefined ? '...' : formatNumber(count);
+}
+
+function onRuleDragStart(event: DragEvent, filter: RuleConstructorFilter) {
+  if (filter.status === 'disabled') {
+    event.preventDefault();
+    return;
+  }
+
+  event.dataTransfer?.setData('text/plain', filter.id);
+  event.dataTransfer?.setData('application/x-rule-id', filter.id);
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'copy';
+  }
+}
+
+function addRuleById(ruleId: string) {
+  const filter = filtersById.value[ruleId];
+  if (filter) {
+    addRule(filter);
+  }
+}
+
+function openProduct(item: RuleConstructorSearchItem) {
+  selectedProduct.value = toParserProductListItem(item);
+}
+
+function toParserProductListItem(item: RuleConstructorSearchItem): ParserProductListItem {
+  return {
+    id: item.id,
     parserRunId: '',
-    parsedAtUtc: response.value?.run?.computedAtUtc ?? new Date().toISOString(),
-    wbProductId: item.wbProductId ?? '',
+    parsedAtUtc: '',
+    wbProductId: item.wbProductId,
     wbRootId: item.wbRootId,
-    name: item.productName,
+    name: item.name,
     brandName: item.brandName,
     sellerName: item.sellerName,
-    priceRegular: item.priceWithoutDiscount,
-    priceDiscounted: item.price,
-    priceWbWallet: item.walletPrice,
+    priceRegular: null,
+    priceDiscounted: item.priceDiscounted,
+    priceWbWallet: null,
     discountPercent: null,
     totalQuantity: item.totalQuantity,
-    ratingRounded: item.rating ? Math.round(item.rating) : null,
-    reviewRating: item.rating,
+    ratingRounded: null,
+    reviewRating: item.reviewRating,
     feedbackCount: item.feedbackCount,
     sourceCategory: item.sourceCategory,
     sourceSubcategory: item.sourceSubcategory,
-    sourceQuery: null,
+    sourceQuery: item.sourceQuery,
     thumbnailUrl: item.thumbnailUrl,
-    rank: item.position
-      ? {
-          absolutePosition: item.position,
-          page: 1,
-          positionOnPage: item.position,
-          query: item.sourceSubcategory ?? '',
-          sourceCategory: item.sourceCategory,
-          sourceSubcategory: item.sourceSubcategory,
-          sourceRegionDest: null,
-          sort: null,
-          observedAtUtc: response.value?.run?.computedAtUtc ?? new Date().toISOString(),
-          parserRunId: '',
-          rankContextId: '',
-          contextsCount: 1
-        }
-      : null,
+    rank: null,
     position: {
-      state: item.position ? 'observed' : 'unknown',
-      absolutePosition: item.position,
-      observedRangeLimit: item.observedRangeLimit,
-      query: item.sourceSubcategory,
+      state: normalizePositionState(item.positionState),
+      absolutePosition: item.positionAbsolute,
+      observedRangeLimit: item.positionObservedRangeLimit,
+      query: item.sourceQuery,
       sourceCategory: item.sourceCategory,
       sourceSubcategory: item.sourceSubcategory,
-      observedAtUtc: response.value?.run?.computedAtUtc ?? null
+      observedAtUtc: null
     },
-    parsedReviewEvidence: undefined,
     logistics: null
   };
+}
+
+function normalizePositionState(value: string | null): ParserProductPositionState {
+  return value === 'observed' || value === 'beyondObservedRange' ? value : 'unknown';
+}
+
+function formatMoney(value: number | null): string {
+  if (value === null) {
+    return '-';
+  }
+
+  return new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0
+  }).format(value);
+}
+
+function formatNumber(value: number | null): string {
+  if (value === null) {
+    return '-';
+  }
+
+  return new Intl.NumberFormat('ru-RU').format(value);
+}
+
+function positionText(item: RuleConstructorSearchItem): string {
+  if (item.positionAbsolute !== null) {
+    return `#${item.positionAbsolute}`;
+  }
+
+  if (item.positionState === 'beyondObservedRange' && item.positionObservedRangeLimit !== null) {
+    return `>${item.positionObservedRangeLimit}`;
+  }
+
+  return 'Нет данных';
+}
+
+function setPage(nextPage: number): void {
+  page.value = Math.min(Math.max(nextPage, 1), totalPages.value);
+}
+
+function buildPaginationItems(currentPage: number, total: number): Array<number | string> {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, index) => index + 1);
+  }
+
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, 'end-ellipsis', total];
+  }
+
+  if (currentPage >= total - 3) {
+    return [1, 'start-ellipsis', total - 4, total - 3, total - 2, total - 1, total];
+  }
+
+  return [1, 'start-ellipsis', currentPage - 1, currentPage, currentPage + 1, 'end-ellipsis', total];
+}
+
+function onCardKeydown(event: KeyboardEvent, item: RuleConstructorSearchItem) {
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+
+  event.preventDefault();
+  openProduct(item);
 }
 </script>
 
 <template>
-  <div ref="pageTop" class="market-opportunities">
-    <PageHeader title="Перспективные товары" :description="hotProductsHeuristicsHelpText" />
-    <p v-if="hotProductsRunWarnings.length" class="analysis-run-warning">
-      Выдача требует диагностики: {{ hotProductsRunWarnings[0] }}
-    </p>
+  <section class="rule-constructor">
+    <PageHeader
+      title="Конструктор правил"
+      description="Выберите факты, соберите логическое выражение и проверьте, какие карточки базы подходят под выбранные условия."
+    />
 
-    <form class="filters app-surface" @submit.prevent>
-      <div class="filters__search">
-        <Input
-          v-model="filters.search"
-          label="Поиск"
-          placeholder="Название, WB id, бренд или продавец"
-        />
-        <div class="filters__actions">
-          <Button v-if="chips.length" type="button" variant="ghost" @click="resetFilters">Сбросить</Button>
+    <div class="rule-constructor__filters">
+      <div class="rule-constructor__field">
+        <label for="rule-category">Категория</label>
+        <select id="rule-category" v-model="criteria.sourceCategory">
+          <option value="">Все категории</option>
+          <option v-for="category in filterOptions.categories" :key="category" :value="category">
+            {{ category }}
+          </option>
+        </select>
+      </div>
+      <div class="rule-constructor__field">
+        <label for="rule-subcategory">Ниша</label>
+        <select id="rule-subcategory" v-model="criteria.sourceSubcategory">
+          <option value="">Все ниши</option>
+          <option v-for="subcategory in filterOptions.subcategories" :key="subcategory" :value="subcategory">
+            {{ subcategory }}
+          </option>
+        </select>
+      </div>
+      <button class="rule-constructor__secondary" type="button" @click="resetBuilder">
+        <RotateCcw :size="16" />
+        Сбросить
+      </button>
+    </div>
+
+    <section class="rule-constructor__surface">
+      <header class="rule-constructor__surface-head">
+        <div>
+          <h2>Набор правил по категориям</h2>
+          <p>Счетчик рядом с правилом показывает, сколько карточек соответствует этому факту в текущей базе.</p>
         </div>
+        <SlidersHorizontal :size="18" />
+      </header>
+
+      <div v-if="filtersError" class="rule-constructor__notice rule-constructor__notice--error">
+        {{ filtersError }}
       </div>
-
-      <div class="filters__selects">
-        <MarketFilterSelect
-          v-model="filters.sourceSubcategory"
-          label="Ниша"
-          placeholder="Все ниши"
-          search-placeholder="Найти нишу"
-          :options="filterOptions.subcategories"
-        />
+      <LoadingState v-if="loadingFilters" :rows="4" />
+      <div v-else class="rule-constructor__library">
+        <section v-for="group in groupedFilters" :key="group.name" class="rule-constructor__library-group">
+          <h3>{{ group.name }}</h3>
+          <button
+            v-for="filter in group.filters"
+            :key="filter.id"
+            class="rule-constructor__rule"
+            :class="{
+              'rule-constructor__rule--used': isRuleUsed(filter.id),
+              'rule-constructor__rule--zero': isZeroCountRule(filter),
+              'rule-constructor__rule--disabled': filter.status === 'disabled'
+            }"
+            type="button"
+            :disabled="filter.status === 'disabled'"
+            :draggable="filter.status !== 'disabled'"
+            @click="addRule(filter)"
+            @dragstart="onRuleDragStart($event, filter)"
+          >
+            <span class="rule-constructor__rule-name">{{ filter.name }}</span>
+            <span class="rule-constructor__rule-count" aria-label="Количество карточек">
+              {{ ruleCountText(filter) }}
+            </span>
+          </button>
+        </section>
       </div>
+    </section>
 
-      <p v-if="filterError" class="filters__notice">{{ filterError }}</p>
-      <p v-else-if="filterOptionsLoading" class="filters__notice">Загружаем варианты фильтров...</p>
+    <section class="rule-constructor__surface">
+      <RuleFormulaBuilder
+        :tokens="tokens"
+        :filters-by-id="filtersById"
+        :total="constructorTotal"
+        :invalid-reason="builderStatus"
+        :pending-rule="pendingRule"
+        :bracket-draft-boundary="bracketDraftBoundary"
+        @set-operator="setOperator"
+        @remove-rule="removeRule"
+        @remove-bracket="removeBracket"
+        @bracket-boundary="onBracketBoundary"
+        @cancel-bracket-draft="cancelBracketDraft"
+        @commit-pending="commitPendingRule"
+        @cancel-pending="cancelPendingRule"
+        @drop-rule="addRuleById"
+      />
+    </section>
 
-      <div v-if="chips.length" class="filters__chips" aria-label="Активные фильтры">
-        <button
-          v-for="chip in chips"
-          :key="chip.key"
-          class="filters__chip"
-          type="button"
-          :title="`Убрать ${chip.label}`"
-          @click="removeFilter(chip.key)"
+    <section class="rule-constructor__surface">
+      <header class="rule-constructor__surface-head">
+        <div>
+          <h2>Результаты</h2>
+          <p>{{ formatNumber(total) }} карточек совпали с текущим выражением.</p>
+        </div>
+      </header>
+
+      <div v-if="error" class="rule-constructor__notice rule-constructor__notice--error">
+        {{ error }}
+      </div>
+      <LoadingState v-if="loading" :rows="6" />
+      <EmptyState
+        v-else-if="rows.length === 0"
+        title="Подходящих карточек нет"
+        description="Измените выражение, нишу или поисковый фильтр."
+      />
+
+      <div v-else class="rule-constructor__cards">
+        <article
+          v-for="item in rows"
+          :key="item.id"
+          class="rule-constructor__card"
+          role="button"
+          tabindex="0"
+          @click="openProduct(item)"
+          @keydown="onCardKeydown($event, item)"
         >
-          <span>{{ chip.label }}</span>
-          <strong>{{ chip.value }}</strong>
-          <X :size="13" aria-hidden="true" />
+          <MarketProductImage :src="item.thumbnailUrl" :alt="item.name" />
+          <div class="rule-constructor__card-main">
+            <span class="rule-constructor__niche">{{ item.sourceSubcategory || item.sourceCategory || 'Без ниши' }}</span>
+            <h3>{{ item.name }}</h3>
+            <p>{{ item.brandName || 'Бренд не указан' }} · {{ item.sellerName || 'Продавец не указан' }}</p>
+            <small>WB {{ item.wbProductId }}</small>
+            <div class="rule-constructor__facts">
+              <span
+                v-for="fact in item.matchedFacts"
+                :key="fact.id"
+                :class="`rule-constructor__fact--${fact.tone}`"
+              >
+                {{ fact.name }}<template v-if="fact.value">: {{ fact.value }}</template>
+              </span>
+            </div>
+          </div>
+          <dl class="rule-constructor__metrics">
+            <div>
+              <dt>Цена</dt>
+              <dd>{{ formatMoney(item.priceDiscounted) }}</dd>
+            </div>
+            <div>
+              <dt>Остаток</dt>
+              <dd>{{ formatNumber(item.totalQuantity) }}</dd>
+            </div>
+            <div>
+              <dt>Отзывы</dt>
+              <dd>{{ formatNumber(item.feedbackCount) }}</dd>
+            </div>
+            <div>
+              <dt>Позиция</dt>
+              <dd>{{ positionText(item) }}</dd>
+            </div>
+          </dl>
+        </article>
+      </div>
+
+      <div v-if="rows.length" class="rule-constructor__pagination">
+        <button
+          class="rule-constructor__secondary rule-constructor__pagination-nav"
+          type="button"
+          :disabled="page <= 1 || loading"
+          @click="setPage(page - 1)"
+        >
+          Назад
+        </button>
+        <div class="rule-constructor__pagination-pages">
+          <template v-for="item in paginationItems" :key="item">
+            <span v-if="typeof item === 'string'" class="rule-constructor__pagination-ellipsis">...</span>
+            <button
+              v-else
+              class="rule-constructor__pagination-page"
+              :class="{ 'rule-constructor__pagination-page--active': item === page }"
+              type="button"
+              :disabled="loading"
+              @click="setPage(item)"
+            >
+              {{ item }}
+            </button>
+          </template>
+        </div>
+        <button
+          class="rule-constructor__secondary rule-constructor__pagination-nav"
+          type="button"
+          :disabled="page >= totalPages || loading"
+          @click="setPage(page + 1)"
+        >
+          Вперед
         </button>
       </div>
-    </form>
-
-    <LoadingState v-if="loading" class="app-operator-panel" />
-    <EmptyState
-      v-else-if="error"
-      class="app-operator-panel"
-      title="Не удалось загрузить подборки"
-      :description="error"
-    />
-    <EmptyState
-      v-else-if="!response?.run"
-      class="app-operator-panel"
-      title="Подборки еще не рассчитаны"
-      description="Запустите обновление, чтобы увидеть проверяемые идеи по выбранным нишам."
-    >
-    </EmptyState>
-
-    <template v-else>
-      <section v-if="orderedGroups.length" class="opportunities-groups app-operator-panel">
-        <div class="opportunities-tabs" role="tablist" aria-label="Подборки перспективных товаров">
-          <button
-            v-for="group in orderedGroups"
-            :key="group.key"
-            class="opportunities-tab"
-            :class="{ 'opportunities-tab--active': selectedGroup?.key === group.key }"
-            type="button"
-            @click="selectGroup(group)"
-          >
-                {{ group.title || factorLabel(group.key) }}
-            <span>{{ groupVisibleCount(group) }}</span>
-          </button>
-        </div>
-
-        <EmptyState
-          v-if="!selectedGroup"
-          title="Выберите подборку"
-          description="И мы соберем для Вас карточки вместе с экспертными признаками"
-        />
-
-        <div v-if="selectedGroup" class="opportunities-group">
-          <div v-if="availableFactors.length" class="factor-filter">
-            <div class="factor-filter__header">
-              <strong>Фильтрация</strong>
-              <HelpTooltip text="Можно выбрать несколько тегов. Режим «Все» покажет только товары, где есть каждый выбранный тег." />
-              <div class="factor-filter__mode" role="group" aria-label="Режим фильтрации тегов">
-                <button
-                  type="button"
-                  class="factor-filter__mode-button"
-                  :class="{ 'factor-filter__mode-button--active': filters.factorMode === 'any' }"
-                  @click="setFactorMode('any')"
-                >
-                  Любой
-                </button>
-                <button
-                  type="button"
-                  class="factor-filter__mode-button"
-                  :class="{ 'factor-filter__mode-button--active': filters.factorMode === 'all' }"
-                  @click="setFactorMode('all')"
-                >
-                  Все
-                </button>
-              </div>
-            </div>
-            <div class="factor-filter__chips">
-              <button
-                v-for="factor in availableFactors"
-                :key="factor.key"
-                type="button"
-                class="factor-filter__chip"
-                :class="{ 'factor-filter__chip--active': filters.factorKeys.includes(factor.key) }"
-                :disabled="filters.factorKeys.includes(factor.key)"
-                @click="toggleFactor(factor.key)"
-              >
-                {{ factor.label }}
-                <span>{{ factor.count }}</span>
-              </button>
-            </div>
-          </div>
-
-          <header class="opportunities-group__header">
-            <h2>
-              <span>{{ selectedGroup.title || factorLabel(selectedGroup.key) }}</span>
-              <HelpTooltip :text="factorHelp(selectedGroup.key, selectedGroup.description)" />
-            </h2>
-            <span>{{ selectedGroup.key === 'duplicate_cards' ? activeClusters.length : activeItems.length }} товаров</span>
-          </header>
-
-          <div v-if="activeClusters.length" class="duplicate-clusters">
-            <article
-              v-for="cluster in activeClusters"
-              :key="cluster.key"
-              class="duplicate-cluster app-operator-card"
-            >
-              <header>
-                <div>
-                  <h3>{{ cluster.title }}</h3>
-                  <p>{{ cluster.items.length }} похожих карточек</p>
-                </div>
-              </header>
-              <div class="duplicate-cluster__items">
-                <button
-                  v-for="item in cluster.items"
-                  :key="item.id"
-                  class="duplicate-cluster__item"
-                  type="button"
-                  @click="openProduct(item)"
-                >
-                  <MarketProductImage :src="item.thumbnailUrl" :alt="item.productName" />
-                  <span>{{ item.productName }}</span>
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <div v-if="activeItems.length" class="opportunities-grid">
-            <article
-              v-for="item in paginatedActiveItems"
-              :key="item.id"
-              class="opportunity-card app-operator-card app-operator-card--interactive"
-              :class="{ 'opportunity-card--disabled': !item.parserProductRowId }"
-              @click="openProduct(item)"
-            >
-              <MarketProductImage :src="item.thumbnailUrl" :alt="item.productName" />
-              <div class="opportunity-card__body">
-                <span>{{ item.sourceSubcategory || 'Ниша не указана' }}</span>
-                <h3>{{ item.productName }}</h3>
-                <p>{{ item.brandName || 'Бренд не указан' }} · {{ item.sellerName || 'Продавец не указан' }}</p>
-
-                <div class="opportunity-tags">
-                  <span
-                    v-for="factor in visibleFactorTags(item)"
-                    :key="`${item.id}:${factor.code}`"
-                    class="opportunity-tag"
-                    :class="factorTagClasses(factor)"
-                  >
-                    <span class="opportunity-tag__text">
-                      <strong>{{ factorTextParts(factor).title }}</strong>{{ factorTextParts(factor).details }}
-                    </span>
-                    <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
-                  </span>
-                </div>
-
-                <button
-                  v-if="item.parserProductRowId"
-                  class="app-operator-link"
-                  type="button"
-                  @click.stop="openProduct(item)"
-                >
-                  Карточка
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <nav
-            v-if="activeItems.length > OPPORTUNITY_ITEMS_PER_PAGE"
-            class="pager opportunities-pagination"
-            aria-label="Пагинация перспективных товаров"
-          >
-            <Button
-              class="pager__nav"
-              variant="secondary"
-              :disabled="currentPage <= 1"
-              @click="setPage(currentPage - 1, activeTotalPages)"
-            >
-              Назад
-            </Button>
-            <div class="pager__pages">
-              <template v-for="item in activePaginationItems" :key="item">
-                <span v-if="typeof item === 'string'" class="pager__ellipsis" aria-hidden="true">…</span>
-                <button
-                  v-else
-                  class="pager__page"
-                  :class="{ 'pager__page--active': item === currentPage }"
-                  type="button"
-                  :aria-current="item === currentPage ? 'page' : undefined"
-                  @click="setPage(item, activeTotalPages)"
-                >
-                  {{ item }}
-                </button>
-              </template>
-            </div>
-            <Button
-              class="pager__nav"
-              variant="secondary"
-              :disabled="currentPage >= activeTotalPages"
-              @click="setPage(currentPage + 1, activeTotalPages)"
-            >
-              Далее
-            </Button>
-          </nav>
-
-          <EmptyState
-            v-if="!activeItems.length && !activeClusters.length"
-            title="Поиск не дал результатов"
-            description="Измените поиск, подборку или выбранные теги."
-          />
-        </div>
-      </section>
-
-      <section v-else class="opportunities-groups app-operator-panel">
-        <EmptyState
-          title="Обновите анализ, чтобы увидеть подборки"
-          description="Текущий сохраненный анализ не содержит проверяемых групп."
-        >
-        </EmptyState>
-
-        <div v-if="fallbackItems.length" class="opportunities-fallback">
-          <h2>
-            <SlidersHorizontal :size="17" />
-            Все найденные товары
-          </h2>
-          <div class="opportunities-grid">
-            <article
-              v-for="item in paginatedFallbackItems"
-              :key="item.id"
-              class="opportunity-card app-operator-card app-operator-card--interactive"
-              :class="{ 'opportunity-card--disabled': !item.parserProductRowId }"
-              @click="openProduct(item)"
-            >
-              <MarketProductImage :src="item.thumbnailUrl" :alt="item.productName" />
-              <div class="opportunity-card__body">
-                <span>{{ item.sourceSubcategory || 'Ниша не указана' }}</span>
-                <h3>{{ item.productName }}</h3>
-                <div class="opportunity-tags">
-                  <span
-                    v-for="factor in visibleFactorTags(item)"
-                    :key="`${item.id}:${factor.code}`"
-                    class="opportunity-tag"
-                    :class="factorTagClasses(factor)"
-                  >
-                    <span class="opportunity-tag__text">
-                      <strong>{{ factorTextParts(factor).title }}</strong>{{ factorTextParts(factor).details }}
-                    </span>
-                    <HelpTooltip :text="factorHelp(factor.code, factor.label, factor.value)" />
-                  </span>
-                </div>
-              </div>
-            </article>
-          </div>
-
-          <nav
-            v-if="fallbackItems.length > OPPORTUNITY_ITEMS_PER_PAGE"
-            class="pager opportunities-pagination"
-            aria-label="Пагинация перспективных товаров"
-          >
-            <Button
-              class="pager__nav"
-              variant="secondary"
-              :disabled="currentPage <= 1"
-              @click="setPage(currentPage - 1, fallbackTotalPages)"
-            >
-              Назад
-            </Button>
-            <div class="pager__pages">
-              <template v-for="item in fallbackPaginationItems" :key="item">
-                <span v-if="typeof item === 'string'" class="pager__ellipsis" aria-hidden="true">…</span>
-                <button
-                  v-else
-                  class="pager__page"
-                  :class="{ 'pager__page--active': item === currentPage }"
-                  type="button"
-                  :aria-current="item === currentPage ? 'page' : undefined"
-                  @click="setPage(item, fallbackTotalPages)"
-                >
-                  {{ item }}
-                </button>
-              </template>
-            </div>
-            <Button
-              class="pager__nav"
-              variant="secondary"
-              :disabled="currentPage >= fallbackTotalPages"
-              @click="setPage(currentPage + 1, fallbackTotalPages)"
-            >
-              Далее
-            </Button>
-          </nav>
-        </div>
-      </section>
-    </template>
+    </section>
 
     <ParserProductDetailDrawer
       :open="Boolean(selectedProduct)"
       :product="selectedProduct"
       @close="selectedProduct = null"
     />
-  </div>
+  </section>
 </template>
 
 <style scoped>
-.market-opportunities {
+.rule-constructor {
   display: grid;
   gap: var(--space-4);
 }
 
-.analysis-run-warning {
-  margin: calc(var(--space-3) * -1) 0 0;
-  color: var(--color-warning);
-  font-size: 0.85rem;
-  font-weight: 700;
-}
-
-.filters {
-  position: relative;
-  z-index: 3;
-  display: grid;
-  gap: var(--space-3);
-  overflow: visible;
-  border-color: var(--color-border-strong);
-  background:
-    linear-gradient(90deg, rgb(249 115 22 / 0.035), transparent 42%),
-    var(--surface-panel);
-  padding: var(--space-3);
-}
-
-.filters__search,
-.filters__selects {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.filters__actions {
-  display: flex;
-  align-items: end;
-  gap: var(--space-2);
-}
-
-.filters__notice {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--operator-body-size);
-}
-
-.filters__chips,
-.factor-filter__chips,
-.opportunities-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
-
-.filters__chip,
-.factor-filter__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  border: 1px solid var(--accent-primary-border);
-  border-radius: 999px;
-  background: var(--accent-ember-soft);
-  color: var(--accent-ember-text-strong);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--operator-meta-size);
-  font-weight: 760;
-  padding: 0.3rem 0.6rem;
-}
-
-.factor-filter {
-  display: grid;
-  gap: var(--space-2);
-  border: 1px solid var(--operator-border-muted);
+.rule-constructor__filters,
+.rule-constructor__surface,
+.rule-constructor__card {
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--operator-card-bg);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  box-shadow: 0 18px 48px color-mix(in srgb, var(--color-text) 7%, transparent);
+  backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.rule-constructor__filters {
+  display: grid;
+  grid-template-columns: minmax(14rem, 1fr) minmax(14rem, 1fr) auto;
+  gap: var(--space-3);
+  align-items: end;
   padding: var(--space-3);
 }
 
-.factor-filter__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.factor-filter__header strong {
-  font-size: var(--operator-body-size);
-}
-
-.factor-filter__mode {
-  display: inline-flex;
-  gap: var(--space-1);
-  margin-left: auto;
-}
-
-.factor-filter__mode-button {
-  border: 1px solid var(--operator-border-muted);
-  border-radius: var(--radius-sm);
-  background: var(--operator-metric-bg);
-  color: var(--color-text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--operator-meta-size);
-  font-weight: 760;
-  padding: 0.28rem 0.55rem;
-}
-
-.factor-filter__mode-button--active {
-  border-color: var(--accent-primary-border);
-  background: var(--accent-ember-soft);
-  color: var(--accent-ember-text-strong);
-}
-
-.factor-filter__chip--active,
-.factor-filter__chip:disabled {
-  border-color: var(--operator-border-muted);
-  background: var(--operator-metric-bg);
-  color: var(--color-text-muted);
-  cursor: not-allowed;
-  opacity: 0.78;
-}
-
-.factor-filter__chip--active span,
-.factor-filter__chip:disabled span {
-  background: var(--operator-card-bg);
-  color: var(--color-text-muted);
-}
-
-.factor-filter__chip span,
-.opportunities-tab span {
-  min-width: 1.4rem;
-  border-radius: 999px;
-  background: var(--operator-metric-bg);
-  padding: 0.12rem 0.45rem;
-  text-align: center;
-}
-
-.opportunities-groups {
+.rule-constructor__surface {
   display: grid;
   gap: var(--space-4);
   padding: var(--space-4);
 }
 
-.opportunities-tab {
-  display: inline-flex;
-  min-height: 2.25rem;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid var(--operator-border-muted);
-  border-radius: var(--radius-md);
-  background: var(--operator-card-bg);
-  color: var(--color-text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--operator-body-size);
-  font-weight: 760;
-  padding: 0 var(--space-3);
-}
-
-.opportunities-tab:hover,
-.opportunities-tab--active {
-  border-color: var(--accent-primary-border);
-  background: var(--accent-ember-soft);
-  color: var(--accent-ember-text-strong);
-}
-
-.opportunities-group,
-.opportunities-fallback,
-.duplicate-clusters {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.opportunities-group__header,
-.duplicate-cluster header {
+.rule-constructor__surface-head,
+.rule-constructor__pagination {
   display: flex;
-  align-items: start;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.rule-constructor__surface-head {
   justify-content: space-between;
-  gap: var(--space-3);
 }
 
-.opportunities-group__header h2,
-.opportunities-fallback h2,
-.duplicate-cluster h3,
-.opportunity-card h3 {
-  margin: 0;
-  color: var(--color-text);
+.rule-constructor__pagination {
+  justify-content: flex-end;
+  margin-top: var(--space-2);
 }
 
-.opportunities-group__header h2,
-.opportunities-fallback h2 {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.opportunities-group__header > span {
-  color: var(--color-text-muted);
-  font-size: var(--operator-body-size);
-}
-
-.duplicate-cluster p {
-  margin: var(--space-1) 0 0;
-  color: var(--color-text-muted);
-  font-size: var(--operator-body-size);
-}
-
-.opportunities-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-
-.opportunities-pagination {
-  justify-content: center;
-  padding-top: var(--space-1);
-}
-
-.pager {
+.rule-constructor__pagination-pages {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.pager__pages {
-  display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem;
 }
 
-.pager__page,
-.pager__ellipsis {
+.rule-constructor__pagination-page {
   display: inline-flex;
   min-width: 2rem;
   height: 2rem;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
-  font-size: 0.8125rem;
-}
-
-.pager__page {
   border: 1px solid rgb(249 115 22 / 0.18);
+  border-radius: var(--radius-sm);
   background: var(--surface-control);
   color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 720;
   transition: border-color 120ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
 }
 
-.pager__page:hover {
+.rule-constructor__pagination-page:not(:disabled):hover {
   border-color: var(--accent-ember-border);
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.09), transparent),
@@ -1632,7 +808,7 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   color: var(--accent-ember-text-strong);
 }
 
-.pager__page--active {
+.rule-constructor__pagination-page--active {
   border-color: var(--accent-primary-border);
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.22), rgb(249 115 22 / 0.08)),
@@ -1641,16 +817,11 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045), 0 8px 20px rgb(249 115 22 / 0.08);
 }
 
-.pager__page:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.pager__ellipsis {
+.rule-constructor__pagination-ellipsis {
   color: var(--color-text-muted);
 }
 
-.pager__nav {
+.rule-constructor__pagination-nav {
   border-color: var(--accent-primary-border);
   background:
     linear-gradient(180deg, rgb(249 115 22 / 0.14), rgb(249 115 22 / 0.05)),
@@ -1659,184 +830,293 @@ function toParserProduct(item: HotProductRecommendationItem): ParserProductListI
   font-weight: 720;
 }
 
-.pager__nav:hover:not(:disabled) {
+.rule-constructor__pagination-nav:hover:not(:disabled) {
   border-color: var(--accent-primary-hover-border);
   background:
     linear-gradient(180deg, rgb(251 146 60 / 0.2), rgb(249 115 22 / 0.08)),
     var(--color-surface-hover);
 }
 
-.pager__nav:disabled {
+.rule-constructor__pagination-nav:disabled {
   border-color: var(--color-border);
   background: var(--surface-control);
   color: var(--color-text-muted);
   opacity: 0.58;
 }
 
-.opportunity-card {
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h2 {
+  font-size: 1rem;
+}
+
+h3 {
+  font-size: 0.92rem;
+}
+
+p,
+small {
+  color: var(--color-text-muted);
+}
+
+label {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+select,
+input {
+  width: 100%;
+  min-height: 2.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  color: var(--color-text);
+  padding: 0 var(--space-2);
+  font: inherit;
+}
+
+.rule-constructor__field {
   display: grid;
-  grid-template-columns: 5rem minmax(0, 1fr);
-  grid-template-rows: minmax(16.25rem, auto);
-  gap: var(--space-3);
+  gap: var(--space-1);
+}
+
+.rule-constructor__secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 2.45rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-card) 88%, transparent);
+  color: var(--color-text);
+  padding: 0 var(--space-3);
+  font-weight: 800;
+}
+
+.rule-constructor__secondary:not(:disabled):hover {
+  border-color: var(--color-ember);
+  color: var(--accent-ember-text-strong);
+}
+
+.rule-constructor__notice {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   padding: var(--space-3);
+  font-weight: 700;
 }
 
-.opportunity-card > .market-image {
-  align-self: stretch;
-  min-height: 16.25rem;
+.rule-constructor__notice--error {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-text);
 }
 
-.opportunity-card--disabled {
-  cursor: default;
-}
-
-.opportunity-card__body {
+.rule-constructor__library {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  align-content: stretch;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  column-gap: var(--space-4);
+  row-gap: var(--space-5);
+}
+
+.rule-constructor__library-group {
+  display: grid;
+  align-content: start;
   gap: var(--space-2);
   min-width: 0;
-  min-height: 16.25rem;
+  padding-inline-start: var(--space-3);
+  border-inline-start: 1px solid color-mix(in srgb, var(--color-border) 58%, transparent);
 }
 
-.opportunity-card__body > span,
-.opportunity-card__body p {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: var(--operator-meta-size);
+.rule-constructor__library-group:first-child {
+  padding-inline-start: 0;
+  border-inline-start: 0;
 }
 
-.opportunity-card h3 {
-  font-size: var(--operator-title-size);
-  line-height: 1.25;
-}
-
-.opportunity-tags {
+.rule-constructor__library-group h3 {
   display: flex;
-  width: 100%;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.4rem;
-}
-
-.opportunity-tag {
-  display: inline-grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-  align-items: flex-start;
-  gap: 0.35rem;
-  border: 1px solid var(--operator-border-muted);
-  border-radius: 6px;
-  background: var(--operator-metric-bg);
+  align-items: center;
+  justify-content: center;
+  min-height: 1.6rem;
+  margin: 0 0 var(--space-2);
   color: var(--color-text);
-  font-size: var(--operator-meta-size);
-  font-weight: 560;
+  font-size: 1rem;
+  font-weight: 900;
   line-height: 1.25;
-  overflow-wrap: anywhere;
-  padding: 0.34rem 0.55rem;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.rule-constructor__rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(3.5rem, auto);
+  gap: var(--space-2);
+  align-items: center;
+  min-height: 2.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  padding: 0.25rem var(--space-2);
   text-align: left;
-  white-space: pre-line;
 }
 
-.opportunity-tag__text {
+.rule-constructor__rule:not(:disabled):hover {
+  border-color: var(--color-border);
+  background: var(--surface-card);
+}
+
+.rule-constructor__rule--used {
+  color: color-mix(in srgb, var(--accent-ember-text-strong) 72%, transparent);
+}
+
+.rule-constructor__rule--disabled {
+  color: var(--color-text-muted);
+  opacity: 0.62;
+}
+
+.rule-constructor__rule--zero {
+  color: var(--color-text-muted);
+  opacity: 0.68;
+}
+
+.rule-constructor__rule-name {
   min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
-.opportunity-tag__text strong {
-  font-weight: 820;
+.rule-constructor__rule-count {
+  justify-self: end;
+  min-width: 3.25rem;
+  border: 1px solid color-mix(in srgb, var(--color-ember) 40%, var(--color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-ember-soft) 78%, var(--surface-card));
+  color: var(--accent-ember-text-strong);
+  padding: 0.16rem 0.5rem;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+  line-height: 1.25;
+  text-align: center;
 }
 
-.opportunity-tag--multiline {
-  border-radius: 4px;
-  padding: 0.42rem 0.6rem;
+.rule-constructor__rule--disabled .rule-constructor__rule-count {
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--surface-card) 75%, transparent);
+  color: var(--color-text-muted);
 }
 
-.opportunity-tag--positive {
-  border-color: var(--state-success-border);
-  background: var(--state-success-soft);
+.rule-constructor__rule--zero .rule-constructor__rule-count {
+  border-color: var(--color-border);
+  background: color-mix(in srgb, var(--surface-card) 75%, transparent);
+  color: var(--color-text-muted);
+}
+
+.rule-constructor__cards {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.rule-constructor__card {
+  display: grid;
+  grid-template-columns: 5.25rem minmax(0, 1fr) minmax(9rem, 0.28fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3);
+  text-align: left;
+  cursor: pointer;
+}
+
+.rule-constructor__card:hover,
+.rule-constructor__card:focus-visible {
+  border-color: var(--color-ember);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-ember-soft);
+}
+
+.rule-constructor__card-main {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.rule-constructor__card-main h3 {
+  font-size: 1rem;
+}
+
+.rule-constructor__niche {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.rule-constructor__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  align-items: flex-start;
+  margin-top: var(--space-2);
+}
+
+.rule-constructor__facts span {
+  border-radius: 999px;
+  background: var(--accent-ember-soft);
+  color: var(--accent-ember-text-strong);
+  padding: 0.28rem 0.48rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.rule-constructor__facts .rule-constructor__fact--positive {
+  background: var(--color-success-soft);
   color: var(--state-success-text);
 }
 
-.opportunity-tag--negative {
-  border-color: var(--state-danger-border);
-  background: var(--state-danger-soft);
-  color: var(--state-danger-text);
+.rule-constructor__facts .rule-constructor__fact--neutral {
+  background: rgb(229 231 235 / 0.92);
+  color: #374151;
 }
 
-.opportunity-tag--neutral {
-  border-color: var(--operator-border-muted);
-  background: var(--operator-metric-bg);
-  color: var(--color-text-muted);
-}
-
-.duplicate-cluster {
+.rule-constructor__metrics {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
-  padding: var(--space-3);
+  margin: 0;
 }
 
-.duplicate-cluster__items {
+.rule-constructor__metrics div {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 14rem);
-  align-items: start;
-  justify-content: start;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
-.duplicate-cluster__item {
-  display: grid;
-  grid-template-columns: 3.25rem minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid var(--operator-border-muted);
-  border-radius: var(--radius-md);
-  background: var(--operator-metric-bg);
-  color: var(--color-text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--operator-meta-size);
-  font-weight: 700;
-  padding: var(--space-2);
-  text-align: left;
+.rule-constructor__metrics dt {
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
-.duplicate-cluster__item:hover {
-  border-color: var(--accent-primary-border);
-  background: var(--accent-ember-soft);
+.rule-constructor__metrics dd {
+  margin: 0;
+  font-weight: 900;
 }
 
-.duplicate-cluster__item span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-@media (min-width: 880px) {
-  .filters__search {
-    grid-template-columns: minmax(18rem, 1fr) auto;
-    align-items: end;
-  }
-
-  .filters__selects {
-    grid-template-columns: minmax(16rem, 28rem);
-  }
-}
-
-@media (max-width: 980px) {
-  .opportunities-grid {
+@media (max-width: 960px) {
+  .rule-constructor__filters,
+  .rule-constructor__card {
     grid-template-columns: 1fr;
   }
 
-  .opportunities-group__header,
-  .duplicate-cluster header {
-    display: grid;
-  }
-
-  .factor-filter__mode {
-    margin-left: 0;
+  .rule-constructor__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

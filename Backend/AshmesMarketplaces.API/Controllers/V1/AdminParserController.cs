@@ -13,10 +13,160 @@ namespace AshmesMarketplaces.API.Controllers.V1;
 public sealed class AdminParserController : ControllerBase
 {
     private readonly IParserAdminMonitoringService _monitoringService;
+    private readonly IParserProxyManagementService _proxyManagementService;
+    private readonly IParserInstanceConfigurationService _instanceConfigurationService;
+    private readonly IParserLaunchRequestService _launchRequestService;
+    private readonly IParserRunRollbackService _rollbackService;
 
-    public AdminParserController(IParserAdminMonitoringService monitoringService)
+    public AdminParserController(
+        IParserAdminMonitoringService monitoringService,
+        IParserProxyManagementService proxyManagementService,
+        IParserInstanceConfigurationService instanceConfigurationService,
+        IParserLaunchRequestService launchRequestService,
+        IParserRunRollbackService rollbackService)
     {
         _monitoringService = monitoringService;
+        _proxyManagementService = proxyManagementService;
+        _instanceConfigurationService = instanceConfigurationService;
+        _launchRequestService = launchRequestService;
+        _rollbackService = rollbackService;
+    }
+
+    [HttpGet("instance-configurations")]
+    [ProducesResponseType(typeof(IReadOnlyList<ParserInstanceConfigurationDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<ParserInstanceConfigurationDto>>> GetInstanceConfigurations(
+        CancellationToken cancellationToken)
+    {
+        var result = await _instanceConfigurationService.GetAdminListAsync(cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("instance-configurations")]
+    [ProducesResponseType(typeof(ParserInstanceConfigurationDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ParserInstanceConfigurationDto>> CreateInstanceConfiguration(
+        [FromBody] CreateParserInstanceConfigurationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _instanceConfigurationService.CreateAsync(request, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return CreatedAtAction(nameof(GetInstanceConfigurations), result.Value);
+    }
+
+    [HttpPatch("instance-configurations/{id:guid}")]
+    [ProducesResponseType(typeof(ParserInstanceConfigurationDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ParserInstanceConfigurationDto>> UpdateInstanceConfiguration(
+        Guid id,
+        [FromBody] UpdateParserInstanceConfigurationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _instanceConfigurationService.UpdateAsync(id, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpDelete("instance-configurations/{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteInstanceConfiguration(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _instanceConfigurationService.DeleteAsync(id, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return NoContent();
+    }
+
+    [HttpPost("instance-configurations/{id:guid}/launch")]
+    [ProducesResponseType(typeof(ParserLaunchRequestDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ParserLaunchRequestDto>> LaunchInstance(
+        Guid id,
+        [FromBody] CreateParserLaunchRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _launchRequestService.RequestLaunchAsync(id, request, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return Accepted(result.Value);
+    }
+
+    [HttpGet("proxies")]
+    [ProducesResponseType(typeof(IReadOnlyList<ParserProxyDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<ParserProxyDto>>> GetProxies(
+        CancellationToken cancellationToken)
+    {
+        var result = await _proxyManagementService.GetAdminListAsync(cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("proxies")]
+    [ProducesResponseType(typeof(ParserProxyDto), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ParserProxyDto>> CreateProxy(
+        [FromBody] CreateParserProxyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _proxyManagementService.CreateAsync(request, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return CreatedAtAction(nameof(GetProxies), result.Value);
+    }
+
+    [HttpPatch("proxies/{id:guid}")]
+    [ProducesResponseType(typeof(ParserProxyDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserProxyDto>> UpdateProxy(
+        Guid id,
+        [FromBody] UpdateParserProxyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _proxyManagementService.UpdateAsync(id, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpDelete("proxies/{id:guid}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteProxy(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _proxyManagementService.DeleteAsync(id, cancellationToken);
+        if (!result.IsSuccess)
+            return ToActionResult(result.Error!);
+
+        return NoContent();
     }
 
     [HttpGet("instances")]
@@ -40,6 +190,34 @@ public sealed class AdminParserController : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await _monitoringService.GetJournalAsync(page, pageSize, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpGet("journal/{id:guid}/rollback-preview")]
+    [ProducesResponseType(typeof(ParserRunRollbackPreviewDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ParserRunRollbackPreviewDto>> GetRollbackPreview(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _rollbackService.PreviewAsync(id, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPost("journal/{id:guid}/rollback")]
+    [ProducesResponseType(typeof(ParserRunRollbackResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ParserRunRollbackResponseDto>> RollbackJournalRow(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _rollbackService.RollbackAsync(id, cancellationToken);
         return ToActionResult(result);
     }
 

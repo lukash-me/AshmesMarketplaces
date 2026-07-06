@@ -11,6 +11,7 @@ public sealed class PublicAnalysisSchedule
     public const string ProductAvailabilityScheduleKey = "product_availability_public";
     public const string MarketConcentrationScheduleKey = "market_concentration_public";
     public const string TopForecastScheduleKey = "top_forecast_public";
+    public const string WildberriesCategoryCatalogScheduleKey = "wb_category_catalog_refresh";
     public const string PendingStatus = "pending";
     public const string RunningStatus = "running";
     public const string CompletedStatus = "completed";

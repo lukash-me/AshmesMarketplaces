@@ -13,7 +13,6 @@ import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 import ParserProductDetailDrawer from '@/features/parser-products/ParserProductDetailDrawer.vue';
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
-import { recalculateHotProductsRecommendations } from '@/features/parser-products/hotProductsRecommendations.api';
 import { useActiveWorkspace } from '@/features/workspace-market-products/useActiveWorkspace';
 
 import {
@@ -92,7 +91,6 @@ const loading = ref(false);
 const detailsLoading = ref(false);
 const error = ref('');
 const analysisActionError = ref('');
-const hotProductsRefreshing = ref(false);
 const overviewRefreshing = ref(false);
 const selected = ref<ParserTestingProduct | null>(null);
 let loadVersion = 0;
@@ -217,27 +215,6 @@ function resetSearch() {
   searchDraft.value = '';
   search.value = '';
   page.value = 1;
-}
-
-async function refreshHotProducts(): Promise<void> {
-  if (isGuestTestingMode.value || hotProductsRefreshing.value) {
-    return;
-  }
-
-  hotProductsRefreshing.value = true;
-  analysisActionError.value = '';
-  try {
-    await recalculateHotProductsRecommendations({
-      maxProducts: 100000,
-      maxRecommendations: 1000,
-      minProductsForScoring: 5,
-      forceRecalculate: true
-    });
-  } catch (requestError) {
-    analysisActionError.value = getProblemMessage(requestError, 'Не удалось обновить перспективные товары.');
-  } finally {
-    hotProductsRefreshing.value = false;
-  }
 }
 
 async function refreshOverview(): Promise<void> {
@@ -510,7 +487,7 @@ function formatDate(value: string | null | undefined): string {
 
     <AuthRequiredState
       v-if="isGuestTestingMode"
-      description="Тестовые действия пересчитывают персональную аналитику и доступны после входа. Авторизуйтесь, чтобы вручную обновить Перспективные товары или Обзор."
+      description="Тестовые действия пересчитывают персональную аналитику и доступны после входа. Авторизуйтесь, чтобы вручную обновить обзор."
     />
 
     <section v-if="!isGuestTestingMode" class="testing-toolbar app-operator-panel">
@@ -527,10 +504,6 @@ function formatDate(value: string | null | undefined): string {
       <Button variant="primary" @click="applySearch">Применить</Button>
       <Button variant="secondary" @click="resetSearch">Сбросить</Button>
       <div v-if="props.showAnalysisActions" class="testing-toolbar__analysis-actions">
-        <Button variant="secondary" :loading="hotProductsRefreshing" @click="refreshHotProducts">
-          <RefreshCw :size="15" />
-          Обновить Перспективные товары
-        </Button>
         <Button
           variant="secondary"
           :loading="overviewRefreshing"

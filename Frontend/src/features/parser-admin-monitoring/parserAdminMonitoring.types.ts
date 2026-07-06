@@ -12,11 +12,18 @@ export interface ParserAdminProxyRun {
   plannedRangesCount: number;
   completedRangesCount: number;
   rangeProgressPercent: number;
+  rangeChecksCount: number;
+  finalRangesCount: number;
+  emptyRangesCount: number;
+  splitRangesCount: number;
   progressPercent: number;
   startedAtUtc: string;
   lastHeartbeatAtUtc: string;
+  lastLogAtUtc: string | null;
   finishedAtUtc: string | null;
   runtimeMinutes: number;
+  productsPerSecond: number;
+  rangesPerSecond: number;
   error: string | null;
 }
 
@@ -34,6 +41,47 @@ export interface ParserAdminInstance {
   proxies: ParserAdminProxyRun[];
 }
 
+export interface ParserInstanceConfiguredProxy {
+  proxyId: string;
+  proxyKey: string;
+  ip: string;
+  sourceSubcategory: string | null;
+  assignmentEnabled: boolean;
+}
+
+export interface ParserInstanceConfiguration {
+  id: string;
+  parserInstanceId: string;
+  displayName: string;
+  hostKind: string;
+  status: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+  proxies: ParserInstanceConfiguredProxy[];
+}
+
+export interface ParserInstanceConfigurationSavePayload {
+  displayName: string;
+  proxyIds: string[];
+  status?: string;
+}
+
+export interface ParserLaunchRequest {
+  id: string;
+  parserInstanceId: string;
+  mode: string;
+  proxyKey: string | null;
+  batchLimit: number | null;
+  status: string;
+  requestedAtUtc: string;
+}
+
+export interface ParserLaunchSavePayload {
+  mode: 'limited_all' | 'full_all' | 'check_proxy';
+  batchLimit?: number | null;
+  proxyKey?: string | null;
+}
+
 export interface ParserAdminProxyRunJournal {
   id: string;
   parserInstanceId: string;
@@ -46,13 +94,45 @@ export interface ParserAdminProxyRunJournal {
   phase: string;
   plannedProductsCount: number;
   downloadedProductsCount: number;
+  createdProductsCount: number;
+  updatedProductsCount: number;
+  hasProductEffectsLedger: boolean;
   plannedRangesCount: number;
   completedRangesCount: number;
   rangeProgressPercent: number;
+  rangeChecksCount: number;
+  finalRangesCount: number;
+  emptyRangesCount: number;
+  splitRangesCount: number;
   startedAtUtc: string;
+  lastLogAtUtc: string | null;
   finishedAtUtc: string | null;
   runtimeMinutes: number;
+  productsPerSecond: number;
+  rangesPerSecond: number;
   error: string | null;
+}
+
+export interface ParserRunRollbackPreview {
+  parserProxyRunId: string;
+  canRollback: boolean;
+  message: string;
+  createdProductsCount: number;
+  updatedProductsCount: number;
+  conflictProductsCount: number;
+  alreadyRolledBackCount: number;
+}
+
+export interface ParserRunRollbackResponse {
+  rollbackId: string;
+  parserProxyRunId: string;
+  status: string;
+  message: string;
+  createdProductsCount: number;
+  updatedProductsCount: number;
+  deletedProductsCount: number;
+  restoredProductsCount: number;
+  conflictProductsCount: number;
 }
 
 export interface ParserAdminBatch {
@@ -119,4 +199,57 @@ export interface ParserAdminRetryResponse {
   externalBatchId: string;
   status: string;
   queuedAtUtc: string;
+}
+
+export interface ParserProxyAssignment {
+  id: string;
+  wbCategoryId: number;
+  sourceCategory: string;
+  sourceSubcategory: string;
+  sourcePath: string;
+  searchQuery: string;
+  parserSearchText: string;
+  enabled: boolean;
+}
+
+export interface ParserProxy {
+  id: string;
+  key: string;
+  ip: string;
+  httpPort: number;
+  socksPort: number;
+  login: string;
+  hasPassword: boolean;
+  status: string;
+  createdAtUtc: string;
+  updatedAtUtc: string;
+  assignment: ParserProxyAssignment | null;
+  assignedInstance: {
+    instanceConfigurationId: string;
+    parserInstanceId: string;
+    displayName: string;
+  } | null;
+}
+
+export interface ParserProxySavePayload {
+  ip: string;
+  httpPort: number;
+  socksPort: number;
+  login: string;
+  password?: string;
+  wbCategoryId?: number | null;
+  assignmentEnabled?: boolean;
+  status?: string;
+}
+
+export interface WbCategoryLeaf {
+  id: number;
+  name: string;
+  sourceCategory: string;
+  sourceSubcategory: string;
+  path: string;
+  searchQuery: string | null;
+  parentId: number | null;
+  isLeaf: boolean;
+  level: number;
 }

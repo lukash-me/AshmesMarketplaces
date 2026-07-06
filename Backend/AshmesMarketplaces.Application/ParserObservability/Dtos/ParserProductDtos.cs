@@ -109,7 +109,14 @@ public sealed record ParserProductReviewEvidenceDto(
     string AttributionMode,
     bool IsRootScoped,
     bool IsFullHistoryUnknown,
-    bool HasCappedRootPayload);
+    bool HasCappedRootPayload,
+    int? MarketplaceFeedbackCount,
+    int FetchedReviewsCount,
+    DateTime? OldestReviewDateUtc,
+    DateTime? LatestReviewDateUtc,
+    string CoverageStatus,
+    string CoverageSource,
+    string? LastCoverageError);
 
 public sealed record ParserProductLogisticsSummaryDto(
     int? TotalQuantityObserved,

@@ -46,3 +46,18 @@ def test_proxy_preflight_accepts_distinct_proxy_identities() -> None:
     assert [item.proxy_key for item in result.items] == ["proxy-1", "proxy-2"]
     assert [item.egress_ip for item in result.items] == ["203.0.113.1", "203.0.113.2"]
     assert result.items[0].token_ref != result.items[1].token_ref
+
+
+def test_proxy_preflight_does_not_require_token_probe_by_default() -> None:
+    proxies = [
+        ProxyDefinition(key="proxy-1", type="http-proxy", base_url="http://127.0.0.1:8001"),
+    ]
+
+    result = run_proxy_preflight(
+        proxies,
+        ip_probe=lambda proxy: "203.0.113.1",
+        profile_path=lambda proxy: Path(f"/profiles/{proxy.key}"),
+        cache_path=lambda proxy: Path(f"/sessions/{proxy.key}.json"),
+    )
+
+    assert result.items[0].token_ref is None

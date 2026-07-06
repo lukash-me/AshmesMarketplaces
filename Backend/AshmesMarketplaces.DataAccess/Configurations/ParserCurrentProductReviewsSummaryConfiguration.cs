@@ -20,6 +20,12 @@ public sealed class ParserCurrentProductReviewsSummaryConfiguration : IEntityTyp
         builder.Property(x => x.AverageRating).HasPrecision(18, 6).HasColumnName("average_rating");
         builder.Property(x => x.RecentNegativeCount).HasColumnName("recent_negative_count");
         builder.Property(x => x.LastReviewDateUtc).HasColumnName("last_review_date_utc");
+        builder.Property(x => x.MarketplaceFeedbackCount).HasColumnName("marketplace_feedback_count");
+        builder.Property(x => x.FetchedReviewsCount).HasColumnName("fetched_reviews_count");
+        builder.Property(x => x.OldestReviewDateUtc).HasColumnName("oldest_review_date_utc");
+        builder.Property(x => x.CoverageStatus).IsRequired().HasMaxLength(64).HasColumnName("coverage_status");
+        builder.Property(x => x.CoverageSource).IsRequired().HasMaxLength(64).HasColumnName("coverage_source");
+        builder.Property(x => x.LastCoverageError).HasColumnName("last_coverage_error");
         builder.Property(x => x.ReviewsHash).IsRequired().HasMaxLength(128).HasColumnName("reviews_hash");
         builder.Property(x => x.ReviewsJson).IsRequired().HasColumnType("jsonb").HasColumnName("reviews_json");
         builder.Property(x => x.ObservedAtUtc).IsRequired().HasColumnName("observed_at_utc");

@@ -67,6 +67,29 @@ const characteristicRows = computed(() =>
   ])
 );
 const visualFacts = computed(() => detail.value?.visualAnalysis?.facts ?? []);
+const reviewCoverage = computed(() => {
+  const evidence = displayProduct.value?.parsedReviewEvidence;
+  const groupFeedbackCount = displayProduct.value?.feedbackCount ?? null;
+  if (!evidence) {
+    return {
+      groupCountLabel: fieldValue(groupFeedbackCount),
+      productCountLabel: 'Нет данных',
+      statusLabel: 'Покрытие отзывов не рассчитано',
+      sourceLabel: 'Источник не определен',
+      error: null as string | null
+    };
+  }
+
+  const fetched = evidence.fetchedReviewsCount ?? evidence.parsedReviewCount ?? 0;
+  const expected = evidence.marketplaceFeedbackCount;
+  return {
+    groupCountLabel: fieldValue(groupFeedbackCount),
+    productCountLabel: expected === null ? `${fetched}` : `${fetched} / ${expected}`,
+    statusLabel: reviewCoverageStatusLabel(evidence.coverageStatus),
+    sourceLabel: reviewCoverageSourceLabel(evidence.coverageSource),
+    error: evidence.lastCoverageError
+  };
+});
 
 watch(
   () => [props.open, props.product?.id] as const,
@@ -133,6 +156,37 @@ async function loadDetail(id: string) {
 
 function close() {
   emit('close');
+}
+
+function reviewCoverageStatusLabel(status: string | undefined) {
+  switch ((status ?? '').toLowerCase()) {
+    case 'full':
+      return 'Полная история';
+    case 'incomplete':
+      return 'Неполная история';
+    case 'blocked':
+      return 'Доступ к отзывам заблокирован';
+    case 'rate_limited':
+      return 'Ограничение WB по частоте';
+    case 'endpoint_unavailable':
+      return 'Endpoint отзывов недоступен';
+    default:
+      return 'Покрытие не подтверждено';
+  }
+}
+
+function reviewCoverageSourceLabel(source: string | undefined) {
+  switch ((source ?? '').toLowerCase()) {
+    case 'product_full':
+      return 'Product-scoped выгрузка';
+    case 'root_variant_filtered':
+      return 'Root payload с фильтром по карточке';
+    case 'root_capped_fallback':
+    case 'root_payload':
+      return 'Root payload был обрезан или неполон';
+    default:
+      return 'Источник не определен';
+  }
 }
 
 async function checkWorkspaceState(parserProductRowId: string) {
@@ -573,7 +627,7 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
                   <dd class="numeric">{{ fieldValue(displayProduct.reviewRating) }}</dd>
                 </div>
                 <div>
-                  <dt>Отзывы WB</dt>
+                  <dt>Отзывы группы WB</dt>
                   <dd class="numeric">{{ fieldValue(displayProduct.feedbackCount) }}</dd>
                 </div>
               </dl>
@@ -661,6 +715,19 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
               <li v-for="fact in visualFacts" :key="fact">{{ fact }}</li>
             </ul>
             <p v-else class="drawer__empty">Визуальный анализ изображений пока не рассчитан.</p>
+          </section>
+
+          <section class="drawer__section">
+            <div class="drawer__section-title">
+              <h3>Покрытие отзывов</h3>
+            </div>
+            <dl class="drawer__fields drawer__fields--two">
+              <div><dt>Отзывы группы WB</dt><dd>{{ reviewCoverage.groupCountLabel }}</dd></div>
+              <div><dt>Отзывы карточки</dt><dd>{{ reviewCoverage.productCountLabel }}</dd></div>
+              <div><dt>Статус</dt><dd>{{ reviewCoverage.statusLabel }}</dd></div>
+              <div><dt>Источник</dt><dd>{{ reviewCoverage.sourceLabel }}</dd></div>
+              <div v-if="reviewCoverage.error"><dt>Ошибка</dt><dd>{{ reviewCoverage.error }}</dd></div>
+            </dl>
           </section>
 
           <MarketProductObservedReviews :product="displayProduct" />

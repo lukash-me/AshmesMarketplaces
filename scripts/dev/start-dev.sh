@@ -20,6 +20,7 @@ API_URL="http://localhost:5019"
 SWAGGER_URL="$API_URL/swagger"
 FRONTEND_URL="http://localhost:5173"
 PGADMIN_URL="http://localhost:5050"
+INTELLIGENCE_URL="http://localhost:8020"
 
 step() {
   printf '[dev] %s\n' "$1" >&2
@@ -191,15 +192,20 @@ mkdir -p "$LOG_ROOT" "$PID_ROOT"
 
 assert_port_available 5432 "PostgreSQL" "" "ashmes-postgres"
 assert_port_available 5050 "pgAdmin" "" "ashmes-pgadmin"
+assert_port_available 8020 "Intelligence" "" "ashmes-intelligence"
 assert_port_available 5019 "Backend API" "$BACKEND_PID_FILE" ""
 assert_port_available 5173 "Frontend Vite" "$FRONTEND_PID_FILE" ""
 
-step "Starting PostgreSQL and pgAdmin..."
-"$DOCKER_BIN" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres pgadmin
+step "Starting PostgreSQL, pgAdmin, and Intelligence..."
+"$DOCKER_BIN" compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres pgadmin intelligence
 
 step "Waiting for PostgreSQL health..."
 wait_container_healthy "ashmes-postgres"
 step "PostgreSQL started."
+
+step "Waiting for Intelligence health..."
+wait_container_healthy "ashmes-intelligence" 180
+step "Intelligence started."
 
 if ! managed_pid "$BACKEND_PID_FILE" >/dev/null; then
   step "Starting backend API..."
@@ -232,6 +238,7 @@ Ashmes local dev is running:
   Swagger:  $SWAGGER_URL
   Frontend: $FRONTEND_URL
   pgAdmin:  $PGADMIN_URL
+  Intelligence: $INTELLIGENCE_URL
 
 Logs:
   Backend:  $BACKEND_LOG

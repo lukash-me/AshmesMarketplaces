@@ -19,13 +19,16 @@ public sealed class ParserBatchProcessingService : IParserBatchProcessingService
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IParserBatchPayloadProcessor _payloadProcessor;
+    private readonly ParserProductPresenceReconciliationService? _presenceReconciliationService;
 
     public ParserBatchProcessingService(
         ApplicationDbContext dbContext,
-        IParserBatchPayloadProcessor payloadProcessor)
+        IParserBatchPayloadProcessor payloadProcessor,
+        ParserProductPresenceReconciliationService? presenceReconciliationService = null)
     {
         _dbContext = dbContext;
         _payloadProcessor = payloadProcessor;
+        _presenceReconciliationService = presenceReconciliationService;
     }
 
     public async Task<ParserBatchProcessingResult> ProcessNextAsync(CancellationToken cancellationToken)
@@ -195,10 +198,13 @@ public sealed class ParserBatchProcessingService : IParserBatchProcessingService
         var now = DateTime.UtcNow;
         var batch = await LoadTrackedBatchAsync(batchId, cancellationToken);
         batch.MarkCompleted(now);
+        var parserCycleId = batch.ParserCycleId;
         _dbContext.ParserBatchSubmissionEvents.Add(
             new ParserBatchSubmissionEvent(batchId, "completed", batch.Status, message, now));
         await DeleteRawArtifactsAsync(batchId, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
+        if (_presenceReconciliationService is not null)
+            await _presenceReconciliationService.TryReconcileCycleAsync(parserCycleId, cancellationToken);
     }
 
     private async Task FailRetryableAsync(Guid batchId, string error, CancellationToken cancellationToken)
@@ -216,9 +222,12 @@ public sealed class ParserBatchProcessingService : IParserBatchProcessingService
         var now = DateTime.UtcNow;
         var batch = await LoadTrackedBatchAsync(batchId, cancellationToken);
         batch.MarkFailedFinal(error, now);
+        var parserCycleId = batch.ParserCycleId;
         _dbContext.ParserBatchSubmissionEvents.Add(
             new ParserBatchSubmissionEvent(batchId, "failed_final", batch.Status, error, now));
         await _dbContext.SaveChangesAsync(cancellationToken);
+        if (_presenceReconciliationService is not null)
+            await _presenceReconciliationService.TryReconcileCycleAsync(parserCycleId, cancellationToken);
     }
 
     private async Task<ParserBatchSubmission> LoadTrackedBatchAsync(
