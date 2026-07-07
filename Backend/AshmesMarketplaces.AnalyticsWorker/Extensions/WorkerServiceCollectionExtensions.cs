@@ -10,6 +10,7 @@ using AshmesMarketplaces.Application.ParserIngestion.Services;
 using AshmesMarketplaces.Application.ParserObservability.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.DataAccess;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -66,6 +67,16 @@ public static class WorkerServiceCollectionExtensions
 
     public static IServiceCollection AddWorkerApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
+        var dataProtection = services
+            .AddDataProtection()
+            .SetApplicationName(configuration["DataProtection:ApplicationName"] ?? "AshmesMarketplaces");
+        var dataProtectionKeysPath = configuration["DataProtection:KeysPath"];
+        if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+        {
+            Directory.CreateDirectory(dataProtectionKeysPath);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+        }
+
         services.AddSingleton(new ParserLogMonitoringOptions
         {
             LogRoot = ResolveParserLogRoot(configuration),
@@ -81,6 +92,8 @@ public static class WorkerServiceCollectionExtensions
         services.AddScoped<IParserBatchPayloadProcessor, ParserBatchPayloadRouter>();
         services.AddScoped<IParserBatchProcessingService, ParserBatchProcessingService>();
         services.AddScoped<IParserLaunchRequestService, ParserLaunchRequestService>();
+        services.AddScoped<IParserProxySecretProtector, DataProtectionParserProxySecretProtector>();
+        services.AddScoped<IParserProxyManagementService, ParserProxyManagementService>();
         services.AddScoped<IAdminCalculationService, AdminCalculationService>();
         services.AddScoped<IPublicMarketIntelligenceReadService, PublicMarketIntelligenceReadService>();
         services.AddScoped<IPublicMarketIntelligenceRefreshService, PublicMarketIntelligenceRefreshService>();

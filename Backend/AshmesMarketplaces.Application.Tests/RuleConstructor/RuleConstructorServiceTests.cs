@@ -59,10 +59,10 @@ public sealed class RuleConstructorServiceTests
         Assert.Contains(filters, x => x.Id == "price_increased" && x.Tone == RuleConstructorFilterTones.Neutral);
         Assert.Contains(filters, x =>
             x.Id == "good_recent_reviews" &&
-            x.VerificationStatus == RuleConstructorFilterVerificationStatuses.NeedsDataExport);
+            x.VerificationStatus == RuleConstructorFilterVerificationStatuses.Ready);
         Assert.Contains(filters, x =>
             x.Id == "bad_recent_reviews" &&
-            x.VerificationStatus == RuleConstructorFilterVerificationStatuses.NeedsDataExport);
+            x.VerificationStatus == RuleConstructorFilterVerificationStatuses.Ready);
         Assert.All(
             filters.Where(x => x.Id is not ("good_recent_reviews" or "bad_recent_reviews")),
             filter => Assert.Equal(RuleConstructorFilterVerificationStatuses.NotReady, filter.VerificationStatus));
@@ -201,12 +201,18 @@ public sealed class RuleConstructorServiceTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(["1001", "1003"], result.Value!.Items.Select(x => x.WbProductId).Order(StringComparer.Ordinal));
-        Assert.Contains(result.Value.Items.Single(x => x.WbProductId == "1001").MatchedFacts, x =>
-            x.Id == "good_recent_reviews" &&
-            x.Value == "Последние 10 отзывов: все оценки 4 или 5");
-        Assert.Contains(result.Value.Items.Single(x => x.WbProductId == "1003").MatchedFacts, x =>
-            x.Id == "good_recent_reviews" &&
-            x.Value == "Последние 3 отзыва: все оценки 4 или 5");
+        var factsByProduct = result.Value.Items.ToDictionary(x => x.WbProductId, x => x.MatchedFacts.Single(fact => fact.Id == "good_recent_reviews"), StringComparer.Ordinal);
+        Assert.Equal("Хорошие последние отзывы", factsByProduct["1001"].Name);
+        Assert.Equal("10", factsByProduct["1001"].Value);
+        Assert.Equal("Хорошие последние отзывы", factsByProduct["1003"].Name);
+        Assert.Equal("3", factsByProduct["1003"].Value);
+        Assert.All(factsByProduct.Values, fact =>
+        {
+            Assert.DoesNotContain("все оценки 4 или 5", fact.Value, StringComparison.Ordinal);
+            Assert.DoesNotContain("3.2", fact.Value, StringComparison.Ordinal);
+            Assert.DoesNotContain("4.9", fact.Value, StringComparison.Ordinal);
+            Assert.DoesNotContain("RecentNegativeCount", fact.Value, StringComparison.Ordinal);
+        });
     }
 
     [Fact]
@@ -218,6 +224,7 @@ public sealed class RuleConstructorServiceTests
         AddCurrentProduct(context, "1003", "Dresses", price: 1000, reviewRating: 4.8m, feedbackCount: 3, totalQuantity: 10);
         AddCurrentProduct(context, "1004", "Dresses", price: 1000, reviewRating: 4.8m, feedbackCount: 0, totalQuantity: 10);
         AddCurrentProduct(context, "1005", "Dresses", price: 1000, reviewRating: 4.8m, feedbackCount: 3, totalQuantity: 10);
+        AddCurrentProduct(context, "1006", "Dresses", price: 1000, reviewRating: 4.8m, feedbackCount: 4, totalQuantity: 10);
 
         AddReviewRow(context, "1001", 5, Utc(2026, 7, 4, 10));
         AddReviewRow(context, "1001", 3, Utc(2026, 7, 4, 11));
@@ -232,10 +239,16 @@ public sealed class RuleConstructorServiceTests
 
         AddReviewRow(context, "1005", 2, Utc(2026, 7, 4, 10));
 
+        AddReviewRow(context, "1006", 5, Utc(2026, 7, 4, 10));
+        AddReviewRow(context, "1006", 3, Utc(2026, 7, 4, 11));
+        AddReviewRow(context, "1006", 2, Utc(2026, 7, 4, 12));
+        AddReviewRow(context, "1006", 1, Utc(2026, 7, 4, 13));
+
         AddReviewSummary(context, "1001", recentNegativeCount: 1, averageRating: 4.0m, reviewsCount: 2, marketplaceFeedbackCount: 2, coverageStatus: "full");
         AddReviewSummary(context, "1002", recentNegativeCount: 1, averageRating: 3.2m, reviewsCount: 11, marketplaceFeedbackCount: 11, coverageStatus: "full");
         AddReviewSummary(context, "1003", recentNegativeCount: 1, averageRating: 3.7m, reviewsCount: 3, marketplaceFeedbackCount: 3, coverageStatus: "full");
         AddReviewSummary(context, "1005", recentNegativeCount: 1, averageRating: 2.0m, reviewsCount: 1, marketplaceFeedbackCount: 3, coverageStatus: "incomplete");
+        AddReviewSummary(context, "1006", recentNegativeCount: 3, averageRating: 2.8m, reviewsCount: 4, marketplaceFeedbackCount: 4, coverageStatus: "full");
 
         await context.SaveChangesAsync();
         var service = new RuleConstructorService(context);
@@ -252,9 +265,17 @@ public sealed class RuleConstructorServiceTests
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal(["1001", "1003"], result.Value!.Items.Select(x => x.WbProductId).Order(StringComparer.Ordinal));
-        Assert.All(result.Value.Items.SelectMany(x => x.MatchedFacts).Where(x => x.Id == "bad_recent_reviews"), fact =>
+        Assert.Equal(["1001", "1003", "1006"], result.Value!.Items.Select(x => x.WbProductId).Order(StringComparer.Ordinal));
+        var factsByProduct = result.Value.Items.ToDictionary(x => x.WbProductId, x => x.MatchedFacts.Single(fact => fact.Id == "bad_recent_reviews"), StringComparer.Ordinal);
+        Assert.Equal("Плохие последние отзывы", factsByProduct["1001"].Name);
+        Assert.Equal("1", factsByProduct["1001"].Value);
+        Assert.Equal("Плохие последние отзывы", factsByProduct["1003"].Name);
+        Assert.Equal("1", factsByProduct["1003"].Value);
+        Assert.Equal("Плохие последние отзывы", factsByProduct["1006"].Name);
+        Assert.Equal("3", factsByProduct["1006"].Value);
+        Assert.All(factsByProduct.Values, fact =>
         {
+            Assert.DoesNotContain("есть оценка ниже 4", fact.Value, StringComparison.Ordinal);
             Assert.DoesNotContain("4.9", fact.Value, StringComparison.Ordinal);
             Assert.DoesNotContain("3.2", fact.Value, StringComparison.Ordinal);
             Assert.DoesNotContain("RecentNegativeCount", fact.Value, StringComparison.Ordinal);

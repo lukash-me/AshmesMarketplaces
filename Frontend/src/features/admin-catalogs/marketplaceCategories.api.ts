@@ -7,6 +7,7 @@ export interface WildberriesCategoryNode {
   sourceSubcategory: string;
   path: string;
   searchQuery: string | null;
+  humanSearchQuery: string | null;
   parentId: number | null;
   isLeaf: boolean;
   level: number;

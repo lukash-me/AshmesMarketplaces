@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import Button from '@/shared/ui/Button.vue';
@@ -12,16 +12,19 @@ import MarketFilterSelect from '@/features/parser-products/MarketFilterSelect.vu
 import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
 
 import MarketConcentrationSection from './MarketConcentrationSection.vue';
-import { getPublicMarketConcentration, getPublicMarketConcentrationProducts } from './marketIntelligence.api';
+import { getPublicMarketConcentration, getPublicMarketConcentrationContexts, getPublicMarketConcentrationProducts } from './marketIntelligence.api';
 import {
   buildMarketIntelligenceParams,
-  isMarketIntelligenceSubcategory,
-  marketIntelligenceContexts,
   marketIntelligenceDefaultRegionDest,
   marketIntelligenceDefaultSort,
-  resolveMarketIntelligenceContext
+  marketIntelligenceTopN
 } from './marketIntelligence.contexts';
-import type { PriceQualityPoint, PublicMarketConcentrationSnapshot, PublicMarketIntelligenceParams } from './marketIntelligence.types';
+import type {
+  PriceQualityPoint,
+  PublicMarketConcentrationSnapshot,
+  PublicMarketIntelligenceAvailableContext,
+  PublicMarketIntelligenceParams
+} from './marketIntelligence.types';
 
 type ProductsModalContext = {
   kind: 'seller' | 'brand' | 'root';
@@ -48,6 +51,8 @@ const route = useRoute();
 const router = useRouter();
 
 const selectedSubcategory = ref(readInitialSubcategory());
+const availableContexts = ref<PublicMarketIntelligenceAvailableContext[]>([]);
+const contextsLoaded = ref(false);
 const intelligence = ref<PublicMarketConcentrationSnapshot | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -59,9 +64,18 @@ const productsModalError = ref<string | null>(null);
 const selectedProduct = ref<ParserProductListItem | null>(null);
 const modalSortKey = ref<ModalSortKey>('position');
 const modalSortDirection = ref<ModalSortDirection>('asc');
+let syncingContextSelection = false;
 
-const selectedContext = computed(() => resolveMarketIntelligenceContext(selectedSubcategory.value));
-const nicheOptions = computed(() => marketIntelligenceContexts.map((context) => context.sourceSubcategory));
+const selectedContext = computed(() =>
+  availableContexts.value.find((context) => context.sourceSubcategory === selectedSubcategory.value)
+    ?? availableContexts.value[0]
+    ?? null
+);
+const nicheOptions = computed(() =>
+  availableContexts.value
+    .map((context) => context.sourceSubcategory)
+    .filter((value): value is string => Boolean(value))
+);
 const marketConcentration = computed(() => intelligence.value?.marketConcentration ?? null);
 const modalProducts = computed(() => {
   const context = productsModalContext.value;
@@ -100,19 +114,29 @@ const paginatedModalProducts = computed(() => {
   return sortedModalProducts.value.slice(start, start + MODAL_PAGE_SIZE);
 });
 const modalPaginationItems = computed(() => buildPaginationItems(productsModalPage.value, modalTotalPages.value));
-const requestParams = computed<PublicMarketIntelligenceParams>(() => buildMarketIntelligenceParams(
-  selectedContext.value,
-  {
-    sourceRegionDest: readStringQuery('sourceRegionDest') ?? marketIntelligenceDefaultRegionDest,
-    sort: readStringQuery('sort') ?? marketIntelligenceDefaultSort
+const requestParams = computed<PublicMarketIntelligenceParams | null>(() => {
+  if (!selectedContext.value) {
+    return null;
   }
-));
+
+  return buildMarketIntelligenceParams(
+    selectedContext.value,
+    {
+      sourceRegionDest: readStringQuery('sourceRegionDest') ?? selectedContext.value.sourceRegionDest ?? marketIntelligenceDefaultRegionDest,
+      sort: readStringQuery('sort') ?? selectedContext.value.sort ?? marketIntelligenceDefaultSort
+    }
+  );
+});
 
 onMounted(() => {
   void refresh();
 });
 
 watch(selectedSubcategory, () => {
+  if (syncingContextSelection) {
+    return;
+  }
+
   void applySubcategorySelection();
 });
 
@@ -122,7 +146,15 @@ async function refresh(): Promise<void> {
   closeProductsModal();
 
   try {
-    intelligence.value = await getPublicMarketConcentration(requestParams.value);
+    await loadAvailableContexts();
+
+    const params = requestParams.value;
+    if (availableContexts.value.length === 0 || !params) {
+      intelligence.value = null;
+      return;
+    }
+
+    intelligence.value = await getPublicMarketConcentration(params);
   } catch (requestError) {
     intelligence.value = null;
     error.value = getProblemMessage(requestError, 'Не удалось загрузить концентрацию рынка.');
@@ -131,9 +163,56 @@ async function refresh(): Promise<void> {
   }
 }
 
+async function loadAvailableContexts(): Promise<void> {
+  const contexts = await getPublicMarketConcentrationContexts();
+  availableContexts.value = contexts;
+  contextsLoaded.value = true;
+
+  if (contexts.length === 0) {
+    if (selectedSubcategory.value) {
+      syncingContextSelection = true;
+      selectedSubcategory.value = '';
+      await nextTick();
+      syncingContextSelection = false;
+    }
+
+    return;
+  }
+
+  const requested = readStringQuery('sourceSubcategory');
+  const selected = contexts.find((context) => context.sourceSubcategory === selectedSubcategory.value);
+  const requestedContext = contexts.find((context) => context.sourceSubcategory === requested);
+  const nextContext = selected ?? requestedContext ?? contexts[0];
+
+  if (nextContext?.sourceSubcategory && selectedSubcategory.value !== nextContext.sourceSubcategory) {
+    syncingContextSelection = true;
+    selectedSubcategory.value = nextContext.sourceSubcategory;
+    await nextTick();
+    syncingContextSelection = false;
+  }
+
+  if (requested !== nextContext?.sourceSubcategory) {
+    await router.replace({
+      query: {
+        ...route.query,
+        sourceSubcategory: nextContext?.sourceSubcategory
+      }
+    });
+  }
+}
+
 async function applySubcategorySelection(): Promise<void> {
-  if (!isMarketIntelligenceSubcategory(selectedSubcategory.value)) {
-    selectedSubcategory.value = marketIntelligenceContexts[0].sourceSubcategory;
+  if (availableContexts.value.length === 0) {
+    await loadAvailableContexts();
+  }
+
+  if (availableContexts.value.length === 0) {
+    return;
+  }
+
+  const selected = availableContexts.value.find((context) => context.sourceSubcategory === selectedSubcategory.value);
+  if (!selected) {
+    selectedSubcategory.value = availableContexts.value[0]?.sourceSubcategory ?? '';
     return;
   }
 
@@ -156,6 +235,11 @@ async function applySubcategorySelection(): Promise<void> {
 }
 
 async function openProductsModal(context: ProductsModalContext): Promise<void> {
+  const params = requestParams.value;
+  if (!params) {
+    return;
+  }
+
   productsModalContext.value = context;
   productsModalPage.value = 1;
   selectedProduct.value = null;
@@ -164,7 +248,7 @@ async function openProductsModal(context: ProductsModalContext): Promise<void> {
   productsModalLoading.value = true;
 
   try {
-    concentrationPoints.value = await getPublicMarketConcentrationProducts(requestParams.value, context.kind, context.key);
+    concentrationPoints.value = await getPublicMarketConcentrationProducts(params, context.kind, context.key);
   } catch (requestError) {
     productsModalError.value = getProblemMessage(requestError, 'Не удалось загрузить карточки группы.');
   } finally {
@@ -257,6 +341,7 @@ function closeProduct(): void {
 
 function toParserProductListItem(point: PriceQualityPoint): ParserProductListItem {
   const current = intelligence.value;
+  const context = selectedContext.value;
   const observedAt = current?.observationWindow.latestObservedAtUtc ?? new Date().toISOString();
 
   return {
@@ -276,19 +361,19 @@ function toParserProductListItem(point: PriceQualityPoint): ParserProductListIte
     ratingRounded: null,
     reviewRating: point.rating,
     feedbackCount: point.feedbackCount,
-    sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-    sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
-    sourceQuery: current?.context.query ?? selectedContext.value.query,
+    sourceCategory: current?.context.sourceCategory ?? context?.sourceCategory ?? '',
+    sourceSubcategory: current?.context.sourceSubcategory ?? context?.sourceSubcategory ?? '',
+    sourceQuery: current?.context.query ?? context?.query ?? '',
     thumbnailUrl: point.thumbnailUrl,
     rank: point.position === null ? null : {
       absolutePosition: point.position,
       page: Math.max(1, Math.ceil(point.position / 100)),
       positionOnPage: ((point.position - 1) % 100) + 1,
-      query: current?.context.query ?? selectedContext.value.query,
-      sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
-      sourceRegionDest: current?.context.sourceRegionDest ?? marketIntelligenceDefaultRegionDest,
-      sort: current?.context.sort ?? marketIntelligenceDefaultSort,
+      query: current?.context.query ?? context?.query ?? '',
+      sourceCategory: current?.context.sourceCategory ?? context?.sourceCategory ?? '',
+      sourceSubcategory: current?.context.sourceSubcategory ?? context?.sourceSubcategory ?? '',
+      sourceRegionDest: current?.context.sourceRegionDest ?? context?.sourceRegionDest ?? marketIntelligenceDefaultRegionDest,
+      sort: current?.context.sort ?? context?.sort ?? marketIntelligenceDefaultSort,
       observedAtUtc: observedAt,
       parserRunId: current?.observationWindow.latestRankRunId ?? '',
       rankContextId: current?.observationWindow.latestRankRunId ?? '',
@@ -297,10 +382,10 @@ function toParserProductListItem(point: PriceQualityPoint): ParserProductListIte
     position: {
       state: point.position === null ? 'unknown' : 'observed',
       absolutePosition: point.position,
-      observedRangeLimit: current?.context.topN ?? null,
-      query: current?.context.query ?? selectedContext.value.query,
-      sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
+      observedRangeLimit: current?.context.topN ?? context?.topN ?? marketIntelligenceTopN,
+      query: current?.context.query ?? context?.query ?? '',
+      sourceCategory: current?.context.sourceCategory ?? context?.sourceCategory ?? '',
+      sourceSubcategory: current?.context.sourceSubcategory ?? context?.sourceSubcategory ?? '',
       observedAtUtc: point.position === null ? null : observedAt
     }
   };
@@ -334,10 +419,7 @@ function formatPosition(value: number | null | undefined): string {
 }
 
 function readInitialSubcategory(): string {
-  const raw = readStringQuery('sourceSubcategory');
-  return isMarketIntelligenceSubcategory(raw)
-    ? raw
-    : marketIntelligenceContexts[0].sourceSubcategory;
+  return readStringQuery('sourceSubcategory') ?? '';
 }
 
 function readStringQuery(key: string): string | undefined {
@@ -353,7 +435,7 @@ function readStringQuery(key: string): string | undefined {
       subtitle="Показывает, насколько топ выбранной ниши занят крупными продавцами, брендами и повторяющимися root-группами."
     />
 
-    <section class="mi-controls app-surface">
+    <section v-if="availableContexts.length" class="mi-controls app-surface">
       <div class="mi-controls__fields">
         <MarketFilterSelect
           v-model="selectedSubcategory"
@@ -363,16 +445,18 @@ function readStringQuery(key: string): string | undefined {
           search-placeholder="Найти нишу"
           :options="nicheOptions"
         />
-
-        <Button class="mi-refresh" variant="primary" :loading="loading" @click="refresh">
-          Обновить концентрацию
-        </Button>
       </div>
     </section>
 
     <LoadingState v-if="loading && !intelligence" label="Считаем концентрацию рынка..." />
 
     <EmptyState v-else-if="error" title="Концентрация не загружена" :description="error" />
+
+    <EmptyState
+      v-else-if="contextsLoaded && availableContexts.length === 0"
+      title="Концентрация рынка еще не рассчитана"
+      description="Запустите расчет концентрации рынка или дождитесь планового обновления."
+    />
 
     <MarketConcentrationSection
       v-else
@@ -577,10 +661,6 @@ function readStringQuery(key: string): string | undefined {
   grid-template-columns: minmax(16rem, 1fr) auto;
   gap: var(--space-3);
   align-items: end;
-}
-
-.mi-refresh {
-  min-height: 2.45rem;
 }
 
 .concentration-products-modal {
@@ -895,10 +975,6 @@ function readStringQuery(key: string): string | undefined {
 @media (max-width: 760px) {
   .mi-controls__fields {
     grid-template-columns: 1fr;
-  }
-
-  .mi-refresh {
-    width: 100%;
   }
 
   .concentration-products-modal {

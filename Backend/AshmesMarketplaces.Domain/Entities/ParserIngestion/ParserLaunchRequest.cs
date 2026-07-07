@@ -90,6 +90,15 @@ public sealed class ParserLaunchRequest
         UpdatedAtUtc = completedAtUtc;
     }
 
+    public void Cancel(string? reason, DateTime completedAtUtc)
+    {
+        EnsureUtc(completedAtUtc);
+        Status = ParserLaunchRequestStatuses.Cancelled;
+        CompletedAtUtc = completedAtUtc;
+        Error = NormalizeError(reason ?? "Parser launch was cancelled.");
+        UpdatedAtUtc = completedAtUtc;
+    }
+
     private static string NormalizeError(string? error)
     {
         var normalized = string.IsNullOrWhiteSpace(error) ? "Parser launch failed." : error.Trim();

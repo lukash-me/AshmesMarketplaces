@@ -24,6 +24,10 @@ public sealed class PublicParserObservedLogisticsRefreshService : IPublicParserO
     {
         var stopwatch = Stopwatch.StartNew();
         var eventResponse = await BuildMarketEventsAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(eventResponse.CurrentLogisticsRunId))
+            return ServiceResult<PublicParserObservedLogisticsRefreshResult>.NotFound(
+                "Данные логистики для расчета новых карточек и остатков не найдены.");
+
         var stockDecreaseResponse = BuildStockDecreaseResponse(eventResponse);
         stopwatch.Stop();
 

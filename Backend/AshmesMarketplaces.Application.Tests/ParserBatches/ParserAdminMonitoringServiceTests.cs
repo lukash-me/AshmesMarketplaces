@@ -272,6 +272,42 @@ public sealed class ParserAdminMonitoringServiceTests
     }
 
     [Fact]
+    public async Task GetJournalAsync_returns_failed_launch_without_proxy_run()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var now = new DateTime(2026, 7, 6, 12, 24, 43, DateTimeKind.Utc);
+        var config = SeedConfiguredProxy(context, now);
+        var launch = new ParserLaunchRequest(
+            config.Id,
+            config.ParserInstanceId,
+            ParserLaunchModes.CheckProxy,
+            "proxy-1",
+            3,
+            Guid.NewGuid(),
+            now);
+        launch.MarkRunning(now.AddSeconds(1));
+        launch.MarkFailed("python was not found", now.AddSeconds(2));
+        context.ParserLaunchRequests.Add(launch);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetJournalAsync(1, 50, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var item = Assert.Single(result.Value!);
+        Assert.Equal(launch.Id, item.Id);
+        Assert.Equal(ParserLaunchRequestStatuses.Failed, item.Status);
+        Assert.Equal("launch_failed", item.Phase);
+        Assert.Equal("launch", item.CycleKind);
+        Assert.Equal("proxy-1", item.ProxyKey);
+        Assert.Equal("Платья и сарафаны", item.SourceSubcategory);
+        Assert.Equal(300, item.PlannedProductsCount);
+        Assert.Equal(0, item.DownloadedProductsCount);
+        Assert.Equal("python was not found", item.Error);
+    }
+
+    [Fact]
     public async Task GetInstancesAsync_uses_last_activity_for_interrupted_runtime()
     {
         await using var context = CreateContext();
@@ -340,6 +376,71 @@ public sealed class ParserAdminMonitoringServiceTests
         Assert.Equal(ParserLaunchRequestStatuses.Queued, proxy.Phase);
         Assert.Equal(300, proxy.PlannedProductsCount);
         Assert.Equal(0, proxy.DownloadedProductsCount);
+    }
+
+    [Fact]
+    public async Task GetInstancesAsync_does_not_attach_old_launch_to_new_guid_proxy()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var now = new DateTime(2026, 7, 6, 18, 14, 58, DateTimeKind.Utc);
+        var config = SeedConfiguredProxy(context, now, proxyKey: null);
+        var currentProxy = await context.ParserProxies.SingleAsync();
+        var oldLaunch = new ParserLaunchRequest(
+            config.Id,
+            config.ParserInstanceId,
+            ParserLaunchModes.CheckProxy,
+            "proxy-1",
+            3,
+            Guid.NewGuid(),
+            now.AddHours(-1));
+        oldLaunch.MarkFailed("old launch failed", now.AddMinutes(-58));
+        context.ParserLaunchRequests.Add(oldLaunch);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetInstancesAsync(CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var instance = Assert.Single(result.Value!);
+        var proxy = Assert.Single(instance.Proxies);
+        Assert.Equal(currentProxy.Id.ToString("D"), proxy.ProxyKey);
+        Assert.Equal("configured", proxy.Status);
+        Assert.Equal("idle", proxy.Phase);
+        Assert.Null(proxy.Error);
+        Assert.Equal(0, proxy.PlannedProductsCount);
+        Assert.Equal(0, proxy.DownloadedProductsCount);
+    }
+
+    [Fact]
+    public async Task GetJournalAsync_does_not_fill_deleted_launch_with_current_proxy_data()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var now = new DateTime(2026, 7, 6, 18, 14, 58, DateTimeKind.Utc);
+        var config = SeedConfiguredProxy(context, now, proxyKey: null);
+        var oldLaunch = new ParserLaunchRequest(
+            config.Id,
+            config.ParserInstanceId,
+            ParserLaunchModes.CheckProxy,
+            "proxy-1",
+            3,
+            Guid.NewGuid(),
+            now.AddHours(-1));
+        oldLaunch.MarkFailed("old launch failed", now.AddMinutes(-58));
+        context.ParserLaunchRequests.Add(oldLaunch);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetJournalAsync(1, 50, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var item = Assert.Single(result.Value!);
+        Assert.Equal("proxy-1", item.ProxyKey);
+        Assert.Equal(string.Empty, item.SourceCategory);
+        Assert.Equal("Без ниши", item.SourceSubcategory);
+        Assert.Null(item.EgressIp);
+        Assert.Equal("old launch failed", item.Error);
     }
 
     [Fact]
@@ -459,6 +560,72 @@ public sealed class ParserAdminMonitoringServiceTests
     }
 
     [Fact]
+    public async Task GetInstancesAsync_shows_failed_launch_when_proxy_run_was_not_created()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var now = new DateTime(2026, 7, 6, 12, 24, 43, DateTimeKind.Utc);
+        var config = SeedConfiguredProxy(context, now);
+        var launch = new ParserLaunchRequest(
+            config.Id,
+            config.ParserInstanceId,
+            ParserLaunchModes.CheckProxy,
+            "proxy-1",
+            3,
+            Guid.NewGuid(),
+            now);
+        launch.MarkRunning(now.AddSeconds(1));
+        launch.MarkFailed("python was not found", now.AddSeconds(2));
+        context.ParserLaunchRequests.Add(launch);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetInstancesAsync(CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var proxy = Assert.Single(Assert.Single(result.Value!).Proxies);
+        Assert.Equal(ParserLaunchRequestStatuses.Failed, proxy.Status);
+        Assert.Equal("launch_failed", proxy.Phase);
+        Assert.Equal(300, proxy.PlannedProductsCount);
+        Assert.Null(proxy.Error);
+    }
+
+    [Fact]
+    public async Task GetInstancesAsync_does_not_show_unknown_proxy_run_for_configured_instance()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var now = new DateTime(2026, 7, 6, 19, 0, 0, DateTimeKind.Utc);
+        SeedConfiguredProxy(context, now, "aef8f7a4-f1d2-4144-823d-9889b35b00df");
+        var unknownRun = new ParserProxyRun(
+            "parser-local-01",
+            "cycle-static:proxy-3:category:niche",
+            "cycle-static",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-3",
+            "category",
+            "niche",
+            300,
+            0,
+            null,
+            null,
+            null,
+            now);
+        unknownRun.Fail(300, 0, "Selected subcategory resolved to unexpected proxy.", now.AddSeconds(10));
+        context.ParserProxyRuns.Add(unknownRun);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetInstancesAsync(CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var instance = Assert.Single(result.Value!);
+        var proxy = Assert.Single(instance.Proxies);
+        Assert.Equal("aef8f7a4-f1d2-4144-823d-9889b35b00df", proxy.ProxyKey);
+        Assert.Equal("configured", proxy.Status);
+    }
+
+    [Fact]
     public async Task GetInstancesAsync_shows_latest_actual_cycle_without_preferring_full_old_cycle()
     {
         await using var context = CreateContext();
@@ -549,9 +716,14 @@ public sealed class ParserAdminMonitoringServiceTests
         return role;
     }
 
-    private static ParserInstanceConfiguration SeedConfiguredProxy(ApplicationDbContext context, DateTime now)
+    private static ParserInstanceConfiguration SeedConfiguredProxy(
+        ApplicationDbContext context,
+        DateTime now,
+        string? proxyKey = "proxy-1")
     {
-        var proxy = new ParserProxy("proxy-1", "203.0.113.10", 3128, 1080, "login", "encrypted", now);
+        var proxy = proxyKey is null
+            ? new ParserProxy("203.0.113.10", 3128, 1080, "login", "encrypted", now)
+            : new ParserProxy(proxyKey, "203.0.113.10", 3128, 1080, "login", "encrypted", now);
         context.ParserProxies.Add(proxy);
         context.SaveChanges();
         context.ParserProxyNicheAssignments.Add(new ParserProxyNicheAssignment(

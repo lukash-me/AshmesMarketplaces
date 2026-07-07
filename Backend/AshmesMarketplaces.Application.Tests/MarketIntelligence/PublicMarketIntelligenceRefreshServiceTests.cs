@@ -75,6 +75,56 @@ public sealed class PublicMarketIntelligenceRefreshServiceTests
     }
 
     [Fact]
+    public async Task SnapshotReadService_available_contexts_returns_only_completed_non_empty_latest_snapshots()
+    {
+        await using var context = CreateContext();
+        var older = DateTime.UtcNow.AddHours(-2);
+        var newer = DateTime.UtcNow.AddHours(-1);
+        var failedAt = DateTime.UtcNow;
+
+        context.PublicMarketIntelligenceSnapshots.Add(CreateCompletedSnapshot(
+            "Женщинам",
+            "Платья и сарафаны",
+            "старый запрос",
+            sampleSize: 10,
+            calculatedAtUtc: older));
+        context.PublicMarketIntelligenceSnapshots.Add(CreateCompletedSnapshot(
+            "Женщинам",
+            "Платья и сарафаны",
+            "новый запрос",
+            sampleSize: 12,
+            calculatedAtUtc: newer));
+        context.PublicMarketIntelligenceSnapshots.Add(CreateCompletedSnapshot(
+            "Красота",
+            "Органическая косметика",
+            "органическая косметика",
+            sampleSize: 0,
+            calculatedAtUtc: newer));
+
+        var failed = new PublicMarketIntelligenceSnapshot(
+            "Обувь",
+            "Кеды и кроссовки",
+            "кеды",
+            PublicMarketIntelligenceContextCatalog.SourceRegionDest,
+            PublicMarketIntelligenceContextCatalog.Sort,
+            PublicMarketIntelligenceContextCatalog.TopN,
+            failedAt);
+        failed.MarkFailed(failedAt, "No data.");
+        context.PublicMarketIntelligenceSnapshots.Add(failed);
+        await context.SaveChangesAsync();
+        var service = new PublicMarketIntelligenceSnapshotReadService(context);
+
+        var contexts = await service.GetAvailableContextsAsync(CancellationToken.None);
+
+        var contextDto = Assert.Single(contexts);
+        Assert.Equal("Женщинам", contextDto.SourceCategory);
+        Assert.Equal("Платья и сарафаны", contextDto.SourceSubcategory);
+        Assert.Equal("новый запрос", contextDto.Query);
+        Assert.Equal(12, contextDto.SampleSize);
+        Assert.Equal(newer, contextDto.CalculatedAtUtc);
+    }
+
+    [Fact]
     public async Task ConcentrationRefreshAllAsync_uses_only_contexts_with_rank_observations()
     {
         await using var context = CreateContext();
@@ -93,6 +143,56 @@ public sealed class PublicMarketIntelligenceRefreshServiceTests
         var snapshot = await context.PublicMarketConcentrationSnapshots.SingleAsync();
         Assert.Equal("Платья и сарафаны", snapshot.Query);
         Assert.Equal(PublicMarketConcentrationSnapshot.CompletedStatus, snapshot.Status);
+    }
+
+    [Fact]
+    public async Task ConcentrationReadService_available_contexts_returns_only_completed_non_empty_latest_snapshots()
+    {
+        await using var context = CreateContext();
+        var older = DateTime.UtcNow.AddHours(-2);
+        var newer = DateTime.UtcNow.AddHours(-1);
+        var failedAt = DateTime.UtcNow;
+
+        context.PublicMarketConcentrationSnapshots.Add(CreateCompletedConcentrationSnapshot(
+            "Category",
+            "Niche",
+            "old query",
+            sampleSize: 10,
+            calculatedAtUtc: older));
+        context.PublicMarketConcentrationSnapshots.Add(CreateCompletedConcentrationSnapshot(
+            "Category",
+            "Niche",
+            "new query",
+            sampleSize: 12,
+            calculatedAtUtc: newer));
+        context.PublicMarketConcentrationSnapshots.Add(CreateCompletedConcentrationSnapshot(
+            "Beauty",
+            "Empty niche",
+            "empty query",
+            sampleSize: 0,
+            calculatedAtUtc: newer));
+
+        var failed = new PublicMarketConcentrationSnapshot(
+            "Shoes",
+            "Failed niche",
+            "failed query",
+            PublicMarketIntelligenceContextCatalog.SourceRegionDest,
+            PublicMarketIntelligenceContextCatalog.Sort,
+            PublicMarketIntelligenceContextCatalog.TopN,
+            failedAt);
+        failed.MarkFailed(failedAt, "No data.");
+        context.PublicMarketConcentrationSnapshots.Add(failed);
+        await context.SaveChangesAsync();
+        var service = new PublicMarketConcentrationReadService(context);
+
+        var contexts = await service.GetAvailableContextsAsync(CancellationToken.None);
+
+        var contextDto = Assert.Single(contexts);
+        Assert.Equal("Category", contextDto.SourceCategory);
+        Assert.Equal("Niche", contextDto.SourceSubcategory);
+        Assert.Equal("new query", contextDto.Query);
+        Assert.Equal(12, contextDto.SampleSize);
+        Assert.Equal(newer, contextDto.CalculatedAtUtc);
     }
 
     private static ApplicationDbContext CreateContext()
@@ -176,6 +276,55 @@ public sealed class PublicMarketIntelligenceRefreshServiceTests
                 []),
             new PriceCorridorsDto(0, null, null, null, null, null, null, null, null, null, null, [], string.Empty, []),
             []);
+    }
+
+    private static PublicMarketIntelligenceSnapshot CreateCompletedSnapshot(
+        string sourceCategory,
+        string sourceSubcategory,
+        string query,
+        int sampleSize,
+        DateTime calculatedAtUtc)
+    {
+        var snapshot = new PublicMarketIntelligenceSnapshot(
+            sourceCategory,
+            sourceSubcategory,
+            query,
+            PublicMarketIntelligenceContextCatalog.SourceRegionDest,
+            PublicMarketIntelligenceContextCatalog.Sort,
+            PublicMarketIntelligenceContextCatalog.TopN,
+            calculatedAtUtc);
+        snapshot.MarkCompleted(
+            System.Text.Json.JsonSerializer.Serialize(BuildDto(sourceCategory, sourceSubcategory, query)),
+            sampleSize,
+            calculatedAtUtc,
+            calculatedAtUtc,
+            10);
+        return snapshot;
+    }
+
+    private static PublicMarketConcentrationSnapshot CreateCompletedConcentrationSnapshot(
+        string sourceCategory,
+        string sourceSubcategory,
+        string query,
+        int sampleSize,
+        DateTime calculatedAtUtc)
+    {
+        var snapshot = new PublicMarketConcentrationSnapshot(
+            sourceCategory,
+            sourceSubcategory,
+            query,
+            PublicMarketIntelligenceContextCatalog.SourceRegionDest,
+            PublicMarketIntelligenceContextCatalog.Sort,
+            PublicMarketIntelligenceContextCatalog.TopN,
+            calculatedAtUtc);
+        snapshot.MarkCompleted(
+            System.Text.Json.JsonSerializer.Serialize(new MarketConcentrationDto(sampleSize, 1, 1, 100, 100, 1, 100, [], [], [], [], string.Empty, [])),
+            "[]",
+            sampleSize,
+            calculatedAtUtc,
+            calculatedAtUtc,
+            10);
+        return snapshot;
     }
 
     private sealed class FakeMarketIntelligenceReadService : IPublicMarketIntelligenceReadService

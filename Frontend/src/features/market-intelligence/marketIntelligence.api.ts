@@ -1,6 +1,7 @@
 import { publicHttp } from '@/shared/api/http';
 
 import type {
+  PublicMarketIntelligenceAvailableContext,
   PublicMarketConcentrationSnapshot,
   PublicTopForecastParams,
   PublicTopForecastResponse,
@@ -13,6 +14,16 @@ export async function getPublicMarketIntelligence(
   params: PublicMarketIntelligenceParams
 ): Promise<PublicMarketIntelligence> {
   const response = await publicHttp.get<PublicMarketIntelligence>('/market-intelligence/public', { params });
+  return response.data;
+}
+
+export async function getPublicMarketIntelligenceContexts(): Promise<PublicMarketIntelligenceAvailableContext[]> {
+  const response = await publicHttp.get<PublicMarketIntelligenceAvailableContext[]>('/market-intelligence/public/contexts');
+  return response.data;
+}
+
+export async function getPublicMarketConcentrationContexts(): Promise<PublicMarketIntelligenceAvailableContext[]> {
+  const response = await publicHttp.get<PublicMarketIntelligenceAvailableContext[]>('/market-intelligence/public/concentration/contexts');
   return response.data;
 }
 

@@ -41,6 +41,7 @@ using AshmesMarketplaces.Application.WorkspaceMarketProducts.Services;
 using AshmesMarketplaces.Application.WorkspaceOverview.Services;
 using AshmesMarketplaces.Application.Workspaces.Services;
 using FluentValidation;
+using Microsoft.AspNetCore.DataProtection;
 
 namespace AshmesMarketplaces.API.Extensions;
 
@@ -48,7 +49,16 @@ public static class ApplicationServiceCollectionExtensions
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddDataProtection();
+        var dataProtection = services
+            .AddDataProtection()
+            .SetApplicationName(configuration["DataProtection:ApplicationName"] ?? "AshmesMarketplaces");
+
+        var dataProtectionKeysPath = configuration["DataProtection:KeysPath"];
+        if (!string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+        {
+            Directory.CreateDirectory(dataProtectionKeysPath);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
+        }
 
         services.Configure<WorkspaceMarketProductMediaStorageOptions>(
             configuration.GetSection(WorkspaceMarketProductMediaStorageOptions.SectionName));

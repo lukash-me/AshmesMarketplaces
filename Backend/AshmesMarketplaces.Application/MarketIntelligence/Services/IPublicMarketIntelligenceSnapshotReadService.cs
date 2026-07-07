@@ -8,4 +8,7 @@ public interface IPublicMarketIntelligenceSnapshotReadService
     Task<ServiceResult<PublicMarketIntelligenceDto>> GetAsync(
         PublicMarketIntelligenceQuery query,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>> GetAvailableContextsAsync(
+        CancellationToken cancellationToken);
 }

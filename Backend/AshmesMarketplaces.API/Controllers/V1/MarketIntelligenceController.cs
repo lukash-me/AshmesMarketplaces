@@ -42,6 +42,16 @@ public sealed class MarketIntelligenceController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("public/contexts")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>>> GetPublicContexts(
+        CancellationToken cancellationToken)
+    {
+        var contexts = await _readService.GetAvailableContextsAsync(cancellationToken);
+        return Ok(contexts);
+    }
+
     [HttpGet("public/concentration")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(PublicMarketConcentrationSnapshotDto), StatusCodes.Status200OK)]
@@ -54,6 +64,16 @@ public sealed class MarketIntelligenceController : ControllerBase
     {
         var result = await _concentrationReadService.GetAsync(request, includePoints, cancellationToken);
         return ToActionResult(result);
+    }
+
+    [HttpGet("public/concentration/contexts")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>>> GetPublicConcentrationContexts(
+        CancellationToken cancellationToken)
+    {
+        var contexts = await _concentrationReadService.GetAvailableContextsAsync(cancellationToken);
+        return Ok(contexts);
     }
 
     [HttpGet("public/concentration/products")]

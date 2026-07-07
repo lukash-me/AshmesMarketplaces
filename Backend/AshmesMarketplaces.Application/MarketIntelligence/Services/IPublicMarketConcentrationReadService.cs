@@ -5,6 +5,9 @@ namespace AshmesMarketplaces.Application.MarketIntelligence.Services;
 
 public interface IPublicMarketConcentrationReadService
 {
+    Task<IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>> GetAvailableContextsAsync(
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<PublicMarketConcentrationSnapshotDto>> GetAsync(
         PublicMarketIntelligenceQuery query,
         bool includePoints,

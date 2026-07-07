@@ -3,6 +3,7 @@ using System.Text.Json;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketIntelligence.Dtos;
 using AshmesMarketplaces.DataAccess;
+using AshmesMarketplaces.Domain.Entities.Marketplaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace AshmesMarketplaces.Application.MarketIntelligence.Services;
@@ -18,6 +19,56 @@ public sealed class PublicMarketConcentrationReadService : IPublicMarketConcentr
     public PublicMarketConcentrationReadService(ApplicationDbContext dbContext)
     {
         _dbContext = dbContext;
+    }
+
+    public async Task<IReadOnlyList<PublicMarketIntelligenceContextAvailabilityDto>> GetAvailableContextsAsync(
+        CancellationToken cancellationToken)
+    {
+        var snapshots = await _dbContext.PublicMarketConcentrationSnapshots
+            .AsNoTracking()
+            .Where(x =>
+                x.Status == PublicMarketConcentrationSnapshot.CompletedStatus
+                && x.CalculatedAtUtc != null
+                && x.SampleSize > 0)
+            .OrderBy(x => x.SourceSubcategory)
+            .ThenByDescending(x => x.CalculatedAtUtc)
+            .Select(x => new
+            {
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.Query,
+                x.SourceRegionDest,
+                x.Sort,
+                x.TopN,
+                x.SampleSize,
+                x.CalculatedAtUtc,
+                x.LatestObservedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return snapshots
+            .GroupBy(
+                x => new
+                {
+                    x.SourceCategory,
+                    x.SourceSubcategory,
+                    x.SourceRegionDest,
+                    x.Sort,
+                    x.TopN
+                })
+            .Select(x => x.First())
+            .OrderBy(x => x.SourceSubcategory, StringComparer.Ordinal)
+            .Select(x => new PublicMarketIntelligenceContextAvailabilityDto(
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.Query,
+                x.SourceRegionDest,
+                x.Sort,
+                x.TopN,
+                x.SampleSize,
+                x.CalculatedAtUtc,
+                x.LatestObservedAtUtc))
+            .ToList();
     }
 
     public async Task<ServiceResult<PublicMarketConcentrationSnapshotDto>> GetAsync(

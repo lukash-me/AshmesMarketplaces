@@ -8,6 +8,7 @@ using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.Access;
 using AshmesMarketplaces.Domain.Entities.ParserIngestion;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 using Xunit;
 
 namespace AshmesMarketplaces.Application.Tests.ParserBatches;
@@ -26,10 +27,11 @@ public sealed class ParserProxyManagementServiceTests
             CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal("proxy-1", result.Value!.Key);
+        Assert.Equal(result.Value!.Id.ToString("D"), result.Value.Key);
         Assert.True(result.Value.HasPassword);
         Assert.Null(result.Value.Assignment);
         var stored = await context.ParserProxies.SingleAsync();
+        Assert.Equal(stored.Id.ToString("D"), stored.Key);
         Assert.NotEqual("secret", stored.EncryptedPassword);
     }
 
@@ -106,8 +108,8 @@ public sealed class ParserProxyManagementServiceTests
             new CreateParserProxyRequest("10.0.0.2", 8080, 1080, "user", "secret2", 8194),
             CancellationToken.None);
 
-        var proxy1 = await context.ParserProxies.SingleAsync(x => x.Key == "proxy-1");
-        var proxy2 = await context.ParserProxies.SingleAsync(x => x.Key == "proxy-2");
+        var proxy1 = await context.ParserProxies.OrderBy(x => x.CreatedAtUtc).FirstAsync();
+        var proxy2 = await context.ParserProxies.OrderBy(x => x.CreatedAtUtc).Skip(1).FirstAsync();
         var now = DateTime.UtcNow;
         var localInstance = new ParserInstanceConfiguration("parser-local-01", "Локальный parser", ParserInstanceHostKinds.Local, now);
         var secondInstance = new ParserInstanceConfiguration("parser-local-02", "Второй parser", ParserInstanceHostKinds.Local, now);
@@ -120,13 +122,60 @@ public sealed class ParserProxyManagementServiceTests
 
         Assert.True(result.IsSuccess);
         var runtimeProxy = Assert.Single(result.Value!.Proxies);
-        Assert.Equal("proxy-1", runtimeProxy.Key);
+        Assert.Equal(proxy1.Id.ToString("D"), runtimeProxy.Key);
         Assert.Equal("http://10.0.0.1:8080", runtimeProxy.BaseUrl);
         Assert.Equal("secret1", runtimeProxy.Credentials!.Password);
         var niche = Assert.Single(result.Value.Niches);
-        Assert.Equal("proxy-1", niche.ProxyKey);
+        Assert.Equal(proxy1.Id.ToString("D"), niche.ProxyKey);
         Assert.Equal(niche.SourceSubcategory, niche.ParserSearchText);
         Assert.NotEqual(niche.SearchQuery, niche.ParserSearchText);
+    }
+
+    [Fact]
+    public async Task RuntimeAssignments_returns_bad_request_when_proxy_password_cannot_be_decrypted()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var createService = CreateService(context, adminRole.Id);
+        await createService.CreateAsync(
+            new CreateParserProxyRequest("10.0.0.1", 8080, 1080, "user", "secret1", 8194),
+            CancellationToken.None);
+
+        var proxy = await context.ParserProxies.SingleAsync();
+        var now = DateTime.UtcNow;
+        var localInstance = new ParserInstanceConfiguration("parser-local-01", "Local parser", ParserInstanceHostKinds.Local, now);
+        context.ParserInstanceConfigurations.Add(localInstance);
+        context.ParserInstanceProxyAssignments.Add(new ParserInstanceProxyAssignment(localInstance.Id, proxy.Id, now));
+        await context.SaveChangesAsync();
+        var runtimeService = CreateService(context, adminRole.Id, new ThrowingSecretProtector());
+
+        var result = await runtimeService.GetRuntimeAssignmentsAsync("parser-local-01", CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ServiceErrorType.BadRequest, result.Error!.Type);
+        Assert.Contains("unreadable password", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CreateAsync_does_not_reuse_deleted_proxy_key()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var service = CreateService(context, adminRole.Id);
+        var first = await service.CreateAsync(
+            new CreateParserProxyRequest("10.0.0.1", 8080, 1080, "user", "secret", 8194),
+            CancellationToken.None);
+        Assert.True(first.IsSuccess);
+
+        var deleteResult = await service.DeleteAsync(first.Value!.Id, CancellationToken.None);
+        var second = await service.CreateAsync(
+            new CreateParserProxyRequest("10.0.0.2", 8080, 1080, "user", "secret", 8194),
+            CancellationToken.None);
+
+        Assert.True(deleteResult.IsSuccess);
+        Assert.True(second.IsSuccess);
+        Assert.NotEqual(first.Value.Key, second.Value!.Key);
+        Assert.Equal(second.Value.Id.ToString("D"), second.Value.Key);
     }
 
     [Fact]
@@ -178,13 +227,42 @@ public sealed class ParserProxyManagementServiceTests
         Assert.Equal(ServiceErrorType.Forbidden, result.Error!.Type);
     }
 
-    private static ParserProxyManagementService CreateService(ApplicationDbContext context, Guid roleId)
+    [Fact]
+    public async Task DeleteAsync_removes_proxy_and_assignments()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var service = CreateService(context, adminRole.Id);
+        var created = await service.CreateAsync(
+            new CreateParserProxyRequest("10.0.0.1", 8080, 1080, "user", "secret", 8194),
+            CancellationToken.None);
+        var now = DateTime.UtcNow;
+        var instance = new ParserInstanceConfiguration("parser-local-01", "Local parser", ParserInstanceHostKinds.Local, now);
+        context.ParserInstanceConfigurations.Add(instance);
+        context.ParserInstanceProxyAssignments.Add(new ParserInstanceProxyAssignment(instance.Id, created.Value!.Id, now));
+        await context.SaveChangesAsync();
+
+        var deleteResult = await service.DeleteAsync(created.Value.Id, CancellationToken.None);
+        var listResult = await service.GetAdminListAsync(CancellationToken.None);
+
+        Assert.True(deleteResult.IsSuccess);
+        Assert.True(listResult.IsSuccess);
+        Assert.Empty(listResult.Value!);
+        Assert.Empty(await context.ParserProxies.ToListAsync());
+        Assert.Empty(await context.ParserProxyNicheAssignments.ToListAsync());
+        Assert.Empty(await context.ParserInstanceProxyAssignments.ToListAsync());
+    }
+
+    private static ParserProxyManagementService CreateService(
+        ApplicationDbContext context,
+        Guid roleId,
+        IParserProxySecretProtector? secretProtector = null)
     {
         return new ParserProxyManagementService(
             context,
             new TestCurrentUser(roleId),
             new TestCategoryCatalogService(),
-            new TestSecretProtector());
+            secretProtector ?? new TestSecretProtector());
     }
 
     private static async Task<Role> SeedRoleAsync(ApplicationDbContext context, string name)
@@ -341,6 +419,14 @@ public sealed class ParserProxyManagementServiceTests
         public string Unprotect(string protectedValue) => protectedValue.Replace("protected::", string.Empty, StringComparison.Ordinal);
     }
 
+    private sealed class ThrowingSecretProtector : IParserProxySecretProtector
+    {
+        public string Protect(string value) => $"protected::{value}";
+
+        public string Unprotect(string protectedValue) =>
+            throw new CryptographicException("The key was not found in the key ring.");
+    }
+
     private sealed class TestCategoryCatalogService : IWildberriesCategoryCatalogService
     {
         private static readonly IReadOnlyList<WildberriesCategoryNodeDto> Leaves =
@@ -352,6 +438,7 @@ public sealed class ParserProxyManagementServiceTests
                 "Кеды и кроссовки",
                 "Обувь / Мужская / Кеды и кроссовки",
                 "menu_redirect_subject_v2_8194 мужские кеды и кроссовки",
+                "human search",
                 100,
                 true,
                 2)

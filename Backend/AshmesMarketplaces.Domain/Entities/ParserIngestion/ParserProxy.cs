@@ -7,7 +7,18 @@ public sealed class ParserProxy
     private ParserProxy() { }
 
     public ParserProxy(
-        string key,
+        string ip,
+        int httpPort,
+        int socksPort,
+        string login,
+        string encryptedPassword,
+        DateTime nowUtc)
+        : this(null, ip, httpPort, socksPort, login, encryptedPassword, nowUtc)
+    {
+    }
+
+    public ParserProxy(
+        string? key,
         string ip,
         int httpPort,
         int socksPort,
@@ -15,8 +26,6 @@ public sealed class ParserProxy
         string encryptedPassword,
         DateTime nowUtc)
     {
-        if (string.IsNullOrWhiteSpace(key))
-            throw new ArgumentException("Proxy key is required.", nameof(key));
         if (string.IsNullOrWhiteSpace(ip))
             throw new ArgumentException("Proxy IP is required.", nameof(ip));
         if (httpPort is < 1 or > 65535)
@@ -31,7 +40,7 @@ public sealed class ParserProxy
         DateTimeUtc.EnsureUtc(nowUtc, nameof(nowUtc));
 
         Id = Guid.NewGuid();
-        Key = key.Trim();
+        Key = string.IsNullOrWhiteSpace(key) ? Id.ToString("D") : key.Trim();
         Ip = ip.Trim();
         HttpPort = httpPort;
         SocksPort = socksPort;

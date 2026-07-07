@@ -28,6 +28,17 @@ public sealed record PublicMarketIntelligenceDto(
     PriceCorridorsDto PriceCorridors,
     IReadOnlyList<string> Limitations);
 
+public sealed record PublicMarketIntelligenceContextAvailabilityDto(
+    string? SourceCategory,
+    string? SourceSubcategory,
+    string Query,
+    string? SourceRegionDest,
+    string? Sort,
+    int TopN,
+    int SampleSize,
+    DateTime? CalculatedAtUtc,
+    DateTime? LatestObservedAtUtc);
+
 public sealed record PublicMarketConcentrationSnapshotDto(
     PublicMarketContextDto Context,
     ObservationWindowDto ObservationWindow,

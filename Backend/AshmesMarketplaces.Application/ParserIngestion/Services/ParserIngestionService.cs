@@ -2645,7 +2645,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
     {
         source.ThrowIfInvalid();
         var row = source.Payload.RootElement;
-        var attribution = RequiredRootAttribution(row);
+        var attribution = RequiredReviewAttribution(row);
         return new ParserReviewRow(
             runId,
             fileId,
@@ -2690,7 +2690,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
     {
         source.ThrowIfInvalid();
         var row = source.Payload.RootElement;
-        var attribution = RequiredRootAttribution(row);
+        var attribution = RequiredReviewAttribution(row);
         return new ParserReviewReplyRow(
             runId,
             fileId,
@@ -2724,10 +2724,10 @@ public sealed partial class ParserIngestionService : IParserIngestionService
             flags.IsFullHistoryUnknown);
     }
 
-    private static string RequiredRootAttribution(JsonElement row)
+    private static string RequiredReviewAttribution(JsonElement row)
     {
         var attribution = RequiredString(row, "review_attribution_mode");
-        if (!string.Equals(attribution, "root_payload", StringComparison.Ordinal))
+        if (attribution is not ("root_payload" or "product_full" or "root_variant_filtered"))
             throw new InvalidDataException($"Unsupported review attribution mode '{attribution}'.");
         return attribution;
     }

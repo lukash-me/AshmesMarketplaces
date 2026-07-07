@@ -7,6 +7,7 @@ public sealed record WildberriesCategoryNodeDto(
     string SourceSubcategory,
     string Path,
     string? SearchQuery,
+    string? HumanSearchQuery,
     long? ParentId,
     bool IsLeaf,
     int Level);

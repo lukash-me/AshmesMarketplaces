@@ -21,6 +21,68 @@ Public routing:
 
 No public route exists for PostgreSQL, Intelligence, or the analytics worker.
 
+## Local Full Docker Stack
+
+There are two local startup modes:
+
+| Mode | Command | Purpose |
+| --- | --- | --- |
+| Fast dev | `scripts/dev/start-dev.ps1` | Docker infrastructure plus local `dotnet run` API, local `AnalyticsWorker`, and Vite frontend. |
+| Full Docker stack | `scripts/dev/start-docker-stack.ps1` | Builds and runs frontend, API, analytics worker, intelligence, and infrastructure through `docker-compose.local.yml`. |
+
+Use full Docker stack mode when validating CI/CD behavior locally:
+
+```powershell
+scripts/dev/start-docker-stack.ps1
+```
+
+This starts infrastructure, applies EF migrations through the `migrator` service, and starts `api`, `analytics-worker`, and `frontend`. It preserves Docker volumes, so PostgreSQL, MinIO, Redis, uploads, and pgAdmin data survive restarts.
+
+To stop the local full stack without deleting data:
+
+```powershell
+scripts/dev/stop-docker-stack.ps1
+```
+
+Before risky local operations, create a PostgreSQL backup:
+
+```powershell
+scripts/dev/backup-docker-postgres.ps1
+```
+
+Restore a local PostgreSQL backup:
+
+```powershell
+scripts/dev/restore-docker-postgres.ps1 .dev/backups/<file>.dump
+```
+
+Destructive reset is intentionally not the default restart path. It deletes local Docker volumes and requires explicit confirmation:
+
+```powershell
+scripts/dev/reset-docker-stack.ps1 -DestroyVolumes
+```
+
+Run destructive reset only when you intentionally want an empty local database and empty local object/storage volumes.
+
+Expected local endpoints:
+
+- Frontend: `http://localhost:5173`
+- API health: `http://localhost:5019/api/v1/health`
+- Swagger: `http://localhost:5019/swagger`
+- Intelligence: `http://localhost:8020/health/live`
+
+If manual admin calculations remain in `queued`, check `analytics-worker` first. It owns public calculation requests, parser batch processing, parser launch processing, and parser log monitoring.
+
+Core services:
+
+| Service | Responsibility |
+| --- | --- |
+| `frontend` | Vue UI served by nginx. |
+| `api` | HTTP API and auth. |
+| `analytics-worker` | Queues, scheduled/manual calculations, parser launch/batch/log processing. |
+| `intelligence` | Intelligence HTTP service for ML/rule-based modules. |
+| `postgres`, `redis`, `minio` | Storage and infrastructure. |
+
 ## 2. Manual VPS Prerequisites
 
 Before deploying:
@@ -143,7 +205,10 @@ For later deployments:
 ./deploy/docker/scripts/build.sh
 ./deploy/docker/scripts/migrate.sh
 ./deploy/docker/scripts/up.sh
+./deploy/docker/scripts/smoke.sh
 ```
+
+Future CI/CD should run the same sequence: checkout or unpack the reviewed release, validate the environment file, build images, run migrations explicitly, start services, and run smoke checks. Rollback should redeploy the previous reviewed image/tag and rerun `up.sh`; migrations remain an explicit release decision and are not applied automatically by API or worker startup.
 
 Run the migrator only when applying reviewed migrations. The D2 migrator restores `dotnet-ef` at runtime from `.config/dotnet-tools.json`; this is acceptable for the MVP but should be replaced later by a dedicated migrator image or EF bundle.
 

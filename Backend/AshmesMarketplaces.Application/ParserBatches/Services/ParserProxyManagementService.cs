@@ -6,6 +6,7 @@ using AshmesMarketplaces.Application.ParserBatches.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.ParserIngestion;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 
 namespace AshmesMarketplaces.Application.ParserBatches.Services;
 
@@ -64,9 +65,7 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
             return ServiceResult<ParserProxyDto>.BadRequest(validation);
 
         var now = DateTime.UtcNow;
-        var key = await NextProxyKeyAsync(cancellationToken);
         var proxy = new ParserProxy(
-            key,
             request.Ip!,
             request.HttpPort,
             request.SocksPort,
@@ -171,7 +170,17 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
         if (proxy is null)
             return ServiceResult.NotFound("Parser proxy was not found.");
 
-        proxy.Disable(DateTime.UtcNow);
+        var instanceAssignments = await _dbContext.ParserInstanceProxyAssignments
+            .Where(x => x.ProxyId == id)
+            .ToListAsync(cancellationToken);
+
+        _dbContext.ParserInstanceProxyAssignments.RemoveRange(instanceAssignments);
+        if (proxy.Assignment is not null)
+        {
+            _dbContext.ParserProxyNicheAssignments.Remove(proxy.Assignment);
+        }
+
+        _dbContext.ParserProxies.Remove(proxy);
         await _dbContext.SaveChangesAsync(cancellationToken);
         return ServiceResult.Success();
     }
@@ -222,7 +231,17 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
         var runtimeNiches = new List<ParserRuntimeNicheAssignmentDto>();
         foreach (var proxy in launchable)
         {
-            var password = _secretProtector.Unprotect(proxy.EncryptedPassword);
+            string password;
+            try
+            {
+                password = _secretProtector.Unprotect(proxy.EncryptedPassword);
+            }
+            catch (CryptographicException)
+            {
+                return ServiceResult<ParserRuntimeProxyAssignmentsDto>.BadRequest(
+                    $"Proxy '{proxy.Key}' has an unreadable password. Re-enter and save the proxy password in admin UI.");
+            }
+
             runtimeProxies.Add(new ParserRuntimeProxyDefinitionDto(
                 proxy.Key,
                 "http-proxy",
@@ -346,24 +365,6 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
             return "Proxy password is required.";
 
         return null;
-    }
-
-    private async Task<string> NextProxyKeyAsync(CancellationToken cancellationToken)
-    {
-        var keys = await _dbContext.ParserProxies
-            .AsNoTracking()
-            .Select(x => x.Key)
-            .ToListAsync(cancellationToken);
-
-        var max = keys
-            .Select(x => x.StartsWith("proxy-", StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(x["proxy-".Length..], out var number)
-                    ? number
-                    : 0)
-            .DefaultIfEmpty(0)
-            .Max();
-
-        return $"proxy-{max + 1}";
     }
 
     private async Task<ServiceResult<WildberriesCategoryNodeDto>> ResolveLeafCategoryAsync(

@@ -33,7 +33,7 @@ onBeforeUnmount(() => {
   stopPolling();
 });
 
-async function loadCalculations() {
+async function loadCalculations(): Promise<void> {
   loading.value = true;
   error.value = null;
 
@@ -46,12 +46,12 @@ async function loadCalculations() {
   }
 }
 
-async function refresh() {
+async function refresh(): Promise<void> {
   await loadCalculations();
   syncPolling();
 }
 
-async function runNow(calculation: AdminCalculation) {
+async function runNow(calculation: AdminCalculation): Promise<void> {
   if (!calculation.canRunManually || isCalculationRunning(calculation)) {
     return;
   }
@@ -72,21 +72,21 @@ async function runNow(calculation: AdminCalculation) {
   }
 }
 
-function setMode(mode: CalculationMode) {
+function setMode(mode: CalculationMode): void {
   activeMode.value = mode;
   message.value = null;
   error.value = null;
 }
 
-function openScenarios(calculation: AdminCalculation) {
+function openScenarios(calculation: AdminCalculation): void {
   scenarioCalculation.value = calculation;
 }
 
-function closeScenarios() {
+function closeScenarios(): void {
   scenarioCalculation.value = null;
 }
 
-function syncPolling() {
+function syncPolling(): void {
   if (hasActiveManualRun.value) {
     if (pollingTimer === null) {
       pollingTimer = window.setInterval(() => {
@@ -99,7 +99,7 @@ function syncPolling() {
   stopPolling();
 }
 
-function stopPolling() {
+function stopPolling(): void {
   if (pollingTimer !== null) {
     window.clearInterval(pollingTimer);
     pollingTimer = null;
@@ -122,6 +122,22 @@ function isActiveStatus(status?: string | null): boolean {
   return status === 'queued' || status === 'running';
 }
 
+function isNoDataStatus(status?: string | null): boolean {
+  return status === 'no_data';
+}
+
+function scheduledDiagnosticClass(calculation: AdminCalculation): string {
+  return isNoDataStatus(calculation.lastScheduledStatus)
+    ? 'admin-calculations__inline-note'
+    : 'admin-calculations__inline-error';
+}
+
+function manualDiagnosticClass(calculation: AdminCalculation): string {
+  return isNoDataStatus(calculation.lastManualRun?.status)
+    ? 'admin-calculations__inline-note'
+    : 'admin-calculations__inline-error';
+}
+
 function statusText(status?: string | null): string {
   switch (status) {
     case 'queued':
@@ -132,6 +148,8 @@ function statusText(status?: string | null): string {
       return 'Завершен';
     case 'failed':
       return 'Ошибка';
+    case 'no_data':
+      return 'Нет данных';
     case 'pending':
       return 'Ожидает';
     default:
@@ -258,10 +276,13 @@ function errorMessage(err: unknown): string {
           </div>
         </div>
 
-        <div v-if="!isOnDemand(calculation) && calculation.lastScheduledError" class="admin-calculations__inline-error">
+        <div
+          v-if="!isOnDemand(calculation) && calculation.lastScheduledError"
+          :class="scheduledDiagnosticClass(calculation)"
+        >
           {{ calculation.lastScheduledError }}
         </div>
-        <div v-if="calculation.lastManualRun?.error" class="admin-calculations__inline-error">
+        <div v-if="calculation.lastManualRun?.error" :class="manualDiagnosticClass(calculation)">
           {{ calculation.lastManualRun.error }}
         </div>
 
@@ -545,6 +566,7 @@ button.admin-calculations__mode-tab--active {
 
 .admin-calculations__notice,
 .admin-calculations__inline-error,
+.admin-calculations__inline-note,
 .admin-calculations__empty {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -568,6 +590,12 @@ button.admin-calculations__mode-tab--active {
   border-color: var(--state-danger-border);
   background: var(--color-danger-soft);
   color: var(--state-danger-text);
+}
+
+.admin-calculations__inline-note {
+  border-color: rgba(100, 116, 139, 0.28);
+  background: rgba(100, 116, 139, 0.08);
+  color: #475569;
 }
 
 .admin-calculations__modal {

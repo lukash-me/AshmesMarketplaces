@@ -20,6 +20,8 @@ public sealed class AdminCalculationService : IAdminCalculationService
 
     private static readonly ISet<string> ManuallyRunnableScheduleKeys = new HashSet<string>(StringComparer.Ordinal)
     {
+        PublicAnalysisSchedule.MarketConcentrationScheduleKey,
+        PublicAnalysisSchedule.MarketIntelligenceScheduleKey,
         PublicAnalysisSchedule.MarketLogisticsEventsScheduleKey,
         PublicAnalysisSchedule.ProductAvailabilityScheduleKey,
         PublicAnalysisSchedule.ParserCurrentProductsScheduleKey
@@ -128,7 +130,7 @@ public sealed class AdminCalculationService : IAdminCalculationService
         var result = schedules
             .Select(schedule =>
             {
-                var descriptor = ResolveDescriptor(schedule.ScheduleKey);
+                var descriptor = ResolveAdminDescriptor(schedule.ScheduleKey);
                 manualBySchedule.TryGetValue(schedule.ScheduleKey, out var manualRun);
                 return new AdminCalculationDto(
                     schedule.ScheduleKey,
@@ -171,7 +173,7 @@ public sealed class AdminCalculationService : IAdminCalculationService
         if (!ManuallyRunnableScheduleKeys.Contains(normalizedScheduleKey))
         {
             return ServiceResult<AdminCalculationManualRunDto>.BadRequest(
-                "Вручную сейчас можно запустить только расчеты «Новые карточки», «Доступность товара» и «Текущие карточки parser-а».");
+                "Вручную сейчас можно запустить только расчеты «Карта цены и качества», «Концентрация рынка», «Новые карточки», «Доступность товара» и «Текущие карточки parser-а».");
         }
 
         var scheduleExists = await _dbContext.PublicAnalysisSchedules
@@ -219,6 +221,33 @@ public sealed class AdminCalculationService : IAdminCalculationService
         return string.Equals(roleName, AdminRoleName, StringComparison.OrdinalIgnoreCase)
             ? ServiceResult.Success()
             : ServiceResult.Forbidden("Admin role is required.");
+    }
+
+    private static CalculationDescriptor ResolveAdminDescriptor(string scheduleKey)
+    {
+        if (string.Equals(scheduleKey, PublicAnalysisSchedule.MarketIntelligenceScheduleKey, StringComparison.Ordinal))
+        {
+            return new CalculationDescriptor(
+                "Карта цены и качества",
+                "Обновляет публичную рыночную аналитику по цене и качеству.",
+                "Ручной запуск пересчитывает публичные snapshot-ы карты цены и качества тем же механизмом, что и расписание. Плановое время следующего запуска при этом не меняется.",
+                true,
+                ScheduledExecutionMode,
+                DefaultScenarios);
+        }
+
+        if (string.Equals(scheduleKey, PublicAnalysisSchedule.MarketConcentrationScheduleKey, StringComparison.Ordinal))
+        {
+            return new CalculationDescriptor(
+                "Концентрация рынка",
+                "Обновляет публичную аналитику концентрации рынка.",
+                "Ручной запуск пересчитывает публичные snapshot-ы концентрации рынка тем же механизмом, что и расписание. Плановое время следующего запуска при этом не меняется.",
+                true,
+                ScheduledExecutionMode,
+                DefaultScenarios);
+        }
+
+        return ResolveDescriptor(scheduleKey);
     }
 
     private static CalculationDescriptor ResolveDescriptor(string scheduleKey) =>

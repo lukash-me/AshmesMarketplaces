@@ -6,6 +6,7 @@ import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
 import {
+  cancelParserAdminLaunch,
   createParserAdminInstanceConfiguration,
   createParserAdminProxy,
   deleteParserAdminInstanceConfiguration,
@@ -74,7 +75,9 @@ const instanceModalOpen = ref(false);
 const launchModalOpen = ref(false);
 const detailsModalOpen = ref(false);
 const rollbackModalOpen = ref(false);
+const deleteProxyModalOpen = ref(false);
 const editingProxy = ref<ParserProxy | null>(null);
+const deletingProxy = ref<ParserProxy | null>(null);
 const editingInstance = ref<ParserInstanceConfiguration | null>(null);
 const launchInstance = ref<ParserAdminInstance | null>(null);
 const launchMode = ref<LaunchMode>('limited_all');
@@ -86,6 +89,7 @@ const rollbackPreview = ref<ParserRunRollbackPreview | null>(null);
 const rollbackResult = ref<ParserRunRollbackResponse | null>(null);
 const loadingRollbackPreview = ref(false);
 const rollingBack = ref(false);
+const deletingProxyInProgress = ref(false);
 const pollingTimerId = ref<number | null>(null);
 
 const proxyForm = reactive({
@@ -308,8 +312,16 @@ function isProxyLaunchActive(proxy: ParserAdminProxyRun): boolean {
     ['queued', 'wb_preflight', 'ranges', 'download'].includes(proxy.phase);
 }
 
+function canCancelLaunch(proxy: ParserAdminProxyRun): boolean {
+  return proxy.cycleKind === 'launch' && (proxy.status === 'queued' || proxy.status === 'running');
+}
+
 function isInstanceLaunchActive(instance: ParserAdminInstance): boolean {
   return instance.proxies.some(isProxyLaunchActive);
+}
+
+function canLaunchInstance(instance: ParserAdminInstance): boolean {
+  return launchableProxiesFor(instance).length > 0 && !isInstanceLaunchActive(instance);
 }
 
 function openLaunchModal(instance: ParserAdminInstance, mode: LaunchMode, proxyKey?: string): void {
@@ -318,7 +330,7 @@ function openLaunchModal(instance: ParserAdminInstance, mode: LaunchMode, proxyK
     if (proxy && isProxyLaunchActive(proxy)) {
       return;
     }
-  } else if (isInstanceLaunchActive(instance)) {
+  } else if (!canLaunchInstance(instance)) {
     return;
   }
 
@@ -389,6 +401,27 @@ async function submitLaunch(): Promise<void> {
   }
 }
 
+async function cancelLaunch(proxy: ParserAdminProxyRun): Promise<void> {
+  if (!canCancelLaunch(proxy)) {
+    return;
+  }
+
+  if (!window.confirm(parserAdminTexts.launch.cancelConfirm)) {
+    return;
+  }
+
+  try {
+    await cancelParserAdminLaunch(proxy.id);
+    launchMessage.value = parserAdminTexts.launch.cancelled;
+    window.setTimeout(() => {
+      launchMessage.value = '';
+    }, 5000);
+    await loadAll();
+  } catch (exception) {
+    error.value = getErrorMessage(exception);
+  }
+}
+
 function applyQueuedLaunchProjection(launch: ParserLaunchRequest): void {
   const requestedAtUtc = launch.requestedAtUtc;
   const plannedProductsCount = launch.mode === 'full_all' ? 0 : Math.max(0, launch.batchLimit ?? 0) * 100;
@@ -404,8 +437,10 @@ function applyQueuedLaunchProjection(launch: ParserLaunchRequest): void {
 
       return {
         ...proxy,
-        id: `launch:${launch.id}:${proxy.proxyKey}`,
-        externalProxyRunId: '',
+        id: launch.id,
+        externalProxyRunId: `launch:${launch.id}:${proxy.proxyKey}`,
+        parserCycleId: '',
+        cycleKind: 'launch',
         status: 'queued',
         phase: 'queued',
         plannedProductsCount,
@@ -633,16 +668,36 @@ async function saveProxy(): Promise<void> {
   }
 }
 
-async function disableProxy(proxy: ParserProxy): Promise<void> {
-  if (!window.confirm(`${parserAdminTexts.actions.disable} ${proxy.key}?`)) {
+function openDeleteProxyModal(proxy: ParserProxy): void {
+  deletingProxy.value = proxy;
+  deleteProxyModalOpen.value = true;
+  error.value = '';
+}
+
+function closeDeleteProxyModal(): void {
+  if (deletingProxyInProgress.value) {
     return;
   }
 
+  deleteProxyModalOpen.value = false;
+  deletingProxy.value = null;
+}
+
+async function submitDeleteProxy(): Promise<void> {
+  if (!deletingProxy.value) {
+    return;
+  }
+
+  deletingProxyInProgress.value = true;
   try {
-    await deleteParserAdminProxy(proxy.id);
+    await deleteParserAdminProxy(deletingProxy.value.id);
+    deleteProxyModalOpen.value = false;
+    deletingProxy.value = null;
     await loadAll();
   } catch (exception) {
     error.value = getErrorMessage(exception);
+  } finally {
+    deletingProxyInProgress.value = false;
   }
 }
 
@@ -750,6 +805,15 @@ function formatProxyIpTooltip(proxy: ParserAdminProxyRun): string {
   return proxy.egressIp ? `IP: ${proxy.egressIp}` : parserAdminTexts.values.ipUnavailable;
 }
 
+function formatProxyKey(value: string | null | undefined): string {
+  if (!value) {
+    return parserAdminTexts.values.dash;
+  }
+
+  const isGuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  return isGuid ? value.split('-')[0] : value;
+}
+
 function formatRangeCounters(item: ParserAdminProxyRun | ParserAdminProxyRunJournal): string {
   const checked = Math.max(0, item.rangeChecksCount ?? item.completedRangesCount ?? 0);
   const final = Math.max(0, item.finalRangesCount ?? item.completedRangesCount ?? 0);
@@ -778,6 +842,12 @@ function statusLabel(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
 }
 
 function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'>): string {
+  if (item.phase === 'launch_failed') {
+    return 'parser-admin__status--failed';
+  }
+  if (item.phase === 'launch_cancelled') {
+    return 'parser-admin__status--cancelled';
+  }
   if (item.status === 'queued' || item.phase === 'queued') {
     return 'parser-admin__status--queued';
   }
@@ -897,7 +967,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
               <button
                 class="parser-admin__primary"
                 type="button"
-                :disabled="isInstanceLaunchActive(instance)"
+                :disabled="!canLaunchInstance(instance)"
                 @click="openLaunchModal(instance, 'limited_all')"
               >
                 {{ parserAdminTexts.actions.launchLimited }}
@@ -905,7 +975,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
               <button
                 class="parser-admin__primary"
                 type="button"
-                :disabled="isInstanceLaunchActive(instance)"
+                :disabled="!canLaunchInstance(instance)"
                 @click="openLaunchModal(instance, 'full_all')"
               >
                 {{ parserAdminTexts.actions.launchFull }}
@@ -920,8 +990,8 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
             <div v-for="proxy in instance.proxies" :key="proxy.id" class="parser-admin__proxy-run">
               <span class="parser-admin__proxy-title">
                 <span class="parser-admin__proxy-title-head">
-                  <strong class="parser-admin__proxy-name">
-                    {{ proxy.proxyKey }}
+                  <strong class="parser-admin__proxy-name" :title="proxy.proxyKey">
+                    {{ formatProxyKey(proxy.proxyKey) }}
                     <HelpTooltip :text="formatProxyIpTooltip(proxy)" />
                   </strong>
                   <span>{{ proxy.sourceSubcategory }}</span>
@@ -933,6 +1003,14 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
                   @click="openLaunchModal(instance, 'check_proxy', proxy.proxyKey)"
                 >
                   {{ parserAdminTexts.actions.launchProxy }}
+                </button>
+                <button
+                  v-if="canCancelLaunch(proxy)"
+                  class="parser-admin__proxy-check parser-admin__proxy-check--secondary"
+                  type="button"
+                  @click="cancelLaunch(proxy)"
+                >
+                  {{ parserAdminTexts.actions.cancelLaunch }}
                 </button>
               </span>
               <span class="parser-admin__metric">
@@ -1009,7 +1087,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
           <tbody>
             <tr v-for="item in journal" :key="item.id">
               <td>
-                <strong>{{ item.proxyKey }}</strong>
+                <strong :title="item.proxyKey">{{ formatProxyKey(item.proxyKey) }}</strong>
                 <span>{{ item.sourceSubcategory }}</span>
               </td>
               <td>
@@ -1029,7 +1107,12 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
                   <button class="parser-admin__secondary" type="button" @click="openDetailsModal(item)">
                     {{ parserAdminTexts.actions.details }}
                   </button>
-                  <button class="parser-admin__secondary" type="button" @click="openRollbackModal(item)">
+                  <button
+                    v-if="item.cycleKind !== 'launch'"
+                    class="parser-admin__secondary"
+                    type="button"
+                    @click="openRollbackModal(item)"
+                  >
                     {{ parserAdminTexts.actions.rollback }}
                   </button>
                 </div>
@@ -1061,7 +1144,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
           </thead>
           <tbody>
             <tr v-for="proxy in proxies" :key="proxy.id">
-              <td><strong>{{ proxy.key }}</strong></td>
+              <td><strong :title="proxy.key">{{ formatProxyKey(proxy.key) }}</strong></td>
               <td>{{ proxy.ip }}</td>
               <td>{{ proxy.httpPort }}</td>
               <td>{{ proxy.socksPort }}</td>
@@ -1081,7 +1164,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
                   <button class="parser-admin__icon-button" type="button" :title="parserAdminTexts.actions.edit" @click="openEditProxyModal(proxy)">
                     <Pencil :size="16" />
                   </button>
-                  <button class="parser-admin__icon-button" type="button" :title="parserAdminTexts.actions.disable" @click="disableProxy(proxy)">
+                  <button class="parser-admin__icon-button" type="button" :title="parserAdminTexts.actions.deleteProxy" @click="openDeleteProxyModal(proxy)">
                     <Trash2 :size="16" />
                   </button>
                 </div>
@@ -1120,7 +1203,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
             <select v-model="launchProxyKey" class="parser-admin__input">
               <option value="" disabled>{{ parserAdminTexts.validation.proxy }}</option>
               <option v-for="proxy in launchableProxiesFor(launchInstance)" :key="proxy.proxyKey" :value="proxy.proxyKey">
-                {{ proxy.proxyKey }} - {{ proxy.sourceSubcategory }}
+                {{ formatProxyKey(proxy.proxyKey) }} - {{ proxy.sourceSubcategory }}
               </option>
             </select>
           </label>
@@ -1167,6 +1250,10 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
             <span class="parser-admin__metric">
               <span>{{ parserAdminTexts.details.updated }}</span>
               <strong>{{ formatJournalEffectCount(detailsJournalRow, detailsJournalRow.updatedProductsCount) }}</strong>
+            </span>
+            <span class="parser-admin__metric parser-admin__details-error">
+              <span>{{ parserAdminTexts.table.error }}</span>
+              <strong>{{ detailsJournalRow.error || parserAdminTexts.values.dash }}</strong>
             </span>
           </div>
           <p v-if="!detailsJournalRow.hasProductEffectsLedger" class="parser-admin__error">
@@ -1248,6 +1335,35 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
       </section>
     </div>
 
+    <div v-if="deleteProxyModalOpen && deletingProxy" class="parser-admin__modal-backdrop">
+      <section class="parser-admin__modal" role="dialog" aria-modal="true">
+        <header class="parser-admin__modal-header">
+          <h2>{{ parserAdminTexts.proxyDelete.title }}</h2>
+          <button class="parser-admin__icon-button" type="button" :disabled="deletingProxyInProgress" @click="closeDeleteProxyModal">
+            <X :size="18" />
+          </button>
+        </header>
+
+        <p class="parser-admin__launch-confirmation">
+          {{ parserAdminTexts.proxyDelete.messagePrefix }}
+          <strong :title="deletingProxy.key">{{ formatProxyKey(deletingProxy.key) }}</strong>
+          {{ parserAdminTexts.proxyDelete.messageSuffix }}
+        </p>
+        <p class="parser-admin__launch-confirmation parser-admin__launch-confirmation--muted">
+          {{ parserAdminTexts.proxyDelete.note }}
+        </p>
+
+        <footer class="parser-admin__modal-footer">
+          <button class="parser-admin__secondary" type="button" :disabled="deletingProxyInProgress" @click="closeDeleteProxyModal">
+            {{ parserAdminTexts.actions.cancel }}
+          </button>
+          <button class="parser-admin__primary parser-admin__primary--danger" type="button" :disabled="deletingProxyInProgress" @click="submitDeleteProxy">
+            {{ parserAdminTexts.actions.deleteProxy }}
+          </button>
+        </footer>
+      </section>
+    </div>
+
     <div v-if="instanceModalOpen" class="parser-admin__modal-backdrop">
       <section class="parser-admin__modal" role="dialog" aria-modal="true">
         <header class="parser-admin__modal-header">
@@ -1281,7 +1397,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
                   @change="toggleInstanceProxy(proxy)"
                 />
                 <span>
-                  <strong>{{ proxy.key }}</strong>
+                  <strong :title="proxy.key">{{ formatProxyKey(proxy.key) }}</strong>
                   <small>
                     {{ proxy.assignment?.sourceSubcategory || noNicheLabel }}
                     <template v-if="proxy.assignedInstance && isProxyUnavailableForInstance(proxy)">
@@ -1471,6 +1587,12 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   color: var(--accent-ember-text-strong);
 }
 
+.parser-admin__primary--danger {
+  border-color: var(--color-danger);
+  background: rgba(190, 18, 60, 0.08);
+  color: var(--color-danger);
+}
+
 .parser-admin__primary:disabled,
 .parser-admin__secondary:disabled,
 .parser-admin__proxy-check:disabled {
@@ -1605,6 +1727,21 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   color: var(--accent-ember-text-strong);
 }
 
+.parser-admin__proxy-check--secondary {
+  border-color: var(--color-border);
+  background: var(--surface-card);
+  color: var(--color-text);
+}
+
+.parser-admin__proxy-error {
+  display: block;
+  max-width: 18rem;
+  color: var(--state-danger-text);
+  font-size: 0.74rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
 .parser-admin__instance-title span,
 .parser-admin__proxy-title span,
 .parser-admin__metric > span:first-child,
@@ -1688,6 +1825,11 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
 .parser-admin__status--interrupted {
   background: rgba(190, 18, 60, 0.12);
   color: #9f1239;
+}
+
+.parser-admin__status--cancelled {
+  background: rgba(100, 116, 139, 0.14);
+  color: #475569;
 }
 
 .parser-admin__status--running,
@@ -1776,6 +1918,10 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   margin: 0;
   color: var(--color-text);
   line-height: 1.5;
+}
+
+.parser-admin__launch-confirmation--muted {
+  color: var(--color-text-muted);
 }
 
 .parser-admin__rollback-preview {

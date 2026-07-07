@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 
 PARSER_DIR = Path(__file__).resolve().parents[1]
@@ -681,6 +682,108 @@ class MarketRefreshRunnerTests(unittest.TestCase):
         self.assertEqual(manifest["batching"]["total_batches"], 2)
         self.assertEqual([batch["status"] for batch in manifest["batching"]["batches"]], ["staged", "staged"])
 
+    def test_batched_full_enrichment_preserves_runtime_mapping_for_streaming_products(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config = self._config(temp_dir)
+            static_mapping = temp_dir / "static_proxy_mapping.json"
+            static_niches = temp_dir / "static_niches.json"
+            runtime_mapping = temp_dir / "runtime_proxy_mapping.json"
+            runtime_niches = temp_dir / "runtime_niches.json"
+            runtime_rank = temp_dir / "runtime_rank.json"
+            config.payload["modes"]["batched_full_enrichment"] = {
+                **config.payload["modes"]["smoke"],
+                "batching": {"batch_size": 2, "worker_id": "worker-a", "shard_key": "runtime"},
+                "proxy_mapping_file": str(static_mapping),
+                "product": {
+                    **config.payload["modes"]["smoke"]["product"],
+                    "env": {
+                        "PARSER_PROXY_MAPPING_FILE": str(static_mapping),
+                        "PARSER_EXPLICIT_NICHES_FILE": str(static_niches),
+                    },
+                },
+                "product_details": {"enabled": True, "delay_ms": 1, "timeout_sec": 1, "retries": 0},
+            }
+            config.modes = dict(config.payload["modes"])
+            fake = FakeExecutor(output_base_dir=config.output_base_dir)
+            observed: dict[str, str | None] = {}
+            for mapping_path, proxy_key in ((static_mapping, "proxy-3"), (runtime_mapping, "runtime-proxy")):
+                mapping_path.write_text(
+                    json.dumps(
+                        {
+                            "defaultProxy": {"key": "local", "type": "direct"},
+                            "proxies": [{"key": proxy_key, "type": "direct"}],
+                            "niches": [
+                                {
+                                    "sourceCategory": "Товары для дома",
+                                    "sourceSubcategory": "Коврики для ванной",
+                                    "proxyKey": proxy_key,
+                                    "enabled": True,
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+            static_niches.write_text(json.dumps({"niches": []}), encoding="utf-8")
+            runtime_niches.write_text(json.dumps({"niches": []}), encoding="utf-8")
+            runtime_rank.write_text(json.dumps({"contexts": []}), encoding="utf-8")
+
+            def fake_run_parser_streaming(*args: Any, **kwargs: Any) -> Path:
+                observed["mapping"] = os.environ.get("PARSER_PROXY_MAPPING_FILE")
+                observed["niches"] = os.environ.get("PARSER_EXPLICIT_NICHES_FILE")
+                observed["rank"] = os.environ.get("PARSER_RUNTIME_RANK_CONFIG_FILE")
+                parent_dir = temp_dir / "output" / "runs" / "wb_products_stream"
+                parent_dir.mkdir(parents=True, exist_ok=True)
+                parent_manifest = {
+                    "schema_version": 1,
+                    "parser_run_id": "wb_products_stream",
+                    "started_at_utc": "2026-06-15T10:00:00Z",
+                    "status": "succeeded",
+                    "marketplace": "wildberries",
+                    "requested_scope": {"pipeline_run_id": "stream-parent"},
+                    "source_region_dest": "12354108",
+                    "row_counts": {"total_rows": 0, "unique_rows": 0, "duplicate_rows": 0},
+                    "category_results": [],
+                    "parser_version": "test",
+                    "config_snapshot": {},
+                }
+                (parent_dir / "manifest.json").write_text(json.dumps(parent_manifest), encoding="utf-8")
+                (parent_dir / "products.jsonl").write_text("", encoding="utf-8")
+                return parent_dir
+
+            previous = {
+                key: os.environ.get(key)
+                for key in (
+                    "PARSER_PROXY_MAPPING_FILE",
+                    "PARSER_EXPLICIT_NICHES_FILE",
+                    "PARSER_RUNTIME_RANK_CONFIG_FILE",
+                )
+            }
+            try:
+                os.environ["PARSER_PROXY_MAPPING_FILE"] = str(runtime_mapping)
+                os.environ["PARSER_EXPLICIT_NICHES_FILE"] = str(runtime_niches)
+                os.environ["PARSER_RUNTIME_RANK_CONFIG_FILE"] = str(runtime_rank)
+                with patch("pipelines.products.runner.run_parser_streaming", side_effect=fake_run_parser_streaming):
+                    runner.run_pipeline(
+                        config=config,
+                        mode="batched_full_enrichment",
+                        stage_to_db=False,
+                        skip_rank=True,
+                        executor=fake,
+                    )
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(observed["mapping"], str(runtime_mapping))
+        self.assertEqual(observed["niches"], str(runtime_niches))
+        self.assertEqual(observed["rank"], str(runtime_rank))
+
     def test_batched_full_enrichment_enqueues_valid_batch_to_durable_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             temp_dir = Path(temp)
@@ -698,8 +801,8 @@ class MarketRefreshRunnerTests(unittest.TestCase):
                         "proxies": [{"key": "bath-proxy", "type": "direct"}],
                         "niches": [
                             {
-                                "sourceCategory": "Товары для дома",
-                                "sourceSubcategory": "Коврики для ванной",
+                                    "sourceCategory": "Товары для дома",
+                                    "sourceSubcategory": "Коврики для ванной",
                                 "proxyKey": "bath-proxy",
                                 "enabled": True,
                             }

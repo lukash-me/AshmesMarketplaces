@@ -2,6 +2,7 @@
 import { Bookmark, BookmarkCheck, ChevronLeft, ChevronRight, CircleHelp, ExternalLink, X } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import { useAuthStore } from '@/features/auth/auth.store';
 import { getProblemMessage } from '@/shared/api/problemDetails';
 import { addWorkspaceMarketProduct, getWorkspaceMarketProducts } from '@/features/workspace-market-products/workspaceMarketProducts.api';
 import { useActiveWorkspace } from '@/features/workspace-market-products/useActiveWorkspace';
@@ -29,6 +30,7 @@ const emit = defineEmits<{
 }>();
 
 const workspace = useActiveWorkspace();
+const auth = useAuthStore();
 const detail = ref<ParserProductDetail | null>(null);
 const loading = ref(false);
 const error = ref('');
@@ -46,6 +48,7 @@ const currentPriceHelp = 'Текущая цена карточки.';
 const regularPriceHelp = 'Цена до применённых скидок, если она доступна.';
 const walletPriceHelp = 'Цена с учётом скидки WB кошелька, если она доступна.';
 
+const isAdmin = computed(() => auth.user?.roleName === 'Admin');
 const displayProduct = computed(() => detail.value ?? props.product);
 const images = computed(() => detail.value?.imageUrls ?? []);
 const mainImage = computed(() => images.value[0] ?? null);
@@ -73,6 +76,7 @@ const reviewCoverage = computed(() => {
   if (!evidence) {
     return {
       groupCountLabel: fieldValue(groupFeedbackCount),
+      productMarketplaceCountLabel: 'Нет данных',
       productCountLabel: 'Нет данных',
       statusLabel: 'Покрытие отзывов не рассчитано',
       sourceLabel: 'Источник не определен',
@@ -84,6 +88,7 @@ const reviewCoverage = computed(() => {
   const expected = evidence.marketplaceFeedbackCount;
   return {
     groupCountLabel: fieldValue(groupFeedbackCount),
+    productMarketplaceCountLabel: fieldValue(expected ?? fetched),
     productCountLabel: expected === null ? `${fetched}` : `${fetched} / ${expected}`,
     statusLabel: reviewCoverageStatusLabel(evidence.coverageStatus),
     sourceLabel: reviewCoverageSourceLabel(evidence.coverageSource),
@@ -630,6 +635,10 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
                   <dt>Отзывы группы WB</dt>
                   <dd class="numeric">{{ fieldValue(displayProduct.feedbackCount) }}</dd>
                 </div>
+                <div>
+                  <dt>Отзывы карточки WB</dt>
+                  <dd class="numeric">{{ reviewCoverage.productMarketplaceCountLabel }}</dd>
+                </div>
               </dl>
               <div class="overview__details">
                 <dl class="drawer__fields drawer__fields--single">
@@ -677,11 +686,7 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
                 </dt>
                 <dd class="position-value numeric">{{ positionLabel(positionSummary) }}</dd>
               </div>
-              <div><dt>Категория</dt><dd>{{ fieldValue(positionSummary.sourceCategory) }}</dd></div>
               <div><dt>Запрос</dt><dd>{{ fieldValue(positionSummary.query) }}</dd></div>
-              <div><dt>Подкатегория</dt><dd>{{ fieldValue(positionSummary.sourceSubcategory) }}</dd></div>
-              <div><dt>Карточка обновлена</dt><dd>{{ formatDateTime(displayProduct?.parsedAtUtc ?? null) }}</dd></div>
-              <div><dt>Позиция проверена</dt><dd>{{ formatDateTime(positionSummary.observedAtUtc) }}</dd></div>
             </dl>
             <p v-if="positionSummary.state === 'unknown'" class="drawer__empty">Позиция пока не определена для этой карточки.</p>
           </section>
@@ -715,19 +720,6 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
               <li v-for="fact in visualFacts" :key="fact">{{ fact }}</li>
             </ul>
             <p v-else class="drawer__empty">Визуальный анализ изображений пока не рассчитан.</p>
-          </section>
-
-          <section class="drawer__section">
-            <div class="drawer__section-title">
-              <h3>Покрытие отзывов</h3>
-            </div>
-            <dl class="drawer__fields drawer__fields--two">
-              <div><dt>Отзывы группы WB</dt><dd>{{ reviewCoverage.groupCountLabel }}</dd></div>
-              <div><dt>Отзывы карточки</dt><dd>{{ reviewCoverage.productCountLabel }}</dd></div>
-              <div><dt>Статус</dt><dd>{{ reviewCoverage.statusLabel }}</dd></div>
-              <div><dt>Источник</dt><dd>{{ reviewCoverage.sourceLabel }}</dd></div>
-              <div v-if="reviewCoverage.error"><dt>Ошибка</dt><dd>{{ reviewCoverage.error }}</dd></div>
-            </dl>
           </section>
 
           <MarketProductObservedReviews :product="displayProduct" />
@@ -813,6 +805,29 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
                   <MarketProductImage :src="image" :alt="`${displayProduct.name} изображение ${index + 1}`" />
                 </button>
               </figure>
+            </div>
+          </section>
+
+          <section v-if="isAdmin" class="drawer__section drawer__section--admin">
+            <div class="drawer__section-title drawer__section-title--admin">
+              <h3>Администратор</h3>
+            </div>
+            <div class="drawer__admin-card">
+              <h4>Поисковая выдача</h4>
+              <dl class="drawer__fields drawer__fields--two">
+                <div><dt>Карточка обновлена</dt><dd>{{ formatDateTime(displayProduct?.parsedAtUtc ?? null) }}</dd></div>
+                <div><dt>Позиция проверена</dt><dd>{{ formatDateTime(positionSummary.observedAtUtc) }}</dd></div>
+              </dl>
+            </div>
+            <div class="drawer__admin-card">
+              <h4>Покрытие отзывов</h4>
+              <dl class="drawer__fields drawer__fields--two">
+                <div><dt>Отзывы группы WB</dt><dd>{{ reviewCoverage.groupCountLabel }}</dd></div>
+                <div><dt>Отзывы карточки</dt><dd>{{ reviewCoverage.productCountLabel }}</dd></div>
+                <div><dt>Статус</dt><dd>{{ reviewCoverage.statusLabel }}</dd></div>
+                <div><dt>Источник</dt><dd>{{ reviewCoverage.sourceLabel }}</dd></div>
+                <div v-if="reviewCoverage.error"><dt>Ошибка</dt><dd>{{ reviewCoverage.error }}</dd></div>
+              </dl>
             </div>
           </section>
         </div>
@@ -1129,6 +1144,37 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
   width: fit-content;
   align-items: center;
   gap: var(--space-2);
+}
+
+.drawer__section--admin {
+  border-color: var(--state-info-border);
+  background:
+    linear-gradient(135deg, rgb(96 165 250 / 0.12), transparent 18rem),
+    var(--surface-panel-muted);
+}
+
+.drawer__section--admin::before {
+  background: linear-gradient(180deg, var(--state-info), transparent 72%);
+}
+
+.drawer__section-title--admin h3 {
+  color: var(--state-info);
+}
+
+.drawer__admin-card {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--state-info-border);
+  border-radius: var(--radius-sm);
+  background: rgb(96 165 250 / 0.06);
+  padding: var(--space-3);
+}
+
+.drawer__admin-card h4 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 0.82rem;
+  font-weight: 740;
 }
 
 .position-value {
@@ -1452,7 +1498,7 @@ function uniqueCharacteristicRows(rows: Array<{ name: string; value: string }>):
   }
 
   .overview__metrics {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .overview__details {

@@ -16,4 +16,6 @@ public interface IParserLaunchRequestService
     Task MarkCompletedAsync(Guid id, CancellationToken cancellationToken);
 
     Task MarkFailedAsync(Guid id, string error, CancellationToken cancellationToken);
+
+    Task<ServiceResult<ParserLaunchRequestDto>> CancelAsync(Guid id, CancellationToken cancellationToken);
 }

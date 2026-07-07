@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router';
 
 import PageHeader from '@/widgets/PageHeader.vue';
 import Badge from '@/shared/ui/Badge.vue';
-import Button from '@/shared/ui/Button.vue';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
@@ -13,18 +12,17 @@ import MarketProductDetailDrawer from '@/features/parser-products/ParserProductD
 import MarketProductImage from '@/features/parser-products/MarketProductImage.vue';
 import type { ParserProductListItem } from '@/features/parser-products/parserProducts.types';
 
-import { getPublicMarketIntelligence } from './marketIntelligence.api';
+import { getPublicMarketIntelligence, getPublicMarketIntelligenceContexts } from './marketIntelligence.api';
 import {
   buildMarketIntelligenceParams,
-  isMarketIntelligenceSubcategory,
-  marketIntelligenceContexts as demoContexts,
   marketIntelligenceDefaultRegionDest as defaultRegionDest,
   marketIntelligenceDefaultSort as defaultSort,
-  resolveMarketIntelligenceContext
+  marketIntelligenceTopN as defaultTopN
 } from './marketIntelligence.contexts';
 import type {
   DeliveryBucket,
   PriceQualityPoint,
+  PublicMarketIntelligenceAvailableContext,
   PublicMarketIntelligence,
   PublicMarketIntelligenceParams,
   QualityBucket
@@ -72,6 +70,8 @@ const route = useRoute();
 const router = useRouter();
 
 const selectedSubcategory = ref(readInitialSubcategory());
+const availableContexts = ref<PublicMarketIntelligenceAvailableContext[]>([]);
+const contextsLoaded = ref(false);
 const intelligence = ref<PublicMarketIntelligence | null>(null);
 const loading = ref(false);
 const error = ref<string | null>(null);
@@ -80,19 +80,29 @@ const selectedProduct = ref<ParserProductListItem | null>(null);
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let pointerFrame: number | null = null;
 
-const selectedContext = computed(() => resolveMarketIntelligenceContext(selectedSubcategory.value));
+const selectedContext = computed(() =>
+  availableContexts.value.find((context) => context.sourceSubcategory === selectedSubcategory.value)
+    ?? availableContexts.value[0]
+    ?? null
+);
 
-const requestParams = computed<PublicMarketIntelligenceParams>(() => buildMarketIntelligenceParams(
-  selectedContext.value,
-  {
-    sourceRegionDest: readStringQuery('sourceRegionDest') ?? defaultRegionDest,
-    sort: readStringQuery('sort') ?? defaultSort,
-    latestRankRunId: readStringQuery('latestRankRunId') ?? undefined,
-    baselineRankRunId: readStringQuery('baselineRankRunId') ?? undefined,
-    latestProductRunId: readStringQuery('latestProductRunId') ?? undefined,
-    baselineProductRunId: readStringQuery('baselineProductRunId') ?? undefined
+const requestParams = computed<PublicMarketIntelligenceParams | null>(() => {
+  if (!selectedContext.value) {
+    return null;
   }
-));
+
+  return buildMarketIntelligenceParams(
+    selectedContext.value,
+    {
+      sourceRegionDest: readStringQuery('sourceRegionDest') ?? selectedContext.value.sourceRegionDest ?? defaultRegionDest,
+      sort: readStringQuery('sort') ?? selectedContext.value.sort ?? defaultSort,
+      latestRankRunId: readStringQuery('latestRankRunId') ?? undefined,
+      baselineRankRunId: readStringQuery('baselineRankRunId') ?? undefined,
+      latestProductRunId: readStringQuery('latestProductRunId') ?? undefined,
+      baselineProductRunId: readStringQuery('baselineProductRunId') ?? undefined
+    }
+  );
+});
 
 const points = computed(() => intelligence.value?.priceQualityMap.points ?? []);
 const summary = computed(() => intelligence.value?.priceQualityMap.summary ?? null);
@@ -168,6 +178,13 @@ async function refresh(): Promise<void> {
   activePoint.value = null;
 
   try {
+    await loadAvailableContexts();
+
+    if (availableContexts.value.length === 0 || !requestParams.value) {
+      intelligence.value = null;
+      return;
+    }
+
     intelligence.value = await getPublicMarketIntelligence(requestParams.value);
   } catch (requestError) {
     intelligence.value = null;
@@ -188,6 +205,37 @@ function applySubcategorySelection(): void {
     }
   });
   void refresh();
+}
+
+async function loadAvailableContexts(): Promise<void> {
+  const contexts = await getPublicMarketIntelligenceContexts();
+  availableContexts.value = contexts;
+  contextsLoaded.value = true;
+
+  if (contexts.length === 0) {
+    selectedSubcategory.value = '';
+    return;
+  }
+
+  const requestedSubcategory = readStringQuery('sourceSubcategory');
+  const selected = contexts.find((context) => context.sourceSubcategory === selectedSubcategory.value)
+    ?? (requestedSubcategory
+      ? contexts.find((context) => context.sourceSubcategory === requestedSubcategory)
+      : null)
+    ?? contexts[0];
+
+  const nextSubcategory = selected.sourceSubcategory ?? '';
+  const shouldReplaceQuery = requestedSubcategory !== nextSubcategory;
+  selectedSubcategory.value = nextSubcategory;
+
+  if (shouldReplaceQuery) {
+    void router.replace({
+      query: {
+        ...route.query,
+        sourceSubcategory: nextSubcategory
+      }
+    });
+  }
 }
 
 function scrollToCurrentHash(): void {
@@ -530,17 +578,17 @@ function toParserProductListItem(point: PriceQualityPoint): ParserProductListIte
     ratingRounded: null,
     reviewRating: point.rating,
     feedbackCount: point.feedbackCount,
-    sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-    sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
-    sourceQuery: current?.context.query ?? selectedContext.value.query,
+    sourceCategory: current?.context.sourceCategory ?? selectedContext.value?.sourceCategory ?? null,
+    sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value?.sourceSubcategory ?? null,
+    sourceQuery: current?.context.query ?? selectedContext.value?.query ?? null,
     thumbnailUrl: point.thumbnailUrl,
     rank: point.position === null ? null : {
       absolutePosition: point.position,
       page: Math.max(1, Math.ceil(point.position / 100)),
       positionOnPage: ((point.position - 1) % 100) + 1,
-      query: current?.context.query ?? selectedContext.value.query,
-      sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
+      query: current?.context.query ?? selectedContext.value?.query ?? null,
+      sourceCategory: current?.context.sourceCategory ?? selectedContext.value?.sourceCategory ?? null,
+      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value?.sourceSubcategory ?? null,
       sourceRegionDest: current?.context.sourceRegionDest ?? defaultRegionDest,
       sort: current?.context.sort ?? defaultSort,
       observedAtUtc: observedAt,
@@ -551,20 +599,17 @@ function toParserProductListItem(point: PriceQualityPoint): ParserProductListIte
     position: {
       state: point.position === null ? 'unknown' : 'observed',
       absolutePosition: point.position,
-      observedRangeLimit: current?.context.topN ?? legacyTopN,
-      query: current?.context.query ?? selectedContext.value.query,
-      sourceCategory: current?.context.sourceCategory ?? selectedContext.value.sourceCategory,
-      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value.sourceSubcategory,
+      observedRangeLimit: current?.context.topN ?? selectedContext.value?.topN ?? defaultTopN,
+      query: current?.context.query ?? selectedContext.value?.query ?? null,
+      sourceCategory: current?.context.sourceCategory ?? selectedContext.value?.sourceCategory ?? null,
+      sourceSubcategory: current?.context.sourceSubcategory ?? selectedContext.value?.sourceSubcategory ?? null,
       observedAtUtc: point.position === null ? null : observedAt
     }
   };
 }
 
 function readInitialSubcategory(): string {
-  const raw = readStringQuery('sourceSubcategory');
-  return isMarketIntelligenceSubcategory(raw)
-    ? raw
-    : demoContexts[0].sourceSubcategory;
+  return readStringQuery('sourceSubcategory') ?? '';
 }
 
 function readStringQuery(key: string): string | null {
@@ -757,24 +802,28 @@ function pointStyle(point: ChartPoint): string {
       subtitle="Карта ниши показывает, как актуальные товары распределены по цене, рейтингу и качеству карточки."
     />
 
-    <section class="mi-controls app-surface">
+    <section v-if="availableContexts.length" class="mi-controls app-surface">
       <div class="mi-controls__fields">
         <label class="mi-field app-select-field">
           <span>Ниша</span>
           <select v-model="selectedSubcategory" class="app-select" @change="applySubcategorySelection">
-            <option v-for="context in demoContexts" :key="context.sourceSubcategory" :value="context.sourceSubcategory">
-              {{ context.label }}
+            <option v-for="context in availableContexts" :key="context.sourceSubcategory ?? context.query" :value="context.sourceSubcategory ?? ''">
+              {{ context.sourceSubcategory ?? context.sourceCategory ?? context.query }}
             </option>
           </select>
         </label>
-
-        <Button class="mi-refresh" variant="primary" :loading="loading" @click="refresh">Обновить карту</Button>
       </div>
     </section>
 
     <LoadingState v-if="loading && !intelligence" label="Строим карту ниши..." />
 
     <EmptyState v-else-if="error" title="Карта не загружена" :description="error" />
+
+    <EmptyState
+      v-else-if="contextsLoaded && availableContexts.length === 0"
+      title="Карты цены и качества еще не рассчитаны"
+      description="После успешного расчета карта появится в списке доступных ниш."
+    />
 
     <template v-else-if="intelligence">
       <section
@@ -1018,10 +1067,6 @@ function pointStyle(point: ChartPoint): string {
 .chart-tooltip__body span,
 .chart-tooltip__body li {
   color: var(--text-muted);
-}
-
-.mi-refresh {
-  align-self: end;
 }
 
 .price-corridors {

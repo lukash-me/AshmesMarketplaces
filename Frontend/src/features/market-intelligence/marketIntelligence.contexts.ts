@@ -1,4 +1,4 @@
-import type { PublicMarketIntelligenceParams } from './marketIntelligence.types';
+import type { PublicMarketIntelligenceAvailableContext, PublicMarketIntelligenceParams } from './marketIntelligence.types';
 
 export const marketIntelligenceDefaultRegionDest = '12354108';
 export const marketIntelligenceDefaultSort = 'popular';
@@ -38,16 +38,20 @@ export function isMarketIntelligenceSubcategory(value: unknown): value is string
 }
 
 export function buildMarketIntelligenceParams(
-  context: MarketIntelligenceContext,
+  context: MarketIntelligenceContext | PublicMarketIntelligenceAvailableContext,
   overrides: Partial<PublicMarketIntelligenceParams> = {}
 ): PublicMarketIntelligenceParams {
+  const sourceRegionDest = 'sourceRegionDest' in context ? context.sourceRegionDest : undefined;
+  const sort = 'sort' in context ? context.sort : undefined;
+  const topN = 'topN' in context ? context.topN : undefined;
+
   return {
-    sourceCategory: context.sourceCategory,
-    sourceSubcategory: context.sourceSubcategory,
+    sourceCategory: context.sourceCategory ?? undefined,
+    sourceSubcategory: context.sourceSubcategory ?? undefined,
     query: context.query,
-    sourceRegionDest: marketIntelligenceDefaultRegionDest,
-    sort: marketIntelligenceDefaultSort,
-    topN: marketIntelligenceTopN,
+    sourceRegionDest: sourceRegionDest ?? marketIntelligenceDefaultRegionDest,
+    sort: sort ?? marketIntelligenceDefaultSort,
+    topN: topN ?? marketIntelligenceTopN,
     ...overrides
   };
 }

@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace AshmesMarketplaces.API.Controllers.V1;
 
 [ApiController]
-[Authorize]
+[AllowAnonymous]
 [Route("api/v1/rule-constructor")]
 [Produces("application/json")]
 public sealed class RuleConstructorController : ControllerBase

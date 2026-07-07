@@ -7,6 +7,34 @@ namespace AshmesMarketplaces.Application.Tests.MarketplaceCategories;
 public sealed class WildberriesCategoryTreeParserTests
 {
     [Fact]
+    public void Parse_exposes_human_search_query_without_wb_menu_token()
+    {
+        const string json = """
+        [
+          {
+            "id": 1,
+            "name": "Auto",
+            "childs": [
+              {
+                "id": 130752,
+                "name": "Car cleaners",
+                "seo": "Vehicle cleaner",
+                "searchQuery": "menu_v3_130752 car cleaner"
+              }
+            ]
+          }
+        ]
+        """;
+
+        using var document = JsonDocument.Parse(json);
+
+        var node = Assert.Single(WildberriesCategoryTreeParser.Parse(document.RootElement), x => x.Id == 130752);
+
+        Assert.Equal("menu_v3_130752 car cleaner", node.SearchQuery);
+        Assert.Equal("car cleaner", node.HumanSearchQuery);
+    }
+
+    [Fact]
     public void Parse_builds_leaf_nodes_with_wb_name_path_and_search_query()
     {
         const string json = """

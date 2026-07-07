@@ -35,6 +35,19 @@ RETRYABLE_STATUSES = {"failed", "interrupted", "skipped"}
 STAGE_ENV_ENABLED_VALUES = {"1", "true", "yes", "on"}
 STAGE_ENV_DISABLED_VALUES = {"", "0", "false", "no", "off"}
 INGESTION_CLI_PROJECT = Path("Backend") / "AshmesMarketplaces.ParserIngestionCli" / "AshmesMarketplaces.ParserIngestionCli.csproj"
+IMMUTABLE_RUNTIME_ENV_KEYS = {
+    "PARSER_BATCH_QUEUE_URL",
+    "PARSER_OUTPUT_BASE_DIR",
+    "PARSER_RATE_LIMIT_STATE_DIR",
+    "PARSER_OUTBOX_DIR",
+    "PARSER_PROXY_MAPPING_FILE",
+    "PARSER_EXPLICIT_NICHES_FILE",
+    "PARSER_RUNTIME_RANK_CONFIG_FILE",
+    "PARSER_LAUNCH_CONTEXT_FILE",
+    "PARSER_CYCLE_ID",
+    "PARSER_PROXY_KEY",
+    "PARSER_ONLY_PROXY",
+}
 
 
 def _make_pipeline_run_id() -> str:
@@ -106,6 +119,15 @@ def _with_env_overrides(plan: PipelineStepPlan, extra_env: dict[str, str]) -> Pi
         return plan
 
     return replace(plan, env_overrides={**plan.env_overrides, **extra_env})
+
+
+def _runtime_safe_env_overrides(env_overrides: dict[str, str]) -> dict[str, str]:
+    safe = dict(env_overrides)
+    for key in IMMUTABLE_RUNTIME_ENV_KEYS:
+        runtime_value = os.environ.get(key)
+        if runtime_value:
+            safe[key] = runtime_value
+    return safe
 
 
 def _command_display(command: list[str], secrets: list[str] | tuple[str, ...] = ()) -> str:
@@ -403,7 +425,7 @@ def _build_rank_plan(mode_config: dict[str, Any], *, repo_root: Path, python_exe
     return PipelineStepPlan(
         step_name="rank",
         commands=[command],
-        env_overrides=env_overrides,
+        env_overrides=_runtime_safe_env_overrides(env_overrides),
         enabled=bool(rank),
         timeout_seconds=rank.get("timeout_seconds"),
     )
@@ -425,7 +447,7 @@ def _build_products_plan(mode_config: dict[str, Any], *, repo_root: Path, python
     return PipelineStepPlan(
         step_name="products",
         commands=[command],
-        env_overrides=env_overrides,
+        env_overrides=_runtime_safe_env_overrides(env_overrides),
         enabled=bool(product),
         timeout_seconds=product.get("timeout_seconds"),
     )

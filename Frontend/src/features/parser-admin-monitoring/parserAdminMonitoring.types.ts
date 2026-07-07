@@ -1,6 +1,8 @@
 export interface ParserAdminProxyRun {
   id: string;
   externalProxyRunId: string;
+  parserCycleId: string;
+  cycleKind: string;
   proxyKey: string;
   sourceCategory: string;
   sourceSubcategory: string;
@@ -85,6 +87,8 @@ export interface ParserLaunchSavePayload {
 export interface ParserAdminProxyRunJournal {
   id: string;
   parserInstanceId: string;
+  parserCycleId: string;
+  cycleKind: string;
   externalProxyRunId: string;
   proxyKey: string;
   sourceCategory: string;

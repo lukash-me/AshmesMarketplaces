@@ -53,17 +53,19 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             .GroupBy(x => x.ParserInstanceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.OrdinalIgnoreCase);
 
-        var activeLaunches = await _dbContext.ParserLaunchRequests
+        var launchRequests = await _dbContext.ParserLaunchRequests
             .AsNoTracking()
-            .Where(x => ParserLaunchRequestStatuses.Active.Contains(x.Status))
+            .Where(x => ParserLaunchRequestStatuses.Active.Contains(x.Status) ||
+                        x.Status == ParserLaunchRequestStatuses.Failed ||
+                        x.Status == ParserLaunchRequestStatuses.Cancelled)
             .OrderByDescending(x => x.RequestedAtUtc)
             .ToListAsync(cancellationToken);
-        var activeLaunchesByInstance = activeLaunches
+        var launchRequestsByInstance = launchRequests
             .GroupBy(x => x.ParserInstanceConfigurationId)
             .ToDictionary(x => x.Key, x => x.ToList());
 
         var result = configuredInstances
-            .Select(config => MapConfiguredInstance(config, runtimeById, runsByInstance, activeLaunchesByInstance, now))
+            .Select(config => MapConfiguredInstance(config, runtimeById, runsByInstance, launchRequestsByInstance, now))
             .ToList();
 
         var configuredIds = configuredInstances
@@ -89,6 +91,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         pageSize = Math.Clamp(pageSize <= 0 ? 50 : pageSize, 1, MaxPageSize);
 
         var now = DateTime.UtcNow;
+        var candidateLimit = page * pageSize;
         var runs = await _dbContext.ParserProxyRuns
             .AsNoTracking()
             .Where(x => x.Status == ParserProxyRunStatuses.Completed ||
@@ -96,9 +99,38 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
                         x.Status == ParserProxyRunStatuses.Interrupted)
             .OrderByDescending(x => x.FinishedAtUtc)
             .ThenByDescending(x => x.StartedAtUtc)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+            .Take(candidateLimit)
             .ToListAsync(cancellationToken);
+
+        var cyclesWithProxyRuns = await _dbContext.ParserProxyRuns
+            .AsNoTracking()
+            .Select(x => x.ParserCycleId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var cyclesWithProxyRunsSet = cyclesWithProxyRuns.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var launchRequests = await _dbContext.ParserLaunchRequests
+            .AsNoTracking()
+            .Where(x =>
+                (x.Status == ParserLaunchRequestStatuses.Failed ||
+                 x.Status == ParserLaunchRequestStatuses.Cancelled) &&
+                !cyclesWithProxyRunsSet.Contains(x.ParserCycleId))
+            .OrderByDescending(x => x.CompletedAtUtc)
+            .ThenByDescending(x => x.RequestedAtUtc)
+            .Take(candidateLimit)
+            .ToListAsync(cancellationToken);
+
+        var configIds = launchRequests.Select(x => x.ParserInstanceConfigurationId).Distinct().ToList();
+        var configs = configIds.Count == 0
+            ? []
+            : await _dbContext.ParserInstanceConfigurations
+                .AsNoTracking()
+                .Include(x => x.ProxyAssignments.Where(a => a.Enabled))
+                .ThenInclude(x => x.Proxy)
+                .ThenInclude(x => x!.Assignment)
+                .Where(x => configIds.Contains(x.Id))
+                .ToListAsync(cancellationToken);
+        var configsById = configs.ToDictionary(x => x.Id);
 
         var runIds = runs.Select(x => x.Id).ToList();
         var productEffects = runIds.Count == 0
@@ -133,7 +165,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
                     return new ProductEffectCounts(createdProductIds.Count, updatedProductsCount, true);
                 });
 
-        var journal = runs
+        var proxyRunJournal = runs
             .Select(x =>
             {
                 productEffectCounts.TryGetValue(x.Id, out var effectCounts);
@@ -175,6 +207,22 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
                     Rate(x.RangeChecksCount, x.StartedAtUtc, x.LastHeartbeatAtUtc),
                     x.Error);
             })
+            .ToList();
+
+        var launchJournal = launchRequests
+            .Select(x =>
+            {
+                configsById.TryGetValue(x.ParserInstanceConfigurationId, out var config);
+                return MapLaunchJournal(x, config, now);
+            })
+            .ToList();
+
+        var journal = proxyRunJournal
+            .Concat(launchJournal)
+            .OrderByDescending(x => x.FinishedAtUtc ?? x.StartedAtUtc)
+            .ThenByDescending(x => x.StartedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToList();
 
         return ServiceResult<IReadOnlyList<ParserAdminProxyRunJournalDto>>.Success(journal);
@@ -427,13 +475,13 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         ParserInstanceConfiguration config,
         IReadOnlyDictionary<string, ParserInstance> runtimeById,
         IReadOnlyDictionary<string, List<ParserProxyRun>> runsByInstance,
-        IReadOnlyDictionary<Guid, List<ParserLaunchRequest>> activeLaunchesByInstance,
+        IReadOnlyDictionary<Guid, List<ParserLaunchRequest>> launchRequestsByInstance,
         DateTime now)
     {
         runtimeById.TryGetValue(config.ParserInstanceId, out var runtimeInstance);
         runsByInstance.TryGetValue(config.ParserInstanceId, out var instanceRuns);
-        activeLaunchesByInstance.TryGetValue(config.Id, out var activeLaunches);
-        activeLaunches ??= [];
+        launchRequestsByInstance.TryGetValue(config.Id, out var launchRequests);
+        launchRequests ??= [];
         instanceRuns ??= [];
         var latestRuns = LatestRuns(instanceRuns);
         var latestByProxy = latestRuns
@@ -444,15 +492,15 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         foreach (var assignment in config.ProxyAssignments.Where(x => x.Enabled && x.Proxy is not null).OrderBy(x => x.Proxy!.Key))
         {
             var proxyKey = assignment.Proxy!.Key;
-            var activeLaunch = ActiveLaunchForProxy(activeLaunches, proxyKey);
+            var launchRequest = LaunchForProxy(launchRequests, proxyKey);
             var hasLatestRun = latestByProxy.Remove(proxyKey, out var run);
-            if (hasLatestRun && run is not null && ShouldShowRunOverLaunch(run, activeLaunch))
+            if (hasLatestRun && run is not null && ShouldShowRunOverLaunch(run, launchRequest))
             {
                 proxies.Add(MapProxyRun(run, now));
             }
-            else if (activeLaunch is not null)
+            else if (launchRequest is not null)
             {
-                proxies.Add(MapQueuedProxy(assignment, activeLaunch, now));
+                proxies.Add(MapLaunchProxy(assignment, launchRequest, now));
             }
             else if (run is not null)
             {
@@ -463,8 +511,6 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
                 proxies.Add(MapConfiguredProxy(assignment, config.UpdatedAtUtc));
             }
         }
-
-        proxies.AddRange(latestByProxy.Values.OrderBy(x => x.ProxyKey).Select(x => MapProxyRun(x, now)));
 
         var planned = proxies.Sum(x => x.PlannedProductsCount);
         var downloaded = proxies.Sum(x => x.DownloadedProductsCount);
@@ -575,7 +621,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             niche is { Enabled: true } ? null : "Ниша не назначена или отключена.");
     }
 
-    private static ParserAdminProxyRunDto MapQueuedProxy(
+    private static ParserAdminProxyRunDto MapLaunchProxy(
         ParserInstanceProxyAssignment assignment,
         ParserLaunchRequest launch,
         DateTime now)
@@ -585,10 +631,20 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         var plannedProductsCount = launch.LaunchMode == ParserLaunchModes.FullAll
             ? 0
             : Math.Max(0, launch.BatchLimit ?? 0) * 100;
+        var phase = launch.Status switch
+        {
+            ParserLaunchRequestStatuses.Queued => ParserLaunchRequestStatuses.Queued,
+            ParserLaunchRequestStatuses.Running => "launch",
+            ParserLaunchRequestStatuses.Cancelled => "launch_cancelled",
+            ParserLaunchRequestStatuses.Failed => "launch_failed",
+            _ => launch.Status
+        };
+        var startedAtUtc = launch.StartedAtUtc ?? launch.RequestedAtUtc;
+        var completedAtUtc = launch.CompletedAtUtc;
         return new ParserAdminProxyRunDto(
             launch.Id,
             $"launch:{launch.Id}:{proxy.Key}",
-            string.Empty,
+            launch.ParserCycleId,
             "launch",
             proxy.Key,
             niche?.SourceCategory ?? string.Empty,
@@ -596,8 +652,8 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             proxy.Ip,
             null,
             null,
-            ParserLaunchRequestStatuses.Queued,
-            ParserLaunchRequestStatuses.Queued,
+            launch.Status,
+            phase,
             plannedProductsCount,
             0,
             0,
@@ -609,13 +665,69 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             0,
             0,
             launch.RequestedAtUtc,
-            launch.StartedAtUtc ?? launch.RequestedAtUtc,
+            startedAtUtc,
             null,
-            null,
-            RuntimeMinutes(launch.RequestedAtUtc, null, now),
+            completedAtUtc,
+            RuntimeMinutes(launch.RequestedAtUtc, completedAtUtc, now),
             0,
             0,
             null);
+    }
+
+    private static ParserAdminProxyRunJournalDto MapLaunchJournal(
+        ParserLaunchRequest launch,
+        ParserInstanceConfiguration? config,
+        DateTime now)
+    {
+        var assignment = LaunchJournalAssignment(config, launch.ProxyKey);
+        var proxy = assignment?.Proxy;
+        var niche = proxy?.Assignment;
+        var proxyKey = launch.ProxyKey ?? proxy?.Key ?? "all";
+        var plannedProductsCount = launch.LaunchMode == ParserLaunchModes.FullAll
+            ? 0
+            : Math.Max(0, launch.BatchLimit ?? 0) * 100;
+        var phase = launch.Status switch
+        {
+            ParserLaunchRequestStatuses.Cancelled => "launch_cancelled",
+            ParserLaunchRequestStatuses.Failed => "launch_failed",
+            ParserLaunchRequestStatuses.Running => "launch",
+            ParserLaunchRequestStatuses.Queued => ParserLaunchRequestStatuses.Queued,
+            _ => launch.Status
+        };
+
+        return new ParserAdminProxyRunJournalDto(
+            launch.Id,
+            launch.ParserInstanceId,
+            launch.ParserCycleId,
+            "launch",
+            $"launch:{launch.Id}:{proxyKey}",
+            proxyKey,
+            niche?.SourceCategory ?? string.Empty,
+            niche?.SourceSubcategory ?? (launch.ProxyKey is null ? "Все proxy" : "Без ниши"),
+            proxy?.Ip,
+            null,
+            null,
+            launch.Status,
+            phase,
+            plannedProductsCount,
+            0,
+            0,
+            0,
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            launch.RequestedAtUtc,
+            launch.StartedAtUtc,
+            launch.CompletedAtUtc,
+            RuntimeMinutes(launch.RequestedAtUtc, launch.CompletedAtUtc, now),
+            0,
+            0,
+            launch.Error);
     }
 
     private static ParserAdminProxyRunDto MapProxyRun(
@@ -684,11 +796,11 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             : run.FinishedAtUtc;
     }
 
-    private static ParserLaunchRequest? ActiveLaunchForProxy(
-        IReadOnlyList<ParserLaunchRequest> activeLaunches,
+    private static ParserLaunchRequest? LaunchForProxy(
+        IReadOnlyList<ParserLaunchRequest> launchRequests,
         string proxyKey)
     {
-        return activeLaunches.FirstOrDefault(x =>
+        return launchRequests.FirstOrDefault(x =>
             x.LaunchMode == ParserLaunchModes.CheckProxy
                 ? string.Equals(x.ProxyKey, proxyKey, StringComparison.OrdinalIgnoreCase)
                 : true);
@@ -699,15 +811,40 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         return proxy.Status is ParserProxyRunStatuses.Running or ParserLaunchRequestStatuses.Queued;
     }
 
-    private static bool ShouldShowRunOverLaunch(ParserProxyRun run, ParserLaunchRequest? activeLaunch)
+    private static bool ShouldShowRunOverLaunch(ParserProxyRun run, ParserLaunchRequest? launch)
     {
-        if (activeLaunch is null)
+        if (launch is null)
             return true;
 
-        if (run.Status == ParserProxyRunStatuses.Running)
+        if (string.Equals(run.ParserCycleId, launch.ParserCycleId, StringComparison.OrdinalIgnoreCase))
             return true;
 
-        return string.Equals(run.ParserCycleId, activeLaunch.ParserCycleId, StringComparison.OrdinalIgnoreCase);
+        if (run.StartedAtUtc >= launch.RequestedAtUtc)
+            return true;
+
+        return run.Status == ParserProxyRunStatuses.Running &&
+               launch.Status is not (ParserLaunchRequestStatuses.Queued or ParserLaunchRequestStatuses.Running);
+    }
+
+    private static ParserInstanceProxyAssignment? LaunchJournalAssignment(
+        ParserInstanceConfiguration? config,
+        string? proxyKey)
+    {
+        if (config is null)
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(proxyKey))
+        {
+            var matching = config.ProxyAssignments.FirstOrDefault(x =>
+                x.Proxy is not null &&
+                string.Equals(x.Proxy.Key, proxyKey, StringComparison.OrdinalIgnoreCase));
+            return matching;
+        }
+
+        return config.ProxyAssignments
+            .Where(x => x.Proxy is not null)
+            .OrderBy(x => x.Proxy!.Key)
+            .FirstOrDefault();
     }
 
     private static double Rate(int count, DateTime startedAtUtc, DateTime? lastActivityAtUtc)

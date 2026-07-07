@@ -41,6 +41,82 @@ public sealed class ParserLogMonitoringServiceTests
     }
 
     [Fact]
+    public void ParserLogReader_uses_latest_planned_products_count_not_maximum()
+    {
+        using var temp = new TempDirectory();
+        var logDir = System.IO.Path.Combine(temp.Path, "cycle-1", "proxy-1");
+        Directory.CreateDirectory(logDir);
+        File.WriteAllText(
+            System.IO.Path.Combine(logDir, "stderr.log"),
+            """
+            PARSER_EVENT {"event":"split_completed","timestampUtc":"2026-07-03T09:02:00Z","proxyKey":"proxy-1","phase":"download","plannedProductsCount":262394}
+            PARSER_EVENT {"event":"split_completed","timestampUtc":"2026-07-03T09:02:01Z","proxyKey":"proxy-1","phase":"download","plannedProductsCount":300}
+            PARSER_EVENT {"event":"stream_batch_enqueued","timestampUtc":"2026-07-03T09:03:00Z","proxyKey":"proxy-1","phase":"download","downloadedProductsCount":200,"plannedProductsCount":300}
+            """,
+            System.Text.Encoding.UTF8);
+
+        var reader = new ParserLogReader(new ParserLogMonitoringOptions { LogRoot = temp.Path.ToString() });
+
+        var snapshot = reader.ReadProxyRun("cycle-1", "proxy-1");
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(300, snapshot!.PlannedProductsCount);
+        Assert.Equal(200, snapshot.DownloadedProductsCount);
+    }
+
+    [Fact]
+    public async Task LogMonitoring_does_not_interrupt_when_child_log_is_active_between_parser_events()
+    {
+        await using var context = CreateContext();
+        using var temp = new TempDirectory();
+        var started = new DateTime(2026, 7, 3, 9, 0, 0, DateTimeKind.Utc);
+        var run = new ParserProxyRun(
+            "parser-1",
+            "cycle-1:proxy-1:category:niche",
+            "cycle-1",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-1",
+            "category",
+            "niche",
+            300,
+            0,
+            null,
+            null,
+            null,
+            started,
+            ParserProxyRunPhases.Download);
+        context.ParserProxyRuns.Add(run);
+        await context.SaveChangesAsync();
+
+        var logDir = System.IO.Path.Combine(temp.Path, "cycle-1", "proxy-1");
+        Directory.CreateDirectory(logDir);
+        var stdoutPath = System.IO.Path.Combine(logDir, "stdout.log");
+        File.WriteAllText(
+            stdoutPath,
+            """
+            PARSER_EVENT {"event":"stream_batch_start","timestampUtc":"2026-07-03T09:05:00Z","proxyKey":"proxy-1","phase":"download","downloadedProductsCount":200,"plannedProductsCount":300}
+            [reviews] 2026-07-03 09:08:45.000 | INFO | Review handled product=1
+            """,
+            System.Text.Encoding.UTF8);
+        File.SetLastWriteTimeUtc(stdoutPath, new DateTime(2026, 7, 3, 9, 8, 45, DateTimeKind.Utc));
+
+        var service = new ParserRunLogMonitoringService(
+            context,
+            new ParserLogReader(new ParserLogMonitoringOptions
+            {
+                LogRoot = temp.Path.ToString(),
+                StaleAfterSeconds = 60
+            }));
+
+        await service.ProcessOnceAsync(new DateTime(2026, 7, 3, 9, 9, 15, DateTimeKind.Utc), CancellationToken.None);
+
+        var stored = await context.ParserProxyRuns.SingleAsync();
+        Assert.Equal(ParserProxyRunStatuses.Running, stored.Status);
+        Assert.Equal(300, stored.PlannedProductsCount);
+        Assert.Equal(200, stored.DownloadedProductsCount);
+    }
+
+    [Fact]
     public async Task LogMonitoring_marks_running_run_interrupted_when_logs_are_stale()
     {
         await using var context = CreateContext();
@@ -66,10 +142,12 @@ public sealed class ParserLogMonitoringServiceTests
 
         var logDir = System.IO.Path.Combine(temp.Path, "cycle-1", "proxy-1");
         Directory.CreateDirectory(logDir);
+        var stdoutPath = System.IO.Path.Combine(logDir, "stdout.log");
         File.WriteAllText(
-            System.IO.Path.Combine(logDir, "stdout.log"),
+            stdoutPath,
             """PARSER_EVENT {"event":"stream_batch_enqueued","timestampUtc":"2026-07-03T09:05:00Z","proxyKey":"proxy-1","phase":"download","downloadedProductsCount":100,"plannedProductsCount":300}""",
             System.Text.Encoding.UTF8);
+        File.SetLastWriteTimeUtc(stdoutPath, new DateTime(2026, 7, 3, 9, 5, 0, DateTimeKind.Utc));
 
         var service = new ParserRunLogMonitoringService(
             context,
@@ -125,10 +203,12 @@ public sealed class ParserLogMonitoringServiceTests
 
         var logDir = System.IO.Path.Combine(temp.Path, "cycle-1", "proxy-1");
         Directory.CreateDirectory(logDir);
+        var stdoutPath = System.IO.Path.Combine(logDir, "stdout.log");
         File.WriteAllText(
-            System.IO.Path.Combine(logDir, "stdout.log"),
+            stdoutPath,
             """PARSER_EVENT {"event":"stream_batch_enqueued","timestampUtc":"2026-07-03T09:05:00Z","proxyKey":"proxy-1","phase":"download","downloadedProductsCount":100,"plannedProductsCount":300}""",
             System.Text.Encoding.UTF8);
+        File.SetLastWriteTimeUtc(stdoutPath, new DateTime(2026, 7, 3, 9, 5, 0, DateTimeKind.Utc));
 
         var service = new ParserRunLogMonitoringService(
             context,
@@ -194,6 +274,70 @@ public sealed class ParserLogMonitoringServiceTests
         var storedLaunch = await context.ParserLaunchRequests.SingleAsync();
         Assert.Equal(ParserLaunchRequestStatuses.Failed, storedLaunch.Status);
         Assert.Contains("no active proxy runs", storedLaunch.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LogMonitoring_fails_stale_queued_launch_before_proxy_run_exists()
+    {
+        await using var context = CreateContext();
+        using var temp = new TempDirectory();
+        var requestedAt = new DateTime(2026, 7, 6, 12, 0, 0, DateTimeKind.Utc);
+        var launch = new ParserLaunchRequest(
+            Guid.NewGuid(),
+            "parser-1",
+            ParserLaunchModes.CheckProxy,
+            "proxy-1",
+            3,
+            Guid.NewGuid(),
+            requestedAt);
+        context.ParserLaunchRequests.Add(launch);
+        await context.SaveChangesAsync();
+        var service = new ParserRunLogMonitoringService(
+            context,
+            new ParserLogReader(new ParserLogMonitoringOptions
+            {
+                LogRoot = temp.Path,
+                StaleAfterSeconds = 210
+            }));
+
+        await service.ProcessOnceAsync(requestedAt.AddSeconds(211), CancellationToken.None);
+
+        var storedLaunch = await context.ParserLaunchRequests.SingleAsync();
+        Assert.Equal(ParserLaunchRequestStatuses.Failed, storedLaunch.Status);
+        Assert.Contains("not picked up", storedLaunch.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LogMonitoring_fails_stale_running_launch_before_proxy_run_exists()
+    {
+        await using var context = CreateContext();
+        using var temp = new TempDirectory();
+        var requestedAt = new DateTime(2026, 7, 6, 12, 0, 0, DateTimeKind.Utc);
+        var startedAt = requestedAt.AddSeconds(5);
+        var launch = new ParserLaunchRequest(
+            Guid.NewGuid(),
+            "parser-1",
+            ParserLaunchModes.CheckProxy,
+            "proxy-1",
+            3,
+            Guid.NewGuid(),
+            requestedAt);
+        launch.MarkRunning(startedAt);
+        context.ParserLaunchRequests.Add(launch);
+        await context.SaveChangesAsync();
+        var service = new ParserRunLogMonitoringService(
+            context,
+            new ParserLogReader(new ParserLogMonitoringOptions
+            {
+                LogRoot = temp.Path,
+                StaleAfterSeconds = 210
+            }));
+
+        await service.ProcessOnceAsync(startedAt.AddSeconds(211), CancellationToken.None);
+
+        var storedLaunch = await context.ParserLaunchRequests.SingleAsync();
+        Assert.Equal(ParserLaunchRequestStatuses.Failed, storedLaunch.Status);
+        Assert.Contains("did not create a proxy run", storedLaunch.Error, StringComparison.OrdinalIgnoreCase);
     }
 
     private static ApplicationDbContext CreateContext()

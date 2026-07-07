@@ -16,6 +16,20 @@ from app.durable_outbox import DurableBatchOutbox, utc_now_iso
 from app.market_refresh_runner import PipelineConfig, _resolve_staging_preflight, run_pipeline
 from config import BASE_DIR
 
+IMMUTABLE_RUNTIME_ENV_KEYS = {
+    "PARSER_BATCH_QUEUE_URL",
+    "PARSER_OUTPUT_BASE_DIR",
+    "PARSER_RATE_LIMIT_STATE_DIR",
+    "PARSER_OUTBOX_DIR",
+    "PARSER_PROXY_MAPPING_FILE",
+    "PARSER_EXPLICIT_NICHES_FILE",
+    "PARSER_RUNTIME_RANK_CONFIG_FILE",
+    "PARSER_LAUNCH_CONTEXT_FILE",
+    "PARSER_CYCLE_ID",
+    "PARSER_PROXY_KEY",
+    "PARSER_ONLY_PROXY",
+}
+
 
 @dataclass(frozen=True)
 class CycleOutboxSummary:
@@ -148,6 +162,8 @@ def run_cycle(
     }
     previous_mode_product_env = {key: os.environ.get(key) for key in mode_product_env}
     for key, value in mode_product_env.items():
+        if key in IMMUTABLE_RUNTIME_ENV_KEYS and os.environ.get(key):
+            continue
         os.environ[key] = value
 
     batching = dict(mode_config.get("batching") or {})

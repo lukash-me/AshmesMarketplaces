@@ -123,6 +123,24 @@ public sealed class ParserLaunchRequestService : IParserLaunchRequestService
         if (launch is null)
             return;
 
+        var failedProxyRun = await _dbContext.ParserProxyRuns
+            .AsNoTracking()
+            .Where(x => x.ParserCycleId == launch.ParserCycleId &&
+                        (x.Status == ParserProxyRunStatuses.Failed ||
+                         x.Status == ParserProxyRunStatuses.Interrupted))
+            .OrderByDescending(x => x.FinishedAtUtc ?? x.LastHeartbeatAtUtc)
+            .Select(x => new { x.ProxyKey, x.Status, x.Error })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (failedProxyRun is not null)
+        {
+            var error = $"Parser proxy-run '{failedProxyRun.ProxyKey}' finished with status '{failedProxyRun.Status}'.";
+            if (!string.IsNullOrWhiteSpace(failedProxyRun.Error))
+                error = $"{error} {failedProxyRun.Error}";
+            launch.MarkFailed(error, DateTime.UtcNow);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
         launch.MarkCompleted(DateTime.UtcNow);
         var parserCycleId = launch.ParserCycleId;
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -138,6 +156,30 @@ public sealed class ParserLaunchRequestService : IParserLaunchRequestService
 
         launch.MarkFailed(error, DateTime.UtcNow);
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<ServiceResult<ParserLaunchRequestDto>> CancelAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var access = await EnsureAdminAsync(cancellationToken);
+        if (!access.IsSuccess)
+            return AccessError<ParserLaunchRequestDto>(access.Error!);
+
+        var launch = await _dbContext.ParserLaunchRequests.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (launch is null)
+            return ServiceResult<ParserLaunchRequestDto>.NotFound("Parser launch request was not found.");
+
+        if (!ParserLaunchRequestStatuses.Active.Contains(launch.Status))
+            return ServiceResult<ParserLaunchRequestDto>.Conflict("Можно отменить только ожидающий или выполняющийся launch-запуск.");
+
+        var hasProxyRun = await _dbContext.ParserProxyRuns
+            .AsNoTracking()
+            .AnyAsync(x => x.ParserCycleId == launch.ParserCycleId, cancellationToken);
+        if (hasProxyRun)
+            return ServiceResult<ParserLaunchRequestDto>.Conflict("Launch уже создал proxy-run. Закрывайте выполнение через диагностику proxy-run.");
+
+        launch.Cancel("Запуск отменен администратором до создания proxy-run.", DateTime.UtcNow);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return ServiceResult<ParserLaunchRequestDto>.Success(Map(launch));
     }
 
     private static string? ValidateRequest(string mode, int? batchLimit, string? proxyKey)

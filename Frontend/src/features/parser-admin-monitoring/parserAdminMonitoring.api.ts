@@ -111,6 +111,11 @@ export async function launchParserAdminInstance(
   return response.data;
 }
 
+export async function cancelParserAdminLaunch(id: string): Promise<ParserLaunchRequest> {
+  const response = await http.post<ParserLaunchRequest>(`/admin/parser/launches/${id}/cancel`);
+  return response.data;
+}
+
 export async function createParserAdminProxy(payload: ParserProxySavePayload): Promise<ParserProxy> {
   const response = await http.post<ParserProxy>('/admin/parser/proxies', payload);
   return response.data;

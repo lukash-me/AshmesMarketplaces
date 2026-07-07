@@ -14,7 +14,9 @@ export const parserAdminTexts = {
     refresh: 'Обновить',
     edit: 'Редактировать',
     disable: 'Отключить',
+    deleteProxy: 'Удалить прокси',
     cancel: 'Отмена',
+    cancelLaunch: 'Отменить запуск',
     save: 'Сохранить',
     start: 'Запустить',
     launchLimited: 'Запуск с лимитом',
@@ -79,8 +81,16 @@ export const parserAdminTexts = {
     batchLimit: 'Количество batch-ей',
     proxy: 'Proxy',
     queued: 'Запуск поставлен в очередь',
+    cancelConfirm: 'Отменить запуск до создания proxy-run?',
+    cancelled: 'Запуск отменен.',
     fullConfirmation: 'Все назначенные proxy начнут выгружать все карточки своих ниш. Запуск может занять много времени.',
     alreadyRunning: 'Текущий запуск уже выполняется или ожидает выполнения.'
+  },
+  proxyDelete: {
+    title: 'Удалить прокси',
+    messagePrefix: 'Прокси',
+    messageSuffix: 'будет полностью удален из сервиса и больше не будет использоваться в новых запусках.',
+    note: 'Исторические записи журнала сохранятся, потому что они привязаны к proxy key, а не к записи прокси.'
   },
   rollback: {
     title: 'Откат запуска parser-а',
@@ -136,6 +146,15 @@ export const parserAdminTexts = {
 export function parserStatusLabel(
   item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'>
 ): string {
+  if (item.phase === 'launch_failed') {
+    return 'Ошибка запуска';
+  }
+  if (item.phase === 'launch_cancelled') {
+    return 'Запуск отменен';
+  }
+  if (item.status === 'running' && item.phase === 'launch') {
+    return 'Запуск';
+  }
   if (item.status === 'running' && item.phase === 'wb_preflight') {
     return 'Проверка WB';
   }
@@ -153,6 +172,7 @@ export function parserStatusLabel(
     completed: 'Закончил',
     failed: 'Ошибка',
     interrupted: 'Прерван',
+    cancelled: 'Отменен',
     cooldown: 'Cooldown'
   };
 

@@ -444,9 +444,17 @@ public sealed class ParserProductCdcService
         var evidenceRows = await _dbContext.ParserCurrentProductReviewEvidence
             .Where(x => productIds.Contains(x.WbProductId))
             .ToDictionaryAsync(x => ReviewKey(x.WbProductId, x.ReviewIdOnMp), StringComparer.Ordinal, cancellationToken);
-        var summaryStates = summaries.ToDictionary(
-            x => x.Key,
-            x => ReviewSummaryState.FromCurrent(x.Value),
+        var evidenceByProduct = evidenceRows.Values
+            .GroupBy(x => x.WbProductId, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
+        var summaryStates = productIds.ToDictionary(
+            x => x,
+            x =>
+            {
+                summaries.TryGetValue(x, out var current);
+                evidenceByProduct.TryGetValue(x, out var productEvidence);
+                return ReviewSummaryState.FromEvidence(productEvidence ?? [], current);
+            },
             StringComparer.Ordinal);
         var touchedProducts = new Dictionary<string, ParserReviewRow>(StringComparer.Ordinal);
         var serverReceivedAtUtc = DateTime.UtcNow;
@@ -475,7 +483,10 @@ public sealed class ParserProductCdcService
             }
 
             if (string.Equals(evidence.ReviewHash, hash, StringComparison.Ordinal))
+            {
+                touchedProducts[row.WbProductId] = row;
                 continue;
+            }
 
             AddEvent(row.WbProductId, row.SourceWbRootId, batchId, row.SourceCategory, row.SourceSubcategory, "reviews", "review_updated", evidence.ReviewHash, hash, evidence.ReviewJson, value, serverReceivedAtUtc);
             var oldEvidenceSnapshot = ParserRunCurrentEntitySnapshots.FromReviewEvidence(evidence);
@@ -489,10 +500,11 @@ public sealed class ParserProductCdcService
         {
             var state = summaryStates[productId];
             currentProducts.TryGetValue(productId, out var currentProduct);
-            state.ApplyCoverage(currentProduct?.FeedbackCount, first.ReviewAttributionMode);
+            summaries.TryGetValue(productId, out var current);
+            state.ApplyCoverage(current?.MarketplaceFeedbackCount ?? currentProduct?.FeedbackCount, first.ReviewAttributionMode);
             var value = state.ToValue();
             var hash = Hash(value);
-            if (!summaries.TryGetValue(productId, out var current))
+            if (current is null)
             {
                 var created = new ParserCurrentProductReviewsSummary(
                     first.WbProductId,
@@ -967,6 +979,52 @@ public sealed class ParserProductCdcService
                 current.LastCoverageError);
         }
 
+        public static ReviewSummaryState FromEvidence(
+            IReadOnlyCollection<ParserCurrentProductReviewEvidence> evidenceRows,
+            ParserCurrentProductReviewsSummary? current)
+        {
+            if (evidenceRows.Count == 0)
+            {
+                if (current is null)
+                    return Empty();
+
+                return new ReviewSummaryState(
+                    0,
+                    0,
+                    0,
+                    0,
+                    null,
+                    null,
+                    current.MarketplaceFeedbackCount,
+                    0,
+                    current.CoverageStatus,
+                    current.CoverageSource,
+                    current.LastCoverageError);
+            }
+
+            var reviewsCount = evidenceRows.Count;
+            var ratedRows = evidenceRows.Where(x => x.Rating.HasValue).ToList();
+            var recentNegativeCount = evidenceRows.Count(x => x.Rating.HasValue && x.Rating.Value <= 3);
+            var datedRows = evidenceRows
+                .Select(x => x.CreatedAtOnMp)
+                .Where(x => x.HasValue)
+                .Select(x => x!.Value)
+                .ToList();
+
+            return new ReviewSummaryState(
+                reviewsCount,
+                ratedRows.Count,
+                ratedRows.Sum(x => x.Rating!.Value),
+                recentNegativeCount,
+                datedRows.Count == 0 ? null : datedRows.Max(),
+                datedRows.Count == 0 ? null : datedRows.Min(),
+                current?.MarketplaceFeedbackCount,
+                reviewsCount,
+                current?.CoverageStatus ?? "unknown",
+                current?.CoverageSource ?? "root_capped_fallback",
+                current?.LastCoverageError);
+        }
+
         public void Add(int? rating, DateTime? createdAtOnMp)
         {
             ReviewsCount++;
@@ -1012,9 +1070,12 @@ public sealed class ParserProductCdcService
         {
             MarketplaceFeedbackCount = marketplaceFeedbackCount;
             FetchedReviewsCount = ReviewsCount;
-            CoverageSource = string.Equals(attributionMode, "product_full", StringComparison.OrdinalIgnoreCase)
-                ? "product_full"
-                : "root_capped_fallback";
+            CoverageSource = attributionMode?.Trim() switch
+            {
+                "product_full" => "product_full",
+                "root_variant_filtered" => "root_variant_filtered",
+                _ => "root_capped_fallback"
+            };
 
             if (!marketplaceFeedbackCount.HasValue)
             {

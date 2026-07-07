@@ -849,13 +849,42 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             ? BuildUnknownPositions(products)
             : await LoadPositionSummariesAsync(products, latestRankRunId, ranks, cancellationToken);
 
+        var reviews = await LoadReviewSummaryEvidenceAsync(products, cancellationToken);
+
         return new ProductEvidenceLookup(
             ranks,
             positions,
-            new Dictionary<Guid, ParserProductReviewEvidenceDto>(),
+            reviews,
             new Dictionary<Guid, ParserProductLogisticsSummaryDto>(),
             new Dictionary<Guid, ParserProductLogisticsDetailDto>(),
             new Dictionary<Guid, ParserProductDeliveryProfileDto>());
+    }
+
+    private async Task<IReadOnlyDictionary<Guid, ParserProductReviewEvidenceDto>> LoadReviewSummaryEvidenceAsync(
+        IReadOnlyList<ParserProductRow> products,
+        CancellationToken cancellationToken)
+    {
+        var productIds = products
+            .Select(x => x.WbProductId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (productIds.Count == 0)
+            return new Dictionary<Guid, ParserProductReviewEvidenceDto>();
+
+        var reviewSummaries = await _dbContext.ParserCurrentProductReviewsSummaries
+            .AsNoTracking()
+            .Where(x => productIds.Contains(x.WbProductId))
+            .ToDictionaryAsync(x => x.WbProductId, StringComparer.Ordinal, cancellationToken);
+
+        var result = new Dictionary<Guid, ParserProductReviewEvidenceDto>();
+        foreach (var product in products)
+        {
+            result[product.Id] = EnrichReviewEvidence(EmptyReviewEvidence, product.WbProductId, reviewSummaries);
+        }
+
+        return result;
     }
 
     private async Task<IReadOnlyDictionary<Guid, ParserProductRankSummaryDto>> LoadRankSummariesAsync(

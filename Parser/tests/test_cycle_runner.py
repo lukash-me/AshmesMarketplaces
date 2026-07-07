@@ -17,7 +17,10 @@ from app import cycle_runner
 
 
 class FakeCycleOutbox:
+    last_server_base_url: str | None = None
+
     def __init__(self, *args, **kwargs) -> None:
+        FakeCycleOutbox.last_server_base_url = kwargs.get("server_base_url")
         self.send_calls = 0
         self.poll_calls = 0
         self.cleanup_calls = 0
@@ -56,7 +59,10 @@ class CycleRunnerTests(unittest.TestCase):
                         "modes": {
                             "batched_full_enrichment": {
                                 "batching": {"batch_size": 2, "worker_id": "parser-test"},
-                                "product": {"config": "Parser/presets/home_goods_demo.env"},
+                                "product": {
+                                    "config": "Parser/presets/home_goods_demo.env",
+                                    "env": {"PARSER_BATCH_QUEUE_URL": "http://localhost:5019/api/v1/parser"},
+                                },
                             }
                         },
                     },
@@ -124,6 +130,7 @@ class CycleRunnerTests(unittest.TestCase):
         self.assertEqual(report["pipelineRunDir"], str(pipeline_dir))
         self.assertEqual(report["preflightOutbox"]["send_attempts"], 2)
         self.assertEqual(report["finalOutbox"]["cleaned_payloads"], 1)
+        self.assertEqual(FakeCycleOutbox.last_server_base_url, "http://api.local/api/v1/parser")
 
     def test_cycle_fails_when_pipeline_manifest_failed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -305,6 +312,85 @@ class CycleRunnerTests(unittest.TestCase):
         self.assertEqual(observed["server_base_url"], "http://api.local/api/v1/parser")
         self.assertEqual(os.environ.get("PARSER_BATCH_QUEUE_URL"), previous_queue_url)
         self.assertEqual(os.environ.get("PARSER_OUTBOX_DIR"), previous_outbox_dir)
+
+    def test_cycle_preserves_runtime_service_env_over_product_preset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_dir = Path(temp)
+            config_path = temp_dir / "cycle_config.json"
+            output_dir = temp_dir / "output"
+            static_mapping = temp_dir / "static_proxy_mapping.json"
+            static_niches = temp_dir / "static_niches.json"
+            static_rank = temp_dir / "static_rank.json"
+            runtime_mapping = temp_dir / "runtime_proxy_mapping.json"
+            runtime_niches = temp_dir / "runtime_niches.json"
+            runtime_rank = temp_dir / "runtime_rank.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "pipeline_name": "cycle_test",
+                        "output_base_dir": str(output_dir),
+                        "defaults": {"fail_fast": False, "ingestion": "disabled"},
+                        "modes": {
+                            "batched_full_enrichment": {
+                                "batching": {"batch_size": 100, "worker_id": "parser-test"},
+                                "product": {
+                                    "config": "Parser/presets/home_goods_demo.env",
+                                    "env": {
+                                        "PARSER_PROXY_MAPPING_FILE": str(static_mapping),
+                                        "PARSER_EXPLICIT_NICHES_FILE": str(static_niches),
+                                        "PARSER_RUNTIME_RANK_CONFIG_FILE": str(static_rank),
+                                    },
+                                },
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            pipeline_dir = output_dir / "pipelines" / "cycle-pipeline"
+            pipeline_dir.mkdir(parents=True)
+            observed: dict[str, str | None] = {}
+
+            def fake_run_pipeline(**kwargs):
+                observed["mapping"] = os.environ.get("PARSER_PROXY_MAPPING_FILE")
+                observed["niches"] = os.environ.get("PARSER_EXPLICIT_NICHES_FILE")
+                observed["rank"] = os.environ.get("PARSER_RUNTIME_RANK_CONFIG_FILE")
+                return pipeline_dir
+
+            previous = {
+                key: os.environ.get(key)
+                for key in (
+                    "PARSER_PROXY_MAPPING_FILE",
+                    "PARSER_EXPLICIT_NICHES_FILE",
+                    "PARSER_RUNTIME_RANK_CONFIG_FILE",
+                )
+            }
+            try:
+                os.environ["PARSER_PROXY_MAPPING_FILE"] = str(runtime_mapping)
+                os.environ["PARSER_EXPLICIT_NICHES_FILE"] = str(runtime_niches)
+                os.environ["PARSER_RUNTIME_RANK_CONFIG_FILE"] = str(runtime_rank)
+                with patch.object(cycle_runner, "run_pipeline", side_effect=fake_run_pipeline), patch.object(
+                    cycle_runner,
+                    "_resolve_staging_preflight",
+                    return_value=SimpleNamespace(requested=False, connection_string=None, connection_string_source="missing"),
+                ):
+                    cycle_runner.run_cycle(
+                        config_path=config_path,
+                        mode="batched_full_enrichment",
+                        stage_to_db=False,
+                        connection_string=None,
+                    )
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(observed["mapping"], str(runtime_mapping))
+        self.assertEqual(observed["niches"], str(runtime_niches))
+        self.assertEqual(observed["rank"], str(runtime_rank))
 
 
 if __name__ == "__main__":

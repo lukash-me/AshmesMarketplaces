@@ -76,7 +76,15 @@ def _resolve_path(value: str | Path, *, base_dir: Path) -> Path:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def _load_launch_proxy_mapping(path: Path) -> ProxyMapping:
+    payload = _load_json(path)
+    mapping_payload = payload.get("proxyMapping") if isinstance(payload.get("proxyMapping"), dict) else payload
+    if not isinstance(mapping_payload, dict):
+        raise ValueError("Launch context must contain proxy mapping data.")
+    return ProxyMapping.from_dict(mapping_payload)
 
 
 def _mode_config(config_payload: dict[str, Any], mode: str) -> dict[str, Any]:
@@ -270,6 +278,7 @@ def build_child_process_plans(
     python_executable: str | None = None,
     parser_cycle_id: str | None = None,
     cycle_kind: str | None = None,
+    launch_context_path: Path | None = None,
 ) -> list[ChildProcessPlan]:
     config_path = config_path.resolve()
     payload = _load_json(config_path)
@@ -283,13 +292,21 @@ def build_child_process_plans(
         for key, value in ((mode_config.get("product") or {}).get("env") or {}).items()
         if value is not None
     }
-    runtime_url = runtime_proxy_assignments_url(parser_instance_id=parser_instance_id)
-    if runtime_url and proxy_mapping_path is None:
-        print(f"[proxy-supervisor] loading proxy assignments from backend: {runtime_url}")
-        proxy_mapping = load_runtime_proxy_mapping(runtime_url)
+    for env_key in (
+        "PARSER_BATCH_QUEUE_URL",
+        "PARSER_OUTPUT_BASE_DIR",
+        "PARSER_RATE_LIMIT_STATE_DIR",
+    ):
+        env_value = os.environ.get(env_key)
+        if env_value:
+            product_env[env_key] = env_value
+    if launch_context_path is not None:
+        resolved_launch_context_path = launch_context_path.resolve()
+        print(f"[proxy-supervisor] loading immutable launch context: {resolved_launch_context_path}")
+        proxy_mapping = _load_launch_proxy_mapping(resolved_launch_context_path)
         explicit_niches = _explicit_niches_from_assignments(proxy_mapping.assignments)
         if not explicit_niches:
-            raise ValueError("Backend proxy assignments do not contain launchable explicit WB niches.")
+            raise ValueError("Launch context does not contain launchable explicit WB niches.")
         runtime_mapping_path, runtime_niches_path, runtime_rank_config_path = _write_runtime_files(
             proxy_mapping=proxy_mapping,
             explicit_niches=explicit_niches,
@@ -299,19 +316,37 @@ def build_child_process_plans(
         product_env["PARSER_PROXY_MAPPING_FILE"] = str(runtime_mapping_path)
         product_env["PARSER_EXPLICIT_NICHES_FILE"] = str(runtime_niches_path)
         product_env["PARSER_RUNTIME_RANK_CONFIG_FILE"] = str(runtime_rank_config_path)
+        product_env["PARSER_LAUNCH_CONTEXT_FILE"] = str(resolved_launch_context_path)
     else:
-        mapping_path = _proxy_mapping_path(config_path, mode_config, proxy_mapping_path)
-        proxy_mapping = ProxyMapping.load_with_local_override(mapping_path)
-        explicit_niches = _load_explicit_niches(_explicit_niches_path(config_path, mode_config))
-        runtime_mapping_path, runtime_niches_path, runtime_rank_config_path = _write_runtime_files(
-            proxy_mapping=proxy_mapping,
-            explicit_niches=explicit_niches,
-            outbox_root_dir=outbox_root_dir,
-            parser_cycle_id=effective_cycle_id,
-        )
-        product_env["PARSER_PROXY_MAPPING_FILE"] = str(runtime_mapping_path)
-        product_env["PARSER_EXPLICIT_NICHES_FILE"] = str(runtime_niches_path)
-        product_env["PARSER_RUNTIME_RANK_CONFIG_FILE"] = str(runtime_rank_config_path)
+        runtime_url = runtime_proxy_assignments_url(parser_instance_id=parser_instance_id)
+        if runtime_url and proxy_mapping_path is None:
+            print(f"[proxy-supervisor] loading proxy assignments from backend: {runtime_url}")
+            proxy_mapping = load_runtime_proxy_mapping(runtime_url)
+            explicit_niches = _explicit_niches_from_assignments(proxy_mapping.assignments)
+            if not explicit_niches:
+                raise ValueError("Backend proxy assignments do not contain launchable explicit WB niches.")
+            runtime_mapping_path, runtime_niches_path, runtime_rank_config_path = _write_runtime_files(
+                proxy_mapping=proxy_mapping,
+                explicit_niches=explicit_niches,
+                outbox_root_dir=outbox_root_dir,
+                parser_cycle_id=effective_cycle_id,
+            )
+            product_env["PARSER_PROXY_MAPPING_FILE"] = str(runtime_mapping_path)
+            product_env["PARSER_EXPLICIT_NICHES_FILE"] = str(runtime_niches_path)
+            product_env["PARSER_RUNTIME_RANK_CONFIG_FILE"] = str(runtime_rank_config_path)
+        else:
+            mapping_path = _proxy_mapping_path(config_path, mode_config, proxy_mapping_path)
+            proxy_mapping = ProxyMapping.load_with_local_override(mapping_path)
+            explicit_niches = _load_explicit_niches(_explicit_niches_path(config_path, mode_config))
+            runtime_mapping_path, runtime_niches_path, runtime_rank_config_path = _write_runtime_files(
+                proxy_mapping=proxy_mapping,
+                explicit_niches=explicit_niches,
+                outbox_root_dir=outbox_root_dir,
+                parser_cycle_id=effective_cycle_id,
+            )
+            product_env["PARSER_PROXY_MAPPING_FILE"] = str(runtime_mapping_path)
+            product_env["PARSER_EXPLICIT_NICHES_FILE"] = str(runtime_niches_path)
+            product_env["PARSER_RUNTIME_RANK_CONFIG_FILE"] = str(runtime_rank_config_path)
     python_path = python_executable or sys.executable
 
     plans: list[ChildProcessPlan] = []
@@ -505,6 +540,7 @@ def run_supervisor(
     only_subcategory: str | None = None,
     python_executable: str | None = None,
     skip_proxy_preflight: bool = False,
+    launch_context_path: Path | None = None,
 ) -> list[ChildProcessResult]:
     parser_cycle_id = (os.environ.get("PARSER_CYCLE_ID") or "").strip() or f"parser-cycle-{uuid.uuid4().hex}"
     cycle_kind = (os.environ.get("PARSER_CYCLE_KIND") or "").strip() or (
@@ -522,6 +558,7 @@ def run_supervisor(
         python_executable=python_executable,
         parser_cycle_id=parser_cycle_id,
         cycle_kind=cycle_kind,
+        launch_context_path=launch_context_path,
     )
     if not skip_proxy_preflight:
         preflight_items = _run_preflight(plans)
@@ -554,6 +591,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--python-executable", default=sys.executable)
     parser.add_argument("--skip-proxy-preflight", action="store_true")
+    parser.add_argument("--launch-context", type=Path)
     return parser.parse_args()
 
 
@@ -571,6 +609,7 @@ def main() -> None:
             only_subcategory=args.only_subcategory,
             python_executable=args.python_executable,
             skip_proxy_preflight=args.skip_proxy_preflight,
+            launch_context_path=args.launch_context,
         )
     except Exception as exception:
         print(f"[proxy-supervisor] failed: {exception}", file=sys.stderr)

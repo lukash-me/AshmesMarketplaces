@@ -11,6 +11,18 @@ export interface PublicMarketIntelligenceParams {
   baselineProductRunId?: string;
 }
 
+export interface PublicMarketIntelligenceAvailableContext {
+  sourceCategory: string | null;
+  sourceSubcategory: string | null;
+  query: string;
+  sourceRegionDest: string | null;
+  sort: string | null;
+  topN: number;
+  sampleSize: number;
+  calculatedAtUtc: string | null;
+  latestObservedAtUtc: string | null;
+}
+
 export interface PublicMarketIntelligence {
   context: PublicMarketContext;
   observationWindow: ObservationWindow;

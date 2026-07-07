@@ -20,6 +20,8 @@ ENV_FILE="$REPO_ROOT/.env"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.local.yml"
 PID_ROOT="$REPO_ROOT/.dev/pids"
 BACKEND_PID_FILE="$PID_ROOT/backend.pid"
+WORKER_PID_FILE="$PID_ROOT/worker.pid"
+LEGACY_WORKER_PID_FILE="$PID_ROOT/analytics-worker.pid"
 FRONTEND_PID_FILE="$PID_ROOT/frontend.pid"
 
 step() {
@@ -74,6 +76,8 @@ stop_managed_process() {
 }
 
 stop_managed_process "backend API" "$BACKEND_PID_FILE"
+stop_managed_process "analytics worker" "$WORKER_PID_FILE"
+stop_managed_process "analytics worker legacy pid" "$LEGACY_WORKER_PID_FILE"
 stop_managed_process "frontend Vite" "$FRONTEND_PID_FILE"
 
 if [[ "$STOP_DOCKER" == "true" ]]; then

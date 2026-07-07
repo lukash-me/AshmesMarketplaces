@@ -79,8 +79,11 @@ services:
       Intelligence__HotProductsAlgorithm: rule_based_hot_products_v1
       WorkspaceMarketProductMediaStorage__RootPath: /app/wwwroot/uploads
       WorkspaceMarketProductMediaStorage__PublicBasePath: /uploads
+      DataProtection__KeysPath: /app/data-protection-keys
+      DataProtection__ApplicationName: AshmesMarketplaces
     volumes:
       - /var/lib/ashmes/uploads:/app/wwwroot/uploads
+      - data_protection_keys:/app/data-protection-keys
     expose:
       - "8080"
     depends_on:
@@ -114,10 +117,63 @@ services:
       Intelligence__TimeoutSeconds: "1200"
       Intelligence__MaxProductsPerRequest: "100000"
       Intelligence__HotProductsAlgorithm: rule_based_hot_products_v1
+      WorkerFeatures__AnalysisRefreshEnabled: "true"
+      WorkerFeatures__ParserBatchProcessingEnabled: "true"
+      WorkerFeatures__ParserLaunchEnabled: "false"
+      WorkerFeatures__ParserLogMonitoringEnabled: "true"
+      ParserMonitoring__LogRoot: /parser-data/output/outbox/_runtime/logs
+      ParserMonitoring__StaleAfterSeconds: "210"
+    volumes:
+      - /var/lib/ashmes/parser:/parser-data
     depends_on:
       postgres:
         condition: service_healthy
       intelligence:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 3072m
+    cpus: "2.00"
+
+  parser-launcher:
+    build:
+      context: ../..
+      dockerfile: Backend/ParserLauncher.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Intelligence__Enabled: "false"
+      WorkerFeatures__AnalysisRefreshEnabled: "false"
+      WorkerFeatures__ParserBatchProcessingEnabled: "false"
+      WorkerFeatures__ParserLaunchEnabled: "true"
+      WorkerFeatures__ParserLogMonitoringEnabled: "false"
+      ParserLaunch__WorkingDirectory: /workspace
+      ParserLaunch__PythonExecutable: /opt/ashmes-parser-venv/bin/python
+      ParserLaunch__SupervisorScriptPath: /workspace/Parser/app/proxy_supervisor.py
+      ParserLaunch__ConfigPath: /workspace/Parser/presets/production/market_refresh_service_runtime.prod.json
+      ParserLaunch__Mode: batched_full_enrichment
+      ParserLaunch__OutboxRoot: /parser-data/output/outbox
+      ParserLaunch__OutputBaseDir: /parser-data/output
+      ParserLaunch__RateLimitStateDir: /parser-data/output/rate_limits
+      ParserLaunch__BatchQueueUrl: http://api:8080/api/v1/parser
+      ParserLaunch__RequireServiceRuntime: "true"
+      DataProtection__KeysPath: /app/data-protection-keys
+      DataProtection__ApplicationName: AshmesMarketplaces
+      PARSER_BATCH_QUEUE_URL: http://api:8080/api/v1/parser
+      PARSER_OUTPUT_BASE_DIR: /parser-data/output
+      PARSER_RATE_LIMIT_STATE_DIR: /parser-data/output/rate_limits
+    volumes:
+      - /var/lib/ashmes/parser:/parser-data
+      - data_protection_keys:/app/data-protection-keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
         condition: service_healthy
     networks:
       - ashmes_internal
@@ -211,35 +267,6 @@ services:
     mem_limit: 1536m
     cpus: "1.50"
 
-  parser:
-    profiles:
-      - worker
-    build:
-      context: ../..
-      dockerfile: Parser/Dockerfile
-    restart: on-failure
-    stop_grace_period: 60s
-    environment:
-      PARSER_BATCH_QUEUE_URL: http://api:8080/api/v1/parser
-      PARSER_INSTANCE_ID: parser-home-goods-01
-      PARSER_OUTBOX_DIR: /parser-data/outbox
-    volumes:
-      - /var/lib/ashmes/parser:/parser-data
-    depends_on:
-      api:
-        condition: service_healthy
-    working_dir: /app
-    command: >
-      /bin/sh -c "python Parser/app/proxy_supervisor.py
-      --config Parser/presets/production/market_refresh_selected_niches_batched.prod.json
-      --mode batched_full_enrichment"
-    networks:
-      - ashmes_public
-      - ashmes_internal
-    logging: *default-logging
-    mem_limit: 2048m
-    cpus: "1.50"
-
 networks:
   ashmes_public:
   ashmes_internal:
@@ -250,3 +277,4 @@ volumes:
   caddy_data:
   caddy_config:
   intelligence_data:
+  data_protection_keys:

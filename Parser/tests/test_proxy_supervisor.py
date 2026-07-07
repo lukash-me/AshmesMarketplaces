@@ -11,7 +11,7 @@ if str(PARSER_DIR) not in sys.path:
     sys.path.insert(0, str(PARSER_DIR))
 
 from app.proxy_mapping import ProxyDefinition, ProxyMapping
-from app.proxy_supervisor import ChildProcessPlan, build_child_process_plans, run_child_processes
+from app.proxy_supervisor import ChildProcessPlan, _load_json, build_child_process_plans, run_child_processes
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -278,6 +278,69 @@ def test_supervisor_uses_backend_runtime_assignments(monkeypatch, tmp_path: Path
         "Кеды и кроссовки",
     ]
     assert plans[0].environment["PARSER_RUNTIME_RANK_CONTEXT_ID"] == "proxy-1_Платья_и_сарафаны"
+
+
+def test_supervisor_launch_context_is_source_of_truth_for_service_launch(tmp_path: Path) -> None:
+    config, _ = _write_supervisor_fixture(tmp_path)
+    proxy_guid = "aef8f7a4-f1d2-4144-823d-9889b35b00df"
+    launch_context = tmp_path / "launch_context.json"
+    _write_json(
+        launch_context,
+        {
+            "launchId": "launch-1",
+            "parserCycleId": "parser-cycle-guid",
+            "parserInstanceId": "parser-local-01",
+            "launchMode": "check_proxy",
+            "defaultProxy": {"key": "local-proxy", "type": "direct"},
+            "proxies": [
+                {
+                    "key": proxy_guid,
+                    "type": "http-proxy",
+                    "baseUrl": "http://10.0.0.1:8080",
+                    "credentials": {"login": "user", "password": "secret"},
+                }
+            ],
+            "niches": [
+                {
+                    "wbCategoryId": 10012,
+                    "sourceCategory": "Красота",
+                    "sourceSubcategory": "Органическая косметика",
+                    "sourcePath": "Красота / Органическая косметика",
+                    "searchQuery": "menu_redirect_subject_v2_10012 органическая косметика",
+                    "parserSearchText": "Органическая косметика",
+                    "proxyKey": proxy_guid,
+                    "enabled": True,
+                }
+            ],
+        },
+    )
+
+    plans = build_child_process_plans(
+        config_path=config,
+        mode="batched_full_enrichment",
+        parser_instance_id="parser-local-01",
+        outbox_root_dir=tmp_path / "outbox",
+        smoke_max_batches=3,
+        only_proxy=proxy_guid,
+        python_executable="python",
+        parser_cycle_id="parser-cycle-guid",
+        launch_context_path=launch_context,
+    )
+
+    assert [plan.proxy_key for plan in plans] == [proxy_guid]
+    assert plans[0].source_subcategory == "Органическая косметика"
+    assert plans[0].environment["PARSER_LAUNCH_CONTEXT_FILE"] == str(launch_context.resolve())
+    runtime_mapping = json.loads(Path(plans[0].environment["PARSER_PROXY_MAPPING_FILE"]).read_text(encoding="utf-8"))
+    assert [item["key"] for item in runtime_mapping["proxies"]] == [proxy_guid]
+    assert [item["proxyKey"] for item in runtime_mapping["niches"]] == [proxy_guid]
+
+
+def test_supervisor_load_json_accepts_utf8_bom(tmp_path: Path) -> None:
+    payload = {"parserCycleId": "parser-cycle-with-bom"}
+    path = tmp_path / "launch_context.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps(payload).encode("utf-8"))
+
+    assert _load_json(path) == payload
 
 
 def test_supervisor_persists_runner_and_child_logs(tmp_path: Path) -> None:

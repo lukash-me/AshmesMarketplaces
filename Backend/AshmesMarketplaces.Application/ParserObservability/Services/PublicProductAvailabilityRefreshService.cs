@@ -41,6 +41,10 @@ public sealed class PublicProductAvailabilityRefreshService : IPublicProductAvai
         var items = await LoadAvailableCurrentProductsAsync(cancellationToken);
 
         stopwatch.Stop();
+        if (items.Count == 0)
+            return ServiceResult<PublicProductAvailabilityRefreshResult>.NotFound(
+                "Данные для расчета доступности товара не найдены.");
+
         var nowUtc = DateTime.UtcNow;
         var snapshot = await _dbContext.PublicProductAvailabilitySnapshots
             .FirstOrDefaultAsync(x => x.SnapshotKey == PublicProductAvailabilitySnapshot.SnapshotKeyValue, cancellationToken)

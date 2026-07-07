@@ -20,6 +20,7 @@ public sealed record ParserLogSnapshot(
     int SplitRangesCount,
     DateTime? FirstLogAtUtc,
     DateTime? LastLogAtUtc,
+    DateTime? LastActivityAtUtc,
     double ProductsPerSecond,
     double RangesPerSecond);
 
@@ -68,6 +69,8 @@ public sealed class ParserLogReader : IParserLogReader
     {
         if (!File.Exists(path))
             return;
+
+        state.NoteFileActivity(File.GetLastWriteTimeUtc(path));
 
         foreach (var line in File.ReadLines(path))
         {
@@ -147,7 +150,7 @@ public sealed class ParserLogReader : IParserLogReader
             else
                 Phase = InferPhase(GetString(root, "event"), Phase);
 
-            PlannedProductsCount = MaxValue(root, "plannedProductsCount", PlannedProductsCount);
+            PlannedProductsCount = LatestValue(root, "plannedProductsCount", PlannedProductsCount);
             DownloadedProductsCount = MaxValue(root, "downloadedProductsCount", DownloadedProductsCount);
             RangeChecksCount = MaxValue(root, "rangeChecksCount", RangeChecksCount);
             FinalRangesCount = MaxValue(root, "finalRangesCount", FinalRangesCount);
@@ -174,8 +177,22 @@ public sealed class ParserLogReader : IParserLogReader
                 SplitRangesCount,
                 FirstLogAtUtc,
                 LastLogAtUtc,
+                LastActivityAtUtc,
                 Math.Round(DownloadedProductsCount / elapsedSeconds, 2),
                 Math.Round(RangeChecksCount / elapsedSeconds, 2));
+        }
+
+        public DateTime? LastActivityAtUtc { get; private set; }
+
+        public void NoteFileActivity(DateTime lastWriteTimeUtc)
+        {
+            if (lastWriteTimeUtc == default)
+                return;
+
+            lastWriteTimeUtc = DateTime.SpecifyKind(lastWriteTimeUtc.ToUniversalTime(), DateTimeKind.Utc);
+            LastActivityAtUtc = !LastActivityAtUtc.HasValue || lastWriteTimeUtc > LastActivityAtUtc.Value
+                ? lastWriteTimeUtc
+                : LastActivityAtUtc;
         }
 
         private static int MaxValue(JsonElement root, string name, int current)
@@ -188,6 +205,16 @@ public sealed class ParserLogReader : IParserLogReader
                 JsonValueKind.Number when value.TryGetInt32(out var intValue) => Math.Max(current, intValue),
                 _ => current
             };
+        }
+
+        private static int LatestValue(JsonElement root, string name, int current)
+        {
+            if (!root.TryGetProperty(name, out var value))
+                return current;
+
+            return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var intValue)
+                ? Math.Max(0, intValue)
+                : current;
         }
 
         private static DateTime? GetDateTime(JsonElement root, string name)

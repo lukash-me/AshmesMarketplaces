@@ -8,6 +8,7 @@ public sealed class PublicAnalysisManualRunRequest
     public const string RunningStatus = "running";
     public const string CompletedStatus = "completed";
     public const string FailedStatus = "failed";
+    public const string NoDataStatus = "no_data";
 
     public static readonly string[] ActiveStatuses = [QueuedStatus, RunningStatus];
 
@@ -73,6 +74,16 @@ public sealed class PublicAnalysisManualRunRequest
         Status = FailedStatus;
         CompletedAtUtc = completedAtUtc;
         Error = string.IsNullOrWhiteSpace(error) ? "Manual analysis run failed." : error.Trim();
+        UpdatedAtUtc = completedAtUtc;
+    }
+
+    public void MarkNoData(DateTime completedAtUtc, string message)
+    {
+        DateTimeUtc.EnsureUtc(completedAtUtc, nameof(completedAtUtc));
+
+        Status = NoDataStatus;
+        CompletedAtUtc = completedAtUtc;
+        Error = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
         UpdatedAtUtc = completedAtUtc;
     }
 }

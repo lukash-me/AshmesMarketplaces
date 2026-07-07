@@ -55,6 +55,21 @@ public sealed class ParserLaunchCommandBuilderTests
         Assert.Equal("1", command.Environment["PARSER_FORCE_REFRESH_TOKEN"]);
     }
 
+    [Fact]
+    public void Build_adds_launch_context_for_service_launch()
+    {
+        var request = Launch(ParserLaunchModes.CheckProxy, batchLimit: 2, proxyKey: "proxy-guid");
+
+        var command = ParserLaunchCommandBuilder.Build(request, Options(), "E:/runtime/launch_context.json");
+
+        Assert.Contains("--launch-context", command.Arguments);
+        Assert.Contains("E:/runtime/launch_context.json", command.Arguments);
+        Assert.Equal("E:/runtime/launch_context.json", command.Environment["PARSER_LAUNCH_CONTEXT_FILE"]);
+        Assert.Equal("http://api:8080/api/v1/parser", command.Environment["PARSER_BATCH_QUEUE_URL"]);
+        Assert.Equal("/parser-data/output", command.Environment["PARSER_OUTPUT_BASE_DIR"]);
+        Assert.Equal("/parser-data/output/rate_limits", command.Environment["PARSER_RATE_LIMIT_STATE_DIR"]);
+    }
+
     private static ParserLaunchCommandOptions Options() =>
         new(
             "python",
@@ -62,7 +77,10 @@ public sealed class ParserLaunchCommandBuilderTests
             "Parser/presets/production/market_refresh_selected_niches_batched.prod.json",
             "batched_full_enrichment",
             "Parser/output/outbox",
-            "E:/AshmesMarketplaces");
+            "E:/AshmesMarketplaces",
+            "http://api:8080/api/v1/parser",
+            "/parser-data/output",
+            "/parser-data/output/rate_limits");
 
     private static ParserLaunchRequest Launch(string mode, int? batchLimit = null, string? proxyKey = null)
     {

@@ -41,7 +41,7 @@ public sealed class ParserRunLogMonitoringService : IParserRunLogMonitoringServi
             var lastActivityAtUtc = run.LastHeartbeatAtUtc;
             if (snapshot is not null)
             {
-                lastActivityAtUtc = snapshot.LastLogAtUtc ?? lastActivityAtUtc;
+                lastActivityAtUtc = snapshot.LastActivityAtUtc ?? snapshot.LastLogAtUtc ?? lastActivityAtUtc;
                 run.UpdateProgress(
                     snapshot.PlannedProductsCount,
                     snapshot.DownloadedProductsCount,
@@ -83,6 +83,7 @@ public sealed class ParserRunLogMonitoringService : IParserRunLogMonitoringServi
         }
 
         hasChanges |= await CloseStaleRunningLaunchesWithoutActiveProxyRunsAsync(runs, nowUtc, cancellationToken);
+        hasChanges |= await CloseStaleLaunchesBeforeProxyRunsAsync(staleAfter, nowUtc, cancellationToken);
 
         if (hasChanges)
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -120,6 +121,63 @@ public sealed class ParserRunLogMonitoringService : IParserRunLogMonitoringServi
                 continue;
 
             launch.MarkFailed("Parser launch interrupted: no active proxy runs remain.", nowUtc);
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private async Task<bool> CloseStaleLaunchesBeforeProxyRunsAsync(
+        TimeSpan staleAfter,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var activeLaunches = await _dbContext.ParserLaunchRequests
+            .Where(x => ParserLaunchRequestStatuses.Active.Contains(x.Status))
+            .ToListAsync(cancellationToken);
+        if (activeLaunches.Count == 0)
+            return false;
+
+        var cycleIds = activeLaunches
+            .Select(x => x.ParserCycleId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var cyclesWithProxyRuns = cycleIds.Count == 0
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : (await _dbContext.ParserProxyRuns
+                .AsNoTracking()
+                .Where(x => cycleIds.Contains(x.ParserCycleId))
+                .Select(x => x.ParserCycleId)
+                .Distinct()
+                .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var changed = false;
+        foreach (var launch in activeLaunches)
+        {
+            if (cyclesWithProxyRuns.Contains(launch.ParserCycleId))
+                continue;
+
+            var hasProxyRunAfterLaunch = await _dbContext.ParserProxyRuns
+                .AsNoTracking()
+                .AnyAsync(
+                    x => x.ParserInstanceId == launch.ParserInstanceId &&
+                         x.StartedAtUtc >= launch.RequestedAtUtc,
+                    cancellationToken);
+            if (hasProxyRunAfterLaunch)
+                continue;
+
+            var anchor = launch.Status == ParserLaunchRequestStatuses.Queued
+                ? launch.RequestedAtUtc
+                : launch.StartedAtUtc ?? launch.RequestedAtUtc;
+            if (nowUtc - anchor <= staleAfter)
+                continue;
+
+            var error = launch.Status == ParserLaunchRequestStatuses.Queued
+                ? $"Parser launch was not picked up by worker since {anchor:O}."
+                : $"Parser launch did not create a proxy run since {anchor:O}.";
+            launch.MarkFailed(error, nowUtc);
             changed = true;
         }
 

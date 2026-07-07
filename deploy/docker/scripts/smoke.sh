@@ -51,6 +51,11 @@ check_http_200 "${API_HEALTH_URL}" "API health"
 info "Internal Docker health status:"
 compose ps frontend api intelligence analytics-worker postgres proxy
 
-info "analytics-worker has no HTTP health endpoint; Docker running/restart status is its readiness signal."
+if ! compose ps --status running --services analytics-worker | grep -qx 'analytics-worker'; then
+  printf '[ashmes-docker] analytics-worker is not running.\n' >&2
+  compose ps analytics-worker >&2
+  exit 1
+fi
+info "analytics-worker is running."
 
 info "Smoke checks completed."

@@ -8,12 +8,15 @@ ENV_EXAMPLE_FILE="$REPO_ROOT/.env.example"
 COMPOSE_FILE="$REPO_ROOT/docker-compose.local.yml"
 FRONTEND_ROOT="$REPO_ROOT/Frontend"
 BACKEND_PROJECT="$REPO_ROOT/Backend/AshmesMarketplaces.API/AshmesMarketplaces.API.csproj"
+WORKER_PROJECT="$REPO_ROOT/Backend/AshmesMarketplaces.AnalyticsWorker/AshmesMarketplaces.AnalyticsWorker.csproj"
 DEV_ROOT="$REPO_ROOT/.dev"
 LOG_ROOT="$DEV_ROOT/logs"
 PID_ROOT="$DEV_ROOT/pids"
 BACKEND_LOG="$LOG_ROOT/backend.log"
+WORKER_LOG="$LOG_ROOT/worker.log"
 FRONTEND_LOG="$LOG_ROOT/frontend.log"
 BACKEND_PID_FILE="$PID_ROOT/backend.pid"
+WORKER_PID_FILE="$PID_ROOT/worker.pid"
 FRONTEND_PID_FILE="$PID_ROOT/frontend.pid"
 
 API_URL="http://localhost:5019"
@@ -172,6 +175,21 @@ wait_port() {
   fail "$purpose did not start listening on port $port within $timeout_seconds seconds."
 }
 
+wait_managed_process() {
+  local pid_file="$1"
+  local purpose="$2"
+  local log_path="$3"
+  local delay_seconds="${4:-3}"
+
+  sleep "$delay_seconds"
+  local pid
+  pid="$(tr -d '[:space:]' < "$pid_file")"
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    fail "$purpose exited shortly after startup:
+$(tail -n 40 "$log_path" 2>/dev/null || true)"
+  fi
+}
+
 step "Checking local development prerequisites..."
 DOCKER_BIN="$(resolve_command docker docker docker.exe)"
 DOTNET_BIN="$(resolve_command dotnet dotnet dotnet.exe)"
@@ -220,6 +238,19 @@ if ! managed_pid "$BACKEND_PID_FILE" >/dev/null; then
   step "Backend started (pid $(cat "$BACKEND_PID_FILE"))."
 fi
 
+if ! managed_pid "$WORKER_PID_FILE" >/dev/null; then
+  step "Starting analytics worker..."
+  (
+    cd "$REPO_ROOT"
+    DOTNET_ENVIRONMENT=Development ASPNETCORE_ENVIRONMENT=Development \
+      "$DOTNET_BIN" run --project "$WORKER_PROJECT" --no-launch-profile \
+      > "$WORKER_LOG" 2>&1 &
+    printf '%s' "$!" > "$WORKER_PID_FILE"
+  )
+  wait_managed_process "$WORKER_PID_FILE" "Analytics worker" "$WORKER_LOG"
+  step "Analytics worker started (pid $(cat "$WORKER_PID_FILE"))."
+fi
+
 if ! managed_pid "$FRONTEND_PID_FILE" >/dev/null; then
   step "Starting frontend Vite dev server..."
   (
@@ -239,10 +270,16 @@ Ashmes local dev is running:
   Frontend: $FRONTEND_URL
   pgAdmin:  $PGADMIN_URL
   Intelligence: $INTELLIGENCE_URL
+  Worker:   local AnalyticsWorker
 
 Logs:
   Backend:  $BACKEND_LOG
+  Worker:   $WORKER_LOG
   Frontend: $FRONTEND_LOG
+
+Mode:
+  Fast dev mode: Docker infra + local API/frontend/worker
+  Full Docker stack: bash scripts/dev/start-docker-stack.sh
 
 Stop app processes:
   bash scripts/dev/stop-dev.sh

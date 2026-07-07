@@ -26,6 +26,14 @@ public sealed class ParserProxyRunService : IParserProxyRunService
         var now = DateTime.UtcNow;
         var parserInstanceId = request.ParserInstanceId.Trim();
         var proxyKey = request.ProxyKey.Trim();
+        var launchContractError = await ValidateLaunchContractAsync(
+            request,
+            parserInstanceId,
+            proxyKey,
+            cancellationToken);
+        if (launchContractError is not null)
+            return ServiceResult<ParserProxyRunResponse>.BadRequest(launchContractError);
+
         await UpsertParserInstanceAsync(parserInstanceId, now, cancellationToken);
 
         var externalProxyRunId = request.ExternalProxyRunId.Trim();
@@ -189,6 +197,55 @@ public sealed class ParserProxyRunService : IParserProxyRunService
             _dbContext.ParserInstances.Add(new ParserInstance(parserInstanceId, parserInstanceId, now));
         else
             instance.Touch(now);
+    }
+
+    private async Task<string?> ValidateLaunchContractAsync(
+        ParserProxyRunStartRequest request,
+        string parserInstanceId,
+        string proxyKey,
+        CancellationToken cancellationToken)
+    {
+        var parserCycleId = request.ParserCycleId?.Trim();
+        if (string.IsNullOrWhiteSpace(parserCycleId))
+            return null;
+
+        var launch = await _dbContext.ParserLaunchRequests
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                x => x.ParserInstanceId == parserInstanceId &&
+                     x.ParserCycleId == parserCycleId,
+                cancellationToken);
+        if (launch is null)
+            return null;
+
+        if (!ParserLaunchRequestStatuses.Active.Contains(launch.Status))
+            return $"Launch '{launch.Id}' is not active.";
+
+        if (launch.LaunchMode == ParserLaunchModes.CheckProxy &&
+            !string.Equals(launch.ProxyKey, proxyKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Launch proxy mismatch. Expected '{launch.ProxyKey}', got '{proxyKey}'.";
+        }
+
+        var sourceCategory = request.SourceCategory.Trim();
+        var sourceSubcategory = request.SourceSubcategory.Trim();
+        var matchesAssignment = await _dbContext.ParserInstanceProxyAssignments
+            .AsNoTracking()
+            .AnyAsync(
+                x => x.ParserInstanceConfigurationId == launch.ParserInstanceConfigurationId &&
+                     x.Enabled &&
+                     x.Proxy != null &&
+                     x.Proxy.Key == proxyKey &&
+                     x.Proxy.Status == ParserProxyStatuses.Active &&
+                     x.Proxy.Assignment != null &&
+                     x.Proxy.Assignment.Enabled &&
+                     x.Proxy.Assignment.SourceCategory == sourceCategory &&
+                     x.Proxy.Assignment.SourceSubcategory == sourceSubcategory,
+                cancellationToken);
+        if (!matchesAssignment)
+            return $"Launch assignment mismatch for proxy '{proxyKey}' and niche '{sourceCategory} / {sourceSubcategory}'.";
+
+        return null;
     }
 
     private static string? ValidateStart(ParserProxyRunStartRequest request)

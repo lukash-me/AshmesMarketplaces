@@ -111,6 +111,20 @@ public sealed class AdminParserController : ControllerBase
         return Accepted(result.Value);
     }
 
+    [HttpPost("launches/{id:guid}/cancel")]
+    [ProducesResponseType(typeof(ParserLaunchRequestDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<ParserLaunchRequestDto>> CancelLaunch(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var result = await _launchRequestService.CancelAsync(id, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("proxies")]
     [ProducesResponseType(typeof(IReadOnlyList<ParserProxyDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]

@@ -16,6 +16,7 @@ public sealed class PublicAnalysisSchedule
     public const string RunningStatus = "running";
     public const string CompletedStatus = "completed";
     public const string FailedStatus = "failed";
+    public const string NoDataStatus = "no_data";
 
     private PublicAnalysisSchedule() { }
 
@@ -113,6 +114,18 @@ public sealed class PublicAnalysisSchedule
         LastStatus = FailedStatus;
         LastError = error;
         NextRunAtUtc = retryAtUtc;
+        UpdatedAtUtc = completedAtUtc;
+    }
+
+    public void MarkNoData(DateTime completedAtUtc, DateTime nextRunAtUtc, string message)
+    {
+        DateTimeUtc.EnsureUtc(completedAtUtc, nameof(completedAtUtc));
+        DateTimeUtc.EnsureUtc(nextRunAtUtc, nameof(nextRunAtUtc));
+
+        LastCompletedAtUtc = completedAtUtc;
+        LastStatus = NoDataStatus;
+        LastError = string.IsNullOrWhiteSpace(message) ? null : message.Trim();
+        NextRunAtUtc = nextRunAtUtc;
         UpdatedAtUtc = completedAtUtc;
     }
 

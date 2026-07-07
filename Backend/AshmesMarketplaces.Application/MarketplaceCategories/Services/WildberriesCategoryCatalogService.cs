@@ -205,6 +205,7 @@ public sealed class WildberriesCategoryCatalogService :
             leaf.SourceSubcategory,
             leaf.SourcePath,
             leaf.SearchQuery,
+            WildberriesCategoryTreeParser.BuildHumanSearchQuery(leaf.SearchQuery, leaf.SourceSubcategory),
             leaf.ParentId,
             leaf.IsLeaf,
             leaf.Level);
@@ -248,6 +249,7 @@ public static class WildberriesCategoryTreeParser
             isLeaf ? name : string.Empty,
             string.Join(" / ", currentPath),
             ReadString(element, "searchQuery"),
+            BuildHumanSearchQuery(ReadString(element, "searchQuery"), isLeaf ? name : string.Empty),
             parentId,
             isLeaf,
             level));
@@ -271,6 +273,29 @@ public static class WildberriesCategoryTreeParser
 
         return property.GetString()?.Trim();
     }
+
+    internal static string? BuildHumanSearchQuery(string? rawSearchQuery, string? fallback)
+    {
+        var query = rawSearchQuery?.Trim();
+        if (string.IsNullOrWhiteSpace(query))
+            return string.IsNullOrWhiteSpace(fallback) ? null : fallback.Trim();
+
+        var firstSpace = query.IndexOf(' ');
+        if (firstSpace > 0 && IsTechnicalMenuToken(query[..firstSpace]))
+        {
+            var humanPart = query[(firstSpace + 1)..].Trim();
+            if (!string.IsNullOrWhiteSpace(humanPart))
+                return humanPart;
+        }
+
+        return IsTechnicalMenuToken(query)
+            ? (string.IsNullOrWhiteSpace(fallback) ? null : fallback.Trim())
+            : query;
+    }
+
+    private static bool IsTechnicalMenuToken(string value) =>
+        value.StartsWith("menu_v", StringComparison.OrdinalIgnoreCase)
+        || value.StartsWith("menu_redirect_", StringComparison.OrdinalIgnoreCase);
 
     private static long? ReadLong(JsonElement element, string propertyName)
     {

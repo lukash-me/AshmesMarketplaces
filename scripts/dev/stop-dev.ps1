@@ -10,6 +10,8 @@ $EnvFile = Join-Path $RepoRoot ".env"
 $ComposeFile = Join-Path $RepoRoot "docker-compose.local.yml"
 $PidRoot = Join-Path $RepoRoot ".dev\pids"
 $BackendPidFile = Join-Path $PidRoot "backend.pid"
+$WorkerPidFile = Join-Path $PidRoot "worker.pid"
+$LegacyWorkerPidFile = Join-Path $PidRoot "analytics-worker.pid"
 $FrontendPidFile = Join-Path $PidRoot "frontend.pid"
 
 function Write-Step([string]$Message) {
@@ -54,6 +56,8 @@ function Stop-ManagedProcess([string]$Name, [string]$PidFile) {
 }
 
 Stop-ManagedProcess "backend API" $BackendPidFile
+Stop-ManagedProcess "analytics worker" $WorkerPidFile
+Stop-ManagedProcess "analytics worker legacy pid" $LegacyWorkerPidFile
 Stop-ManagedProcess "frontend Vite" $FrontendPidFile
 
 if ($StopDocker) {

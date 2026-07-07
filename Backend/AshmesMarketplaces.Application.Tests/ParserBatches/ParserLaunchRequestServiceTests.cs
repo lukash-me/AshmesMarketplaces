@@ -129,6 +129,102 @@ public sealed class ParserLaunchRequestServiceTests
         Assert.Equal(ServiceErrorType.Forbidden, result.Error!.Type);
     }
 
+    [Fact]
+    public async Task CancelAsync_cancels_active_launch_before_proxy_run_exists()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var instance = await SeedLaunchableInstanceAsync(context);
+        var service = new ParserLaunchRequestService(context, new TestCurrentUser(adminRole.Id));
+        var created = await service.RequestLaunchAsync(
+            instance.Id,
+            new CreateParserLaunchRequest(ParserLaunchModes.CheckProxy, 3, "proxy-1"),
+            CancellationToken.None);
+        Assert.True(created.IsSuccess);
+
+        var result = await service.CancelAsync(created.Value!.Id, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ParserLaunchRequestStatuses.Cancelled, result.Value!.Status);
+        var stored = await context.ParserLaunchRequests.SingleAsync();
+        Assert.Equal(ParserLaunchRequestStatuses.Cancelled, stored.Status);
+        Assert.Contains("отменен", stored.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CancelAsync_rejects_launch_after_proxy_run_exists()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var instance = await SeedLaunchableInstanceAsync(context);
+        var service = new ParserLaunchRequestService(context, new TestCurrentUser(adminRole.Id));
+        var created = await service.RequestLaunchAsync(
+            instance.Id,
+            new CreateParserLaunchRequest(ParserLaunchModes.CheckProxy, 3, "proxy-1"),
+            CancellationToken.None);
+        Assert.True(created.IsSuccess);
+        var launch = await context.ParserLaunchRequests.SingleAsync();
+        context.ParserProxyRuns.Add(new ParserProxyRun(
+            launch.ParserInstanceId,
+            "run-1",
+            launch.ParserCycleId,
+            ParserProxyRunCycleKinds.Diagnostic,
+            "proxy-1",
+            "category",
+            "niche",
+            300,
+            0,
+            null,
+            null,
+            null,
+            DateTime.UtcNow));
+        await context.SaveChangesAsync();
+
+        var result = await service.CancelAsync(created.Value!.Id, CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ServiceErrorType.Conflict, result.Error!.Type);
+    }
+
+    [Fact]
+    public async Task MarkCompletedAsync_marks_launch_failed_when_cycle_has_failed_proxy_run()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var instance = await SeedLaunchableInstanceAsync(context);
+        var service = new ParserLaunchRequestService(context, new TestCurrentUser(adminRole.Id));
+        var created = await service.RequestLaunchAsync(
+            instance.Id,
+            new CreateParserLaunchRequest(ParserLaunchModes.CheckProxy, 3, "proxy-1"),
+            CancellationToken.None);
+        Assert.True(created.IsSuccess);
+        var launch = await context.ParserLaunchRequests.SingleAsync();
+        var run = new ParserProxyRun(
+            launch.ParserInstanceId,
+            "run-1",
+            launch.ParserCycleId,
+            ParserProxyRunCycleKinds.Diagnostic,
+            "proxy-1",
+            "category",
+            "niche",
+            300,
+            0,
+            null,
+            null,
+            null,
+            DateTime.UtcNow);
+        run.Fail(300, 0, "Selected subcategory resolved to unexpected proxy.", DateTime.UtcNow);
+        context.ParserProxyRuns.Add(run);
+        await context.SaveChangesAsync();
+
+        await service.MarkCompletedAsync(launch.Id, CancellationToken.None);
+
+        var stored = await context.ParserLaunchRequests.SingleAsync();
+        Assert.Equal(ParserLaunchRequestStatuses.Failed, stored.Status);
+        Assert.Contains("proxy-run", stored.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("proxy-1", stored.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static async Task<ParserInstanceConfiguration> SeedLaunchableInstanceAsync(
         ApplicationDbContext context,
         string parserInstanceId = "parser-local-01",

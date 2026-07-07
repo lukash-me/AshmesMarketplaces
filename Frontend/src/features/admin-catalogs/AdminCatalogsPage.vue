@@ -55,6 +55,7 @@ const filteredWbNodes = computed(() => {
       node.path,
       node.sourceCategory,
       node.sourceSubcategory,
+      node.humanSearchQuery ?? '',
       node.searchQuery ?? '',
       String(node.id)
     ].some((value) => value.toLocaleLowerCase('ru-RU').includes(query))
@@ -304,7 +305,6 @@ function parentText(node: WildberriesCategoryNode): string {
             <span role="columnheader">Путь</span>
             <span role="columnheader">WB id</span>
             <span role="columnheader">Parent</span>
-            <span role="columnheader">Поисковый запрос</span>
           </div>
           <div v-for="node in filteredWbNodes" :key="node.id" class="admin-catalogs__wb-row" role="row">
             <div role="cell">
@@ -322,9 +322,6 @@ function parentText(node: WildberriesCategoryNode): string {
             </div>
             <div role="cell">
               {{ parentText(node) }}
-            </div>
-            <div role="cell">
-              {{ node.searchQuery || '-' }}
             </div>
           </div>
         </div>
@@ -507,7 +504,7 @@ button.admin-catalogs__tab--active {
 }
 
 .admin-catalogs__wb-row {
-  grid-template-columns: minmax(13rem, 1.2fr) minmax(10rem, 0.8fr) minmax(18rem, 1.5fr) minmax(7rem, 0.5fr) minmax(7rem, 0.5fr) minmax(12rem, 0.8fr);
+  grid-template-columns: minmax(13rem, 1.2fr) minmax(10rem, 0.8fr) minmax(18rem, 1.5fr) minmax(7rem, 0.5fr) minmax(7rem, 0.5fr);
 }
 
 .admin-catalogs__row:first-child,

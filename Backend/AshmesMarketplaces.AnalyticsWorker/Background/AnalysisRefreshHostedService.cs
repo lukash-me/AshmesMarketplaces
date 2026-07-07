@@ -1,4 +1,5 @@
 using AshmesMarketplaces.Application.Auth.Services;
+using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketIntelligence.Services;
 using AshmesMarketplaces.Application.MarketplaceCategories.Services;
 using AshmesMarketplaces.Application.ParserObservability.Services;
@@ -90,6 +91,17 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 memoryBeforeMb,
                 CurrentMemoryMb());
         }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataManualPublicAnalysisRequestAsync(claim.Value.Id, claim.Value.ScheduleKey, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Manual public analysis refresh completed with no data. requestId={RequestId} scheduleKey={ScheduleKey} durationMs={DurationMs} message={Message}",
+                claim.Value.Id,
+                claim.Value.ScheduleKey,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await FailManualPublicAnalysisRequestAsync(claim.Value.Id, claim.Value.ScheduleKey, DateTime.UtcNow, ex.Message, cancellationToken);
@@ -114,7 +126,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 var service = scope.ServiceProvider.GetRequiredService<IPublicParserObservedLogisticsRefreshService>();
                 var result = await service.RefreshAsync(cancellationToken);
                 if (!result.IsSuccess)
-                    throw new InvalidOperationException(result.Error!.Message);
+                    throw CreateRefreshException(result.Error!);
 
                 return;
             }
@@ -124,7 +136,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 var service = scope.ServiceProvider.GetRequiredService<IPublicProductAvailabilityRefreshService>();
                 var result = await service.RefreshAsync(cancellationToken);
                 if (!result.IsSuccess)
-                    throw new InvalidOperationException(result.Error!.Message);
+                    throw CreateRefreshException(result.Error!);
 
                 return;
             }
@@ -134,7 +146,27 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 var service = scope.ServiceProvider.GetRequiredService<IPublicParserCurrentProductRefreshService>();
                 var result = await service.RefreshAsync(cancellationToken);
                 if (!result.IsSuccess)
-                    throw new InvalidOperationException(result.Error!.Message);
+                    throw CreateRefreshException(result.Error!);
+
+                return;
+            }
+
+            case PublicAnalysisSchedule.MarketIntelligenceScheduleKey:
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IPublicMarketIntelligenceRefreshService>();
+                var result = await service.RefreshAllAsync(cancellationToken);
+                if (!result.IsSuccess)
+                    throw CreateRefreshException(result.Error!);
+
+                return;
+            }
+
+            case PublicAnalysisSchedule.MarketConcentrationScheduleKey:
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IPublicMarketConcentrationRefreshService>();
+                var result = await service.RefreshAllAsync(cancellationToken);
+                if (!result.IsSuccess)
+                    throw CreateRefreshException(result.Error!);
 
                 return;
             }
@@ -164,7 +196,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var result = await service.RefreshAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
+                throw CreateRefreshException(result.Error!);
 
             await CompletePublicWeeklyScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
@@ -174,6 +206,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
+        }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataPublicWeeklyScheduleAsync(scheduleId.Value, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled WB category catalog refresh completed with no data. scheduleId={ScheduleId} durationMs={DurationMs} message={Message}",
+                scheduleId.Value,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -208,7 +250,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var result = await service.RefreshAllAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
+                throw CreateRefreshException(result.Error!);
 
             var sampleSize = result.Value!.Sum(x => x.PriceQualityMap.Summary.TotalPoints);
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
@@ -220,6 +262,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
+        }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataPublicScheduleAsync(scheduleId.Value, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public market intelligence refresh completed with no data. scheduleId={ScheduleId} durationMs={DurationMs} message={Message}",
+                scheduleId.Value,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -254,7 +306,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var result = await service.RefreshAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
+                throw CreateRefreshException(result.Error!);
 
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
@@ -265,6 +317,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
+        }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataPublicScheduleAsync(scheduleId.Value, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public logistics event snapshot refresh completed with no data. scheduleId={ScheduleId} durationMs={DurationMs} message={Message}",
+                scheduleId.Value,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -299,7 +361,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var result = await service.RefreshAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
+                throw CreateRefreshException(result.Error!);
 
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
@@ -309,6 +371,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
+        }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataPublicScheduleAsync(scheduleId.Value, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public product availability snapshot refresh completed with no data. scheduleId={ScheduleId} durationMs={DurationMs} message={Message}",
+                scheduleId.Value,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -343,7 +415,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var result = await service.RefreshAllAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
+                throw CreateRefreshException(result.Error!);
 
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
@@ -353,6 +425,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
+        }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataPublicScheduleAsync(scheduleId.Value, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public market concentration refresh completed with no data. scheduleId={ScheduleId} durationMs={DurationMs} message={Message}",
+                scheduleId.Value,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -387,7 +469,7 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
             var result = await service.RefreshAsync(cancellationToken);
             var completedAtUtc = DateTime.UtcNow;
             if (!result.IsSuccess)
-                throw new InvalidOperationException(result.Error!.Message);
+                throw CreateRefreshException(result.Error!);
 
             await CompletePublicScheduleAsync(scheduleId.Value, completedAtUtc, cancellationToken);
             _logger.LogInformation(
@@ -397,6 +479,16 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
                 (completedAtUtc - startedAtUtc).TotalMilliseconds,
                 memoryBeforeMb,
                 CurrentMemoryMb());
+        }
+        catch (NoDataAnalysisException ex)
+        {
+            var completedAtUtc = DateTime.UtcNow;
+            await NoDataPublicScheduleAsync(scheduleId.Value, completedAtUtc, ex.Message, cancellationToken);
+            _logger.LogInformation(
+                "Scheduled public top-forecast refresh completed with no data. scheduleId={ScheduleId} durationMs={DurationMs} message={Message}",
+                scheduleId.Value,
+                (completedAtUtc - startedAtUtc).TotalMilliseconds,
+                ex.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -589,6 +681,57 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task NoDataPublicScheduleAsync(
+        Guid scheduleId,
+        DateTime completedAtUtc,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var schedule = await dbContext.PublicAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
+        var nextRunAtUtc = UserAnalysisScheduleService.NextDailyUtc(
+            schedule.LocalTime,
+            schedule.TimezoneId,
+            completedAtUtc);
+        schedule.MarkNoData(completedAtUtc, nextRunAtUtc, Truncate(message));
+        schedule.ReleaseLock(completedAtUtc);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task NoDataPublicWeeklyScheduleAsync(
+        Guid scheduleId,
+        DateTime completedAtUtc,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var schedule = await dbContext.PublicAnalysisSchedules.FirstAsync(x => x.Id == scheduleId, cancellationToken);
+        schedule.MarkNoData(completedAtUtc, completedAtUtc.AddDays(7), Truncate(message));
+        schedule.ReleaseLock(completedAtUtc);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task NoDataManualPublicAnalysisRequestAsync(
+        Guid requestId,
+        string scheduleKey,
+        DateTime completedAtUtc,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var request = await dbContext.PublicAnalysisManualRunRequests.FirstAsync(x => x.Id == requestId, cancellationToken);
+        request.MarkNoData(completedAtUtc, Truncate(message));
+
+        var schedule = await dbContext.PublicAnalysisSchedules
+            .FirstOrDefaultAsync(x => x.ScheduleKey == scheduleKey, cancellationToken);
+        schedule?.ReleaseLock(completedAtUtc);
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     private async Task CompleteOverviewScheduleAsync(Guid scheduleId, DateTime completedAtUtc, CancellationToken cancellationToken)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -645,6 +788,18 @@ public sealed class AnalysisRefreshHostedService : BackgroundService
     private static long CurrentMemoryMb() =>
         GC.GetTotalMemory(false) / 1024 / 1024;
 
+    private static Exception CreateRefreshException(ServiceError error) =>
+        error.Type == ServiceErrorType.NotFound
+            ? new NoDataAnalysisException(error.Message)
+            : new InvalidOperationException(error.Message);
+
     private static string Truncate(string value) =>
         value.Length <= 2000 ? value : value[..2000];
+
+    private sealed class NoDataAnalysisException : Exception
+    {
+        public NoDataAnalysisException(string message) : base(message)
+        {
+        }
+    }
 }

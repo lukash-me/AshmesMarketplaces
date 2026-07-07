@@ -18,10 +18,14 @@ RUN dotnet publish Backend/AshmesMarketplaces.AnalyticsWorker/AshmesMarketplaces
     -o /app/publish \
     --no-restore
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
 ENV DOTNET_ENVIRONMENT=Production
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/publish .
 

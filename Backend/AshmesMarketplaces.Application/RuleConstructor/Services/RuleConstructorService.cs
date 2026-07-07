@@ -548,16 +548,20 @@ public sealed class RuleConstructorService : IRuleConstructorService
         var hasOnlyGoodRecentReviews = hasRecentReviewCoverage
             && recentReviews is { Count: > 0 }
             && recentReviews.All(x => x.Rating >= 4);
+        var goodRecentReviewsCount = recentReviews?.Count(x => x.Rating >= 4) ?? 0;
+        var badRecentReviewsCount = recentReviews?.Count(x => x.Rating < 4) ?? 0;
         var hasBadRecentReviews = hasRecentReviewCoverage
             && recentReviews is { Count: > 0 }
-            && recentReviews.Any(x => x.Rating < 4);
+            && badRecentReviewsCount > 0;
         AddIf(facts, filtersById, "good_recent_reviews",
             hasOnlyGoodRecentReviews,
-            $"Последние {FormatReviewCount(recentReviews?.Count ?? 0)}: все оценки 4 или 5");
+            goodRecentReviewsCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "Хорошие последние отзывы");
 
         AddIf(facts, filtersById, "bad_recent_reviews",
             hasBadRecentReviews,
-            $"Последние {FormatReviewCount(recentReviews?.Count ?? 0)}: есть оценка ниже 4");
+            badRecentReviewsCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "Плохие последние отзывы");
 
         AddIf(facts, filtersById, "low_review_count_top_position",
             IsObservedTop(product) && product.FeedbackCount.HasValue && product.FeedbackCount.Value < stats.MedianFeedbackCount * 0.5m,
@@ -616,12 +620,13 @@ public sealed class RuleConstructorService : IRuleConstructorService
         IReadOnlyDictionary<string, RuleConstructorFilterDto> filtersById,
         string filterId,
         bool condition,
-        string? value)
+        string? value,
+        string? nameOverride = null)
     {
         if (!condition || !filtersById.TryGetValue(filterId, out var filter))
             return;
 
-        facts.Add(new RuleConstructorMatchedFactDto(filter.Id, filter.Name, filter.Description, filter.Tone, value));
+        facts.Add(new RuleConstructorMatchedFactDto(filter.Id, nameOverride ?? filter.Name, filter.Description, filter.Tone, value));
     }
 
     private static bool IsObservedTop(ParserCurrentProductRow product) =>
@@ -748,7 +753,7 @@ public sealed class RuleConstructorService : IRuleConstructorService
 
     private static string VerificationStatusFor(string ruleId) =>
         ruleId is "good_recent_reviews" or "bad_recent_reviews"
-            ? RuleConstructorFilterVerificationStatuses.NeedsDataExport
+            ? RuleConstructorFilterVerificationStatuses.Ready
             : RuleConstructorFilterVerificationStatuses.NotReady;
 
     private static string ToneFor(string ruleId) =>

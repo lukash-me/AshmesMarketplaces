@@ -9,12 +9,15 @@ $EnvExampleFile = Join-Path $RepoRoot ".env.example"
 $ComposeFile = Join-Path $RepoRoot "docker-compose.local.yml"
 $FrontendRoot = Join-Path $RepoRoot "Frontend"
 $BackendProject = Join-Path $RepoRoot "Backend\AshmesMarketplaces.API\AshmesMarketplaces.API.csproj"
+$WorkerProject = Join-Path $RepoRoot "Backend\AshmesMarketplaces.AnalyticsWorker\AshmesMarketplaces.AnalyticsWorker.csproj"
 $DevRoot = Join-Path $RepoRoot ".dev"
 $LogRoot = Join-Path $DevRoot "logs"
 $PidRoot = Join-Path $DevRoot "pids"
 $BackendLog = Join-Path $LogRoot "backend.log"
+$WorkerLog = Join-Path $LogRoot "worker.log"
 $FrontendLog = Join-Path $LogRoot "frontend.log"
 $BackendPidFile = Join-Path $PidRoot "backend.pid"
+$WorkerPidFile = Join-Path $PidRoot "worker.pid"
 $FrontendPidFile = Join-Path $PidRoot "frontend.pid"
 
 $ApiUrl = "http://localhost:5019"
@@ -122,6 +125,15 @@ function Wait-Port([int]$Port, [string]$Purpose, [int]$TimeoutSeconds = 60) {
     Stop-WithMessage "$Purpose did not start listening on port $Port within $TimeoutSeconds seconds."
 }
 
+function Wait-ManagedProcess([int]$ProcessId, [string]$Purpose, [string]$LogPath, [int]$DelaySeconds = 3) {
+    Start-Sleep -Seconds $DelaySeconds
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $process) {
+        $tail = if (Test-Path $LogPath) { Get-Content -LiteralPath $LogPath -Tail 40 | Out-String } else { "" }
+        Stop-WithMessage "$Purpose exited shortly after startup.`n$tail"
+    }
+}
+
 Write-Step "Checking local development prerequisites..."
 Require-Command "docker" | Out-Null
 Require-Command "dotnet" | Out-Null
@@ -183,6 +195,18 @@ if (-not $backendPid) {
     Write-Step "Backend started (pid $($backendProcess.Id))."
 }
 
+$workerPid = Get-ManagedPid $WorkerPidFile
+if (-not $workerPid) {
+    Write-Step "Starting analytics worker..."
+    $env:DOTNET_ENVIRONMENT = "Development"
+    $env:ASPNETCORE_ENVIRONMENT = "Development"
+    $workerCommand = "dotnet run --project `"$WorkerProject`" --no-launch-profile > `"$WorkerLog`" 2>&1"
+    $workerProcess = Start-Process -FilePath "cmd.exe" -ArgumentList @("/d", "/s", "/c", $workerCommand) -WorkingDirectory $RepoRoot -WindowStyle Hidden -PassThru
+    Set-Content -LiteralPath $WorkerPidFile -Value $workerProcess.Id
+    Wait-ManagedProcess $workerProcess.Id "Analytics worker" $WorkerLog
+    Write-Step "Analytics worker started (pid $($workerProcess.Id))."
+}
+
 $frontendPid = Get-ManagedPid $FrontendPidFile
 if (-not $frontendPid) {
     Write-Step "Starting frontend Vite dev server..."
@@ -200,10 +224,16 @@ Write-Host "  Swagger:  $SwaggerUrl"
 Write-Host "  Frontend: $FrontendUrl"
 Write-Host "  pgAdmin:  $PgAdminUrl"
 Write-Host "  Intelligence: $IntelligenceUrl"
+Write-Host "  Worker:   local AnalyticsWorker"
 Write-Host ""
 Write-Host "Logs:"
 Write-Host "  Backend:  $BackendLog"
+Write-Host "  Worker:   $WorkerLog"
 Write-Host "  Frontend: $FrontendLog"
+Write-Host ""
+Write-Host "Mode:"
+Write-Host "  Fast dev mode: Docker infra + local API/frontend/worker"
+Write-Host "  Full Docker stack: ./scripts/dev/start-docker-stack.ps1"
 Write-Host ""
 Write-Host "Stop app processes:"
 Write-Host "  ./scripts/dev/stop-dev.ps1"

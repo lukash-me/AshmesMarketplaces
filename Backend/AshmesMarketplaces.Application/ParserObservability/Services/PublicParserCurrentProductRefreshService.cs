@@ -171,6 +171,10 @@ public sealed class PublicParserCurrentProductRefreshService : IPublicParserCurr
 
         await transaction.CommitAsync(cancellationToken);
 
+        if (totalCount == 0)
+            return ServiceResult<PublicParserCurrentProductRefreshResult>.NotFound(
+                "Карточки parser-а для сопоставления текущих товаров не найдены.");
+
         return ServiceResult<PublicParserCurrentProductRefreshResult>.Success(
             new PublicParserCurrentProductRefreshResult(totalCount, nowUtc));
     }
