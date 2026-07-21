@@ -1,0 +1,280 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      ASHMES_PUBLIC_HOST: ${ASHMES_PUBLIC_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - ashmes_public
+      - ashmes_internal
+    healthcheck:
+      test: ["CMD-SHELL", "host=\"$${ASHMES_PUBLIC_HOST}\"; case \"$$host\" in :*) host=localhost ;; http://*) host=\"$${host#http://}\" ;; https://*) host=\"$${host#https://}\" ;; esac; wget -q -O /dev/null --header=\"Host: $$host\" http://127.0.0.1/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: "0.50"
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: Frontend/Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 20s
+    expose:
+      - "80"
+    networks:
+      - ashmes_internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: "0.50"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: Backend/Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Jwt__Issuer: ${JWT_ISSUER}
+      Jwt__Audience: ${JWT_AUDIENCE}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY}
+      Jwt__AccessTokenLifetimeMinutes: ${JWT_ACCESS_TOKEN_LIFETIME_MINUTES}
+      Jwt__RefreshTokenLifetimeDays: ${JWT_REFRESH_TOKEN_LIFETIME_DAYS}
+      Seed__EnableDevelopmentSeed: "false"
+      Intelligence__Enabled: ${INTELLIGENCE_ENABLED}
+      Intelligence__BaseUrl: http://intelligence:8020
+      Intelligence__TimeoutSeconds: "20"
+      Intelligence__MaxProductsPerRequest: "1000"
+      Intelligence__HotProductsAlgorithm: rule_based_hot_products_v1
+      WorkspaceMarketProductMediaStorage__RootPath: /app/wwwroot/uploads
+      WorkspaceMarketProductMediaStorage__PublicBasePath: /uploads
+      DataProtection__KeysPath: /app/data-protection-keys
+      DataProtection__ApplicationName: AshmesMarketplaces
+    volumes:
+      - /var/lib/ashmes/uploads:/app/wwwroot/uploads
+      - data_protection_keys:/app/data-protection-keys
+    expose:
+      - "8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      intelligence:
+        condition: service_healthy
+    networks:
+      - ashmes_internal
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/v1/health >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+    mem_limit: 1536m
+    cpus: "1.50"
+
+  analytics-worker:
+    build:
+      context: ../..
+      dockerfile: Backend/AnalyticsWorker.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Intelligence__Enabled: ${INTELLIGENCE_ENABLED}
+      Intelligence__BaseUrl: http://intelligence:8020
+      Intelligence__TimeoutSeconds: "1200"
+      Intelligence__MaxProductsPerRequest: "100000"
+      Intelligence__HotProductsAlgorithm: rule_based_hot_products_v1
+      WorkerFeatures__AnalysisRefreshEnabled: "true"
+      WorkerFeatures__ParserBatchProcessingEnabled: "true"
+      WorkerFeatures__ParserLaunchEnabled: "false"
+      WorkerFeatures__ParserLogMonitoringEnabled: "true"
+      ParserMonitoring__LogRoot: /parser-data/output/outbox/_runtime/logs
+      ParserMonitoring__StaleAfterSeconds: "210"
+    volumes:
+      - /var/lib/ashmes/parser:/parser-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      intelligence:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 3072m
+    cpus: "2.00"
+
+  parser-launcher:
+    build:
+      context: ../..
+      dockerfile: Backend/ParserLauncher.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Intelligence__Enabled: "false"
+      WorkerFeatures__AnalysisRefreshEnabled: "false"
+      WorkerFeatures__ParserBatchProcessingEnabled: "false"
+      WorkerFeatures__ParserLaunchEnabled: "true"
+      WorkerFeatures__ParserLogMonitoringEnabled: "false"
+      ParserLaunch__WorkingDirectory: /workspace
+      ParserLaunch__PythonExecutable: /opt/ashmes-parser-venv/bin/python
+      ParserLaunch__SupervisorScriptPath: /workspace/Parser/app/proxy_supervisor.py
+      ParserLaunch__ConfigPath: /workspace/Parser/presets/production/market_refresh_service_runtime.prod.json
+      ParserLaunch__Mode: batched_full_enrichment
+      ParserLaunch__OutboxRoot: /parser-data/output/outbox
+      ParserLaunch__OutputBaseDir: /parser-data/output
+      ParserLaunch__RateLimitStateDir: /parser-data/output/rate_limits
+      ParserLaunch__BatchQueueUrl: http://api:8080/api/v1/parser
+      ParserLaunch__RequireServiceRuntime: "true"
+      DataProtection__KeysPath: /app/data-protection-keys
+      DataProtection__ApplicationName: AshmesMarketplaces
+      PARSER_BATCH_QUEUE_URL: http://api:8080/api/v1/parser
+      PARSER_OUTPUT_BASE_DIR: /parser-data/output
+      PARSER_RATE_LIMIT_STATE_DIR: /parser-data/output/rate_limits
+    volumes:
+      - /var/lib/ashmes/parser:/parser-data
+      - data_protection_keys:/app/data-protection-keys
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 3072m
+    cpus: "2.00"
+
+  intelligence:
+    build:
+      context: ../..
+      dockerfile: Intelligence/Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      INTELLIGENCE_ENV: production
+      INTELLIGENCE_LOG_LEVEL: ${INTELLIGENCE_LOG_LEVEL}
+      INTELLIGENCE_API_PREFIX: /api/v1
+      INTELLIGENCE_ENABLE_DEBUG: "false"
+      INTELLIGENCE_TOP_FORECAST_MODEL_DIR: /app/data/top_forecast_models
+    volumes:
+      - intelligence_data:/app/data
+    expose:
+      - "8020"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8020/health/live', timeout=5).read()"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 1024m
+    cpus: "1.00"
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 2048m
+    cpus: "2.00"
+
+  migrator:
+    profiles:
+      - tools
+    build:
+      context: ../..
+      dockerfile: Backend/Dockerfile
+      target: build
+    restart: "no"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+    volumes:
+      - ../../.config:/src/.config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      /bin/sh -c "dotnet tool restore &&
+      dotnet ef database update
+      --project Backend/AshmesMarketplaces.DataAccess/AshmesMarketplaces.DataAccess.csproj
+      --startup-project Backend/AshmesMarketplaces.API/AshmesMarketplaces.API.csproj"
+    networks:
+      - ashmes_public
+      - ashmes_internal
+    logging: *default-logging
+    mem_limit: 1536m
+    cpus: "1.50"
+
+networks:
+  ashmes_public:
+  ashmes_internal:
+    internal: true
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  intelligence_data:
+  data_protection_keys:

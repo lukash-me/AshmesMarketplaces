@@ -1,0 +1,48 @@
+﻿{
+    "defaults":  {
+                     "marketplace":  "wildberries",
+                     "source_region_dest":  "12354108",
+                     "output_base_dir":  "/parser-data/output",
+                     "top_n":  1000,
+                     "page_size":  100,
+                     "sort":  "popular",
+                     "timeout_seconds":  10,
+                     "max_retries":  2,
+                     "request_delay_min_seconds":  2.0,
+                     "request_delay_max_seconds":  5.0,
+                     "acquire_token":  true,
+                     "fail_fast":  false
+                 },
+    "contexts":  [
+                     {
+                         "id":  "home_storage_organizers",
+                         "type":  "search_query",
+                         "source_category":  "Товары для дома",
+                         "source_subcategory":  "Органайзеры для хранения вещей",
+                         "query":  "Органайзеры для хранения вещей",
+                         "filters":  {
+
+                                     }
+                     },
+                     {
+                         "id":  "home_bath_mats",
+                         "type":  "search_query",
+                         "source_category":  "Товары для дома",
+                         "source_subcategory":  "Коврики для ванной",
+                         "query":  "Коврики для ванной",
+                         "filters":  {
+
+                                     }
+                     },
+                     {
+                         "id":  "home_wall_sconces",
+                         "type":  "search_query",
+                         "source_category":  "Товары для дома",
+                         "source_subcategory":  "Светильники бра",
+                         "query":  "Светильники бра",
+                         "filters":  {
+
+                                     }
+                     }
+                 ]
+}

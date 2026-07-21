@@ -1,0 +1,22 @@
+{$ASHMES_PUBLIC_HOST} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	handle /uploads/* {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}

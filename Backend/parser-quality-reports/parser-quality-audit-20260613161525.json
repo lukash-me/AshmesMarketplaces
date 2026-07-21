@@ -1,0 +1,915 @@
+{
+  "generatedAtUtc": "2026-06-13T16:15:25.7941133Z",
+  "mode": "audit",
+  "badProductRows": 4346,
+  "deleteScopes": 1342,
+  "reasonSummary": [
+    {
+      "reason": "invalid_review_fetch",
+      "products": 804,
+      "parser_run_id": "wb_products_20260612_020109_faac848",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 790,
+      "parser_run_id": "wb_products_20260610_154213_7b162da",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 780,
+      "parser_run_id": "wb_products_20260610_085645_7b162da",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 321,
+      "parser_run_id": "wb_products_20260612_020109_faac848",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 228,
+      "parser_run_id": "wb_products_20260610_085645_7b162da",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 210,
+      "parser_run_id": "wb_products_20260612_020109_faac848",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 205,
+      "parser_run_id": "wb_products_20260610_154213_7b162da",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 192,
+      "parser_run_id": "wb_products_20260610_085645_7b162da",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 136,
+      "parser_run_id": "wb_products_20260610_154213_7b162da",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 70,
+      "parser_run_id": "wb_products_20260523_212812_973c955",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 68,
+      "parser_run_id": "wb_products_20260525_234719_bb020a5",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 67,
+      "parser_run_id": "wb_products_20260526_074446_2595271",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 66,
+      "parser_run_id": "wb_products_20260523_101316_616c8b3",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 61,
+      "parser_run_id": "wb_products_20260525_124158_61fb24c",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 51,
+      "parser_run_id": "wb_products_20260523_212812_973c955",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 49,
+      "parser_run_id": "wb_products_20260523_101316_616c8b3",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 49,
+      "parser_run_id": "wb_products_20260526_074446_2595271",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 48,
+      "parser_run_id": "wb_products_20260525_124158_61fb24c",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 25,
+      "parser_run_id": "wb_products_20260523_101316_616c8b3",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 24,
+      "parser_run_id": "wb_products_20260523_212812_973c955",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 23,
+      "parser_run_id": "wb_products_20260525_234719_bb020a5",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 22,
+      "parser_run_id": "wb_products_20260525_124158_61fb24c",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 20,
+      "parser_run_id": "wb_products_20260526_074446_2595271",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 16,
+      "parser_run_id": "wb_products_20260525_234719_bb020a5",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 6,
+      "parser_run_id": "wb_products_20260523_205913_8d2e72d",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 6,
+      "parser_run_id": "wb_products_20260523_205913_8d2e72d",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 3,
+      "parser_run_id": "wb_products_20260609_115150_2a11b17",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 3,
+      "parser_run_id": "wb_products_20260609_115150_2a11b17",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 2,
+      "parser_run_id": "wb_products_20260523_205913_8d2e72d",
+      "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+    },
+    {
+      "reason": "invalid_review_fetch",
+      "products": 1,
+      "parser_run_id": "wb_products_20260609_115150_2a11b17",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    }
+  ],
+  "samples": {
+    "invalid_review_fetch": [
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0432 \u0432\u0430\u043D\u043D\u0443\u044E \u0438 \u0442\u0443\u0430\u043B\u0435\u0442 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "1851513108",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1004931558",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u044B \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0432\u043B\u0430\u0433\u043E\u0432\u043F\u0438\u0442\u044B\u0432\u0430\u044E\u0449\u0438\u0439 50\u044580\u0441\u043C",
+        "wb_root_id": "109749371",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1007395936",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0434\u0443\u0448\u0430 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439 \u043D\u0430 \u043F\u0440\u0438\u0441\u043E\u0441\u043A\u0430\u0445 \u043F\u0432\u0445",
+        "wb_root_id": "209685353",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1007421461",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0434\u0443\u0448\u0430 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439 \u043D\u0430 \u043F\u0440\u0438\u0441\u043E\u0441\u043A\u0430\u0445 \u043F\u0432\u0445",
+        "wb_root_id": "207898797",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1007432309",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0434\u0443\u0448\u0430 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439 \u043D\u0430 \u043F\u0440\u0438\u0441\u043E\u0441\u043A\u0430\u0445 \u043F\u0432\u0445",
+        "wb_root_id": "209734021",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1007445370",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439",
+        "wb_root_id": "1745552149",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1009602255",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043C\u0440\u0430\u043C\u043E\u0440 50\u044580\u0441\u043C",
+        "wb_root_id": "1900023756",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1009954920",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "505276054",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013397911",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "505276054",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013416248",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "505276054",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013420952",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "505276054",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013424576",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "505276054",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013430551",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "wb_root_id": "505276054",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013437951",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u0411\u0440\u0430 \u0446\u0435\u0440\u043A\u043E\u0432\u043D\u043E\u0435 \u043D\u0430 1 \u0441\u0432\u0435\u0447\u0443",
+        "wb_root_id": "179943433",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1013517609",
+        "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043C\u0440\u0430\u043C\u043E\u0440 50\u044580\u0441\u043C",
+        "wb_root_id": "1900023756",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1017745346",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043C\u0440\u0430\u043C\u043E\u0440 50\u044580\u0441\u043C",
+        "wb_root_id": "1900023756",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1017761976",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439",
+        "wb_root_id": "1745552149",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1018896273",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0442\u043A\u0430\u043D\u0435\u0432\u044B\u0439 \u0022\u041E\u0441\u044C\u043C\u0438\u043D\u043E\u0433\u0022 45\u044575\u0441\u043C",
+        "wb_root_id": "214463666",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "102141462",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041D\u0430\u0441\u0442\u0435\u043D\u043D\u044B\u0439 \u0441\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A - \u0431\u0440\u0430 \u0022Ray mini\u0022 \u0441 \u0446\u0435\u043F\u043E\u0447\u043A\u043E\u0439",
+        "wb_root_id": "2020135610",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1023751146",
+        "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+      },
+      {
+        "name": "\u041D\u0430\u0441\u0442\u0435\u043D\u043D\u044B\u0439 \u0441\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A - \u0431\u0440\u0430 \u0022Ray mini\u0022, \u0446\u0432\u0435\u0442 - \u0434\u0443\u0431 \u0441 \u0446\u0435\u043F\u043E\u0447\u043A\u043E\u0439",
+        "wb_root_id": "800946862",
+        "parser_run_id": "wb_products_20260612_020109_faac848",
+        "wb_product_id": "1023751147",
+        "source_subcategory": "\u0421\u0432\u0435\u0442\u0438\u043B\u044C\u043D\u0438\u043A\u0438 \u0431\u0440\u0430"
+      }
+    ]
+  },
+  "reviewFetchSummary": [
+    {
+      "status": "success",
+      "root_fetches": 100,
+      "parser_run_id": "wb_reviews_20260521_164514_bba3c8c",
+      "capped_fetches": 99,
+      "partial_fetches": 100,
+      "replies_written": 32227,
+      "reviews_written": 38957,
+      "payload_feedback_count": 536080,
+      "selected_review_rows_seen": 38957,
+      "payload_feedback_rows_seen": 51215,
+      "full_history_unknown_fetches": 100
+    },
+    {
+      "status": "empty",
+      "root_fetches": 3,
+      "parser_run_id": "wb_reviews_20260523_101832_616c8b3",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 3
+    },
+    {
+      "status": "success",
+      "root_fetches": 66,
+      "parser_run_id": "wb_reviews_20260523_101832_616c8b3",
+      "capped_fetches": 64,
+      "partial_fetches": 0,
+      "replies_written": 11665,
+      "reviews_written": 14355,
+      "payload_feedback_count": 453903,
+      "selected_review_rows_seen": 14355,
+      "payload_feedback_rows_seen": 38896,
+      "full_history_unknown_fetches": 66
+    },
+    {
+      "status": "empty",
+      "root_fetches": 3,
+      "parser_run_id": "wb_reviews_20260523_101925_616c8b3",
+      "capped_fetches": 1,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 1,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 3
+    },
+    {
+      "status": "success",
+      "root_fetches": 60,
+      "parser_run_id": "wb_reviews_20260523_101925_616c8b3",
+      "capped_fetches": 60,
+      "partial_fetches": 0,
+      "replies_written": 11060,
+      "reviews_written": 12045,
+      "payload_feedback_count": 317913,
+      "selected_review_rows_seen": 12045,
+      "payload_feedback_rows_seen": 38613,
+      "full_history_unknown_fetches": 60
+    },
+    {
+      "status": "empty",
+      "root_fetches": 7,
+      "parser_run_id": "wb_reviews_20260523_102016_616c8b3",
+      "capped_fetches": 2,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 8,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 7
+    },
+    {
+      "status": "success",
+      "root_fetches": 69,
+      "parser_run_id": "wb_reviews_20260523_102016_616c8b3",
+      "capped_fetches": 66,
+      "partial_fetches": 0,
+      "replies_written": 5482,
+      "reviews_written": 6078,
+      "payload_feedback_count": 58775,
+      "selected_review_rows_seen": 6078,
+      "payload_feedback_rows_seen": 17263,
+      "full_history_unknown_fetches": 69
+    },
+    {
+      "status": "success",
+      "root_fetches": 1,
+      "parser_run_id": "wb_reviews_20260523_210833_8d2e72d",
+      "capped_fetches": 1,
+      "partial_fetches": 0,
+      "replies_written": 513,
+      "reviews_written": 513,
+      "payload_feedback_count": 4656,
+      "selected_review_rows_seen": 513,
+      "payload_feedback_rows_seen": 1000,
+      "full_history_unknown_fetches": 1
+    },
+    {
+      "status": "empty",
+      "root_fetches": 4,
+      "parser_run_id": "wb_reviews_20260523_213324_973c955",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 4
+    },
+    {
+      "status": "success",
+      "root_fetches": 66,
+      "parser_run_id": "wb_reviews_20260523_213324_973c955",
+      "capped_fetches": 66,
+      "partial_fetches": 0,
+      "replies_written": 13670,
+      "reviews_written": 17353,
+      "payload_feedback_count": 449217,
+      "selected_review_rows_seen": 17353,
+      "payload_feedback_rows_seen": 38487,
+      "full_history_unknown_fetches": 66
+    },
+    {
+      "status": "empty",
+      "root_fetches": 2,
+      "parser_run_id": "wb_reviews_20260523_213420_973c955",
+      "capped_fetches": 1,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 2,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 2
+    },
+    {
+      "status": "success",
+      "root_fetches": 46,
+      "parser_run_id": "wb_reviews_20260523_213420_973c955",
+      "capped_fetches": 46,
+      "partial_fetches": 0,
+      "replies_written": 7101,
+      "reviews_written": 9270,
+      "payload_feedback_count": 285317,
+      "selected_review_rows_seen": 9270,
+      "payload_feedback_rows_seen": 32899,
+      "full_history_unknown_fetches": 46
+    },
+    {
+      "status": "empty",
+      "root_fetches": 7,
+      "parser_run_id": "wb_reviews_20260523_213458_973c955",
+      "capped_fetches": 2,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 4,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 7
+    },
+    {
+      "status": "success",
+      "root_fetches": 72,
+      "parser_run_id": "wb_reviews_20260523_213458_973c955",
+      "capped_fetches": 70,
+      "partial_fetches": 0,
+      "replies_written": 5534,
+      "reviews_written": 6071,
+      "payload_feedback_count": 53603,
+      "selected_review_rows_seen": 6071,
+      "payload_feedback_rows_seen": 15206,
+      "full_history_unknown_fetches": 72
+    },
+    {
+      "status": "empty",
+      "root_fetches": 3,
+      "parser_run_id": "wb_reviews_20260525_124746_61fb24c",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 3
+    },
+    {
+      "status": "success",
+      "root_fetches": 74,
+      "parser_run_id": "wb_reviews_20260525_124746_61fb24c",
+      "capped_fetches": 73,
+      "partial_fetches": 0,
+      "replies_written": 11728,
+      "reviews_written": 15846,
+      "payload_feedback_count": 457969,
+      "selected_review_rows_seen": 15846,
+      "payload_feedback_rows_seen": 41554,
+      "full_history_unknown_fetches": 74
+    },
+    {
+      "status": "empty",
+      "root_fetches": 3,
+      "parser_run_id": "wb_reviews_20260525_124846_61fb24c",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 3
+    },
+    {
+      "status": "success",
+      "root_fetches": 55,
+      "parser_run_id": "wb_reviews_20260525_124846_61fb24c",
+      "capped_fetches": 55,
+      "partial_fetches": 0,
+      "replies_written": 9772,
+      "reviews_written": 10933,
+      "payload_feedback_count": 412634,
+      "selected_review_rows_seen": 10933,
+      "payload_feedback_rows_seen": 40393,
+      "full_history_unknown_fetches": 55
+    },
+    {
+      "status": "empty",
+      "root_fetches": 4,
+      "parser_run_id": "wb_reviews_20260525_124935_61fb24c",
+      "capped_fetches": 1,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 1,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 4
+    },
+    {
+      "status": "success",
+      "root_fetches": 69,
+      "parser_run_id": "wb_reviews_20260525_124935_61fb24c",
+      "capped_fetches": 67,
+      "partial_fetches": 0,
+      "replies_written": 5832,
+      "reviews_written": 6189,
+      "payload_feedback_count": 54059,
+      "selected_review_rows_seen": 6189,
+      "payload_feedback_rows_seen": 15669,
+      "full_history_unknown_fetches": 69
+    },
+    {
+      "status": "success",
+      "root_fetches": 58,
+      "parser_run_id": "wb_reviews_20260525_235345_bb020a5",
+      "capped_fetches": 58,
+      "partial_fetches": 0,
+      "replies_written": 18958,
+      "reviews_written": 22988,
+      "payload_feedback_count": 483763,
+      "selected_review_rows_seen": 22988,
+      "payload_feedback_rows_seen": 38785,
+      "full_history_unknown_fetches": 58
+    },
+    {
+      "status": "empty",
+      "root_fetches": 1,
+      "parser_run_id": "wb_reviews_20260525_235431_bb020a5",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 1
+    },
+    {
+      "status": "success",
+      "root_fetches": 45,
+      "parser_run_id": "wb_reviews_20260525_235431_bb020a5",
+      "capped_fetches": 42,
+      "partial_fetches": 0,
+      "replies_written": 7716,
+      "reviews_written": 9469,
+      "payload_feedback_count": 240400,
+      "selected_review_rows_seen": 9469,
+      "payload_feedback_rows_seen": 27004,
+      "full_history_unknown_fetches": 45
+    },
+    {
+      "status": "empty",
+      "root_fetches": 4,
+      "parser_run_id": "wb_reviews_20260525_235509_bb020a5",
+      "capped_fetches": 1,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 4,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 4
+    },
+    {
+      "status": "success",
+      "root_fetches": 69,
+      "parser_run_id": "wb_reviews_20260525_235509_bb020a5",
+      "capped_fetches": 66,
+      "partial_fetches": 0,
+      "replies_written": 6195,
+      "reviews_written": 6536,
+      "payload_feedback_count": 54141,
+      "selected_review_rows_seen": 6536,
+      "payload_feedback_rows_seen": 15903,
+      "full_history_unknown_fetches": 69
+    },
+    {
+      "status": "empty",
+      "root_fetches": 2,
+      "parser_run_id": "wb_reviews_20260526_075039_2595271",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 2
+    },
+    {
+      "status": "success",
+      "root_fetches": 71,
+      "parser_run_id": "wb_reviews_20260526_075039_2595271",
+      "capped_fetches": 71,
+      "partial_fetches": 0,
+      "replies_written": 12041,
+      "reviews_written": 14640,
+      "payload_feedback_count": 481466,
+      "selected_review_rows_seen": 14640,
+      "payload_feedback_rows_seen": 39748,
+      "full_history_unknown_fetches": 71
+    },
+    {
+      "status": "empty",
+      "root_fetches": 1,
+      "parser_run_id": "wb_reviews_20260526_075137_2595271",
+      "capped_fetches": 0,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 1
+    },
+    {
+      "status": "success",
+      "root_fetches": 52,
+      "parser_run_id": "wb_reviews_20260526_075137_2595271",
+      "capped_fetches": 52,
+      "partial_fetches": 0,
+      "replies_written": 9059,
+      "reviews_written": 10563,
+      "payload_feedback_count": 333520,
+      "selected_review_rows_seen": 10563,
+      "payload_feedback_rows_seen": 36112,
+      "full_history_unknown_fetches": 52
+    },
+    {
+      "status": "empty",
+      "root_fetches": 5,
+      "parser_run_id": "wb_reviews_20260526_075220_2595271",
+      "capped_fetches": 2,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 9,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 5
+    },
+    {
+      "status": "success",
+      "root_fetches": 70,
+      "parser_run_id": "wb_reviews_20260526_075220_2595271",
+      "capped_fetches": 67,
+      "partial_fetches": 0,
+      "replies_written": 6239,
+      "reviews_written": 6537,
+      "payload_feedback_count": 56601,
+      "selected_review_rows_seen": 6537,
+      "payload_feedback_rows_seen": 16993,
+      "full_history_unknown_fetches": 70
+    },
+    {
+      "status": "empty",
+      "root_fetches": 26633,
+      "parser_run_id": "wb_reviews_20260610_212815_faac848",
+      "capped_fetches": 242,
+      "partial_fetches": 26633,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 453,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 26633
+    },
+    {
+      "status": "failed",
+      "root_fetches": 5,
+      "parser_run_id": "wb_reviews_20260610_212815_faac848",
+      "capped_fetches": 0,
+      "partial_fetches": 5,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 0,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 5
+    },
+    {
+      "status": "success",
+      "root_fetches": 2194,
+      "parser_run_id": "wb_reviews_20260610_212815_faac848",
+      "capped_fetches": 2049,
+      "partial_fetches": 2194,
+      "replies_written": 204775,
+      "reviews_written": 262185,
+      "payload_feedback_count": 2879324,
+      "selected_review_rows_seen": 262185,
+      "payload_feedback_rows_seen": 473887,
+      "full_history_unknown_fetches": 2194
+    },
+    {
+      "status": "empty",
+      "root_fetches": 19049,
+      "parser_run_id": "wb_reviews_20260611_005910_faac848",
+      "capped_fetches": 307,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 469,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 19049
+    },
+    {
+      "status": "success",
+      "root_fetches": 2366,
+      "parser_run_id": "wb_reviews_20260611_005910_faac848",
+      "capped_fetches": 2188,
+      "partial_fetches": 0,
+      "replies_written": 176070,
+      "reviews_written": 206185,
+      "payload_feedback_count": 1649016,
+      "selected_review_rows_seen": 206185,
+      "payload_feedback_rows_seen": 332024,
+      "full_history_unknown_fetches": 2366
+    },
+    {
+      "status": "empty",
+      "root_fetches": 5725,
+      "parser_run_id": "wb_reviews_20260611_033450_faac848",
+      "capped_fetches": 318,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 566,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 5725
+    },
+    {
+      "status": "success",
+      "root_fetches": 1613,
+      "parser_run_id": "wb_reviews_20260611_033450_faac848",
+      "capped_fetches": 1370,
+      "partial_fetches": 0,
+      "replies_written": 31667,
+      "reviews_written": 35599,
+      "payload_feedback_count": 292768,
+      "selected_review_rows_seen": 35599,
+      "payload_feedback_rows_seen": 97798,
+      "full_history_unknown_fetches": 1613
+    },
+    {
+      "status": "empty",
+      "root_fetches": 26635,
+      "parser_run_id": "wb_reviews_20260612_044528_faac848",
+      "capped_fetches": 246,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 459,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 26635
+    },
+    {
+      "status": "success",
+      "root_fetches": 2215,
+      "parser_run_id": "wb_reviews_20260612_044528_faac848",
+      "capped_fetches": 2076,
+      "partial_fetches": 0,
+      "replies_written": 208029,
+      "reviews_written": 266465,
+      "payload_feedback_count": 2909233,
+      "selected_review_rows_seen": 266465,
+      "payload_feedback_rows_seen": 481563,
+      "full_history_unknown_fetches": 2215
+    },
+    {
+      "status": "empty",
+      "root_fetches": 19243,
+      "parser_run_id": "wb_reviews_20260612_081830_faac848",
+      "capped_fetches": 301,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 461,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 19243
+    },
+    {
+      "status": "success",
+      "root_fetches": 2337,
+      "parser_run_id": "wb_reviews_20260612_081830_faac848",
+      "capped_fetches": 2171,
+      "partial_fetches": 0,
+      "replies_written": 177813,
+      "reviews_written": 208755,
+      "payload_feedback_count": 1663001,
+      "selected_review_rows_seen": 208755,
+      "payload_feedback_rows_seen": 334742,
+      "full_history_unknown_fetches": 2337
+    },
+    {
+      "status": "empty",
+      "root_fetches": 20571,
+      "parser_run_id": "wb_reviews_20260612_105800_faac848",
+      "capped_fetches": 676,
+      "partial_fetches": 0,
+      "replies_written": 0,
+      "reviews_written": 0,
+      "payload_feedback_count": 1169,
+      "selected_review_rows_seen": 0,
+      "payload_feedback_rows_seen": 0,
+      "full_history_unknown_fetches": 20571
+    },
+    {
+      "status": "success",
+      "root_fetches": 2979,
+      "parser_run_id": "wb_reviews_20260612_105800_faac848",
+      "capped_fetches": 2481,
+      "partial_fetches": 0,
+      "replies_written": 70852,
+      "reviews_written": 79835,
+      "payload_feedback_count": 397158,
+      "selected_review_rows_seen": 79835,
+      "payload_feedback_rows_seen": 136165,
+      "full_history_unknown_fetches": 2979
+    }
+  ],
+  "sanitySummary": {
+    "detailRows": 91533,
+    "productRows": 244775,
+    "logisticsRows": 157116,
+    "warehouseRows": 157091,
+    "productsWithNoImages": 0,
+    "detailRowsWithNullMediaCount": 91533,
+    "productVsLogisticsQuantityMismatches": 128211
+  }
+}

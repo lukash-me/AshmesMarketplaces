@@ -1,0 +1,18 @@
+{
+  "generatedAtUtc": "2026-06-16T14:15:28.0903358Z",
+  "mode": "audit",
+  "defectiveProductRows": 0,
+  "domainProductsSafeToDelete": 0,
+  "reasonSummary": [],
+  "samples": {},
+  "deleteSummary": {
+    "detailRows": 0,
+    "reviewRows": 0,
+    "productRows": 0,
+    "logisticsRows": 0,
+    "warehouseRows": 0,
+    "reviewReplyRows": 0,
+    "reviewRootFetches": 0,
+    "domainProductsSafeToDelete": 0
+  }
+}

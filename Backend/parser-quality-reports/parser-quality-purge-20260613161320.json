@@ -1,0 +1,20 @@
+{
+  "generatedAtUtc": "2026-06-13T16:14:41.3521623Z",
+  "auditReportPath": "Backend\\parser-quality-reports\\parser-quality-pre-purge-20260613161320.json",
+  "badProductRows": 122104,
+  "deleteScopes": 106356,
+  "deletedRows": 224917,
+  "backupTables": [
+    "ParserQualityBackups.WorkspaceMarketProductUserReadStates_20260613161320",
+    "ParserQualityBackups.WorkspaceMarketProductAnalyses_20260613161320",
+    "ParserQualityBackups.WorkspaceMarketProducts_20260613161320",
+    "ParserQualityBackups.MarketHotProductRecommendations_20260613161320",
+    "ParserQualityBackups.ParserProductRows_20260613161320",
+    "ParserQualityBackups.ParserRankSnapshotRows_20260613161320",
+    "ParserQualityBackups.ParserLogisticsSnapshotRows_20260613161320",
+    "ParserQualityBackups.ParserWarehouseAvailabilityRows_20260613161320",
+    "ParserQualityBackups.ParserProductDetailRows_20260613161320",
+    "ParserQualityBackups.ParserReviewRows_20260613161320",
+    "ParserQualityBackups.ParserReviewReplyRows_20260613161320"
+  ]
+}

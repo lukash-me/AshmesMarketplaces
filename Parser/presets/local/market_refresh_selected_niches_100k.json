@@ -1,0 +1,234 @@
+{
+  "pipeline_name": "selected_niches_market_refresh_100k",
+  "output_base_dir": "E:/AshmesMarketplaces/Parser/output",
+  "defaults": {
+    "fail_fast": false,
+    "ingestion": "disabled"
+  },
+  "modes": {
+    "smoke": {
+      "product": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 1200,
+        "smoke_only": false,
+        "env": {
+          "PARSER_PRODUCT_FETCH_MODE": "direct",
+          "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "1",
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "100"
+        }
+      },
+      "rank": {
+        "config": "Parser/presets/home_goods_search_rank_demo.json",
+        "timeout_seconds": 300,
+        "top_n": 100,
+        "max_pages": 1
+      },
+      "reviews": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 600,
+        "limit_products": 30,
+        "max_concurrent": 3,
+        "source_subcategories": [
+          "Органайзеры для хранения вещей",
+          "Коврики для ванной",
+          "Светильники бра"
+        ],
+        "smoke_only": true
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "limit_products": 30,
+        "delay_ms": 500,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 2,
+        "checkpoint_interval": 25,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 300,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
+      },
+      "product_details": {
+        "enabled": true,
+        "limit_products": 30,
+        "delay_ms": 300,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 2,
+        "checkpoint_interval": 25,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 300
+      }
+    },
+    "bounded": {
+      "product": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 14400,
+        "env": {
+          "PARSER_PRODUCT_FETCH_MODE": "direct",
+          "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "20",
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "3000"
+        }
+      },
+      "rank": {
+        "config": "Parser/presets/home_goods_search_rank_demo.json",
+        "timeout_seconds": 5400
+      },
+      "reviews": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 7200,
+        "limit_products": 300,
+        "max_concurrent": 5,
+        "source_subcategories": [
+          "Органайзеры для хранения вещей",
+          "Коврики для ванной",
+          "Светильники бра"
+        ]
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "limit_products": 500,
+        "delay_ms": 350,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 4,
+        "checkpoint_interval": 100,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 3600,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
+      },
+      "product_details": {
+        "enabled": true,
+        "limit_products": 500,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 4,
+        "checkpoint_interval": 100,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 3600
+      }
+    },
+    "full": {
+      "product": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 86400,
+        "env": {
+          "PARSER_PRODUCT_FETCH_MODE": "price_split",
+          "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "0",
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334",
+          "PARSER_INCLUDE_XLSX": "false",
+          "PARSER_MAX_CONCURRENT": "2",
+          "PARSER_BATCH_SIZE": "10",
+          "PARSER_REQUEST_DELAY_MIN_SECONDS": "0.3",
+          "PARSER_REQUEST_DELAY_MAX_SECONDS": "0.9",
+          "PARSER_BATCH_DELAY_MIN_SECONDS": "2",
+          "PARSER_BATCH_DELAY_MAX_SECONDS": "5"
+        }
+      },
+      "rank": {
+        "config": "Parser/presets/home_goods_search_rank_demo.json",
+        "timeout_seconds": 10800
+      },
+      "reviews": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 172800,
+        "max_concurrent": 5,
+        "source_subcategories": [
+          "Органайзеры для хранения вещей",
+          "Коврики для ванной",
+          "Светильники бра"
+        ]
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "delay_ms": 300,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 6,
+        "checkpoint_interval": 500,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 172800,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
+      },
+      "product_details": {
+        "enabled": true,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 6,
+        "checkpoint_interval": 500,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 172800
+      }
+    },
+    "full_enrichment": {
+      "product": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 86400,
+        "env": {
+          "PARSER_PRODUCT_FETCH_MODE": "price_split",
+          "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY": "0",
+          "PARSER_MAX_ITEMS_PER_SUBCATEGORY": "33334",
+          "PARSER_INCLUDE_XLSX": "false",
+          "PARSER_MAX_CONCURRENT": "2",
+          "PARSER_BATCH_SIZE": "10",
+          "PARSER_REQUEST_DELAY_MIN_SECONDS": "0.3",
+          "PARSER_REQUEST_DELAY_MAX_SECONDS": "0.9",
+          "PARSER_BATCH_DELAY_MIN_SECONDS": "2",
+          "PARSER_BATCH_DELAY_MAX_SECONDS": "5"
+        }
+      },
+      "rank": {
+        "config": "Parser/presets/home_goods_search_rank_demo.json",
+        "timeout_seconds": 10800
+      },
+      "reviews": {
+        "config": "Parser/presets/home_goods_demo.env",
+        "timeout_seconds": 172800,
+        "max_concurrent": 5,
+        "source_subcategories": [
+          "Органайзеры для хранения вещей",
+          "Коврики для ванной",
+          "Светильники бра"
+        ]
+      },
+      "logistics": {
+        "enabled": true,
+        "dest": "12354108",
+        "delay_ms": 300,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 6,
+        "checkpoint_interval": 500,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 172800,
+        "delivery_profile_config": "Parser/presets/delivery_profiles.json",
+        "delivery_profile": "moscow_baseline_v1"
+      },
+      "product_details": {
+        "enabled": true,
+        "delay_ms": 250,
+        "timeout_sec": 10,
+        "retries": 1,
+        "max_concurrent": 6,
+        "checkpoint_interval": 500,
+        "retry_queue_passes": 1,
+        "adaptive_delay": true,
+        "timeout_seconds": 172800
+      }
+    }
+  }
+}

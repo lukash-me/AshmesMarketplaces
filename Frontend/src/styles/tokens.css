@@ -1,0 +1,468 @@
+:root,
+[data-theme="obsidian"] {
+  color-scheme: dark;
+
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --theme-bg-base: #07090d;
+  --theme-bg-deep: #030508;
+  --theme-bg-ember-atmosphere: rgb(249 115 22 / 0.08);
+  --theme-bg-blue-atmosphere: rgb(96 165 250 / 0.06);
+  --theme-bg-grid-x: rgb(255 255 255 / 0.018);
+  --theme-bg-grid-y: rgb(255 255 255 / 0.014);
+  --theme-backdrop: rgb(0 0 0 / 0.62);
+  --theme-scrollbar-track: rgb(5 8 13 / 0.72);
+  --theme-scrollbar-thumb: rgb(249 115 22 / 0.46);
+  --theme-scrollbar-thumb-hover: rgb(251 146 60 / 0.68);
+
+  --surface-panel: rgb(17 21 29 / 0.84);
+  --surface-panel-raised: rgb(24 29 39 / 0.88);
+  --surface-panel-muted: rgb(12 15 22 / 0.78);
+  --surface-panel-hover: rgb(35 41 54 / 0.58);
+  --surface-control: rgb(5 8 13 / 0.46);
+  --surface-control-focus: rgb(8 11 18 / 0.76);
+  --surface-control-raised: rgb(17 21 29 / 0.74);
+  --surface-table-header: rgb(12 15 22 / 0.96);
+  --surface-table-header-strong:
+    linear-gradient(180deg, rgb(249 115 22 / 0.07), rgb(12 15 22 / 0.98)),
+    var(--surface-table-header);
+  --surface-topbar: rgb(7 9 13 / 0.82);
+  --surface-sidebar: rgb(6 8 13 / 0.94);
+  --surface-brand-mark: rgb(9 12 18 / 0.82);
+  --surface-highlight-overlay: rgb(255 255 255 / 0.035);
+  --surface-active-overlay: rgb(255 255 255 / 0.045);
+  --surface-metric-border: rgb(255 255 255 / 0.07);
+  --surface-chart-track: rgb(255 255 255 / 0.055);
+  --text-table-header: var(--text-primary);
+  --border-table-header: rgb(249 115 22 / 0.22);
+
+  --border-subtle: rgb(113 128 150 / 0.18);
+  --border-strong: rgb(163 174 190 / 0.28);
+  --border-ember-subtle: rgb(249 115 22 / 0.16);
+  --border-ember-muted: rgb(249 115 22 / 0.14);
+  --border-skeleton-button: rgb(255 255 255 / 0.06);
+
+  --operator-border: var(--accent-ember-border);
+  --operator-border-muted: var(--accent-primary-border);
+  --operator-panel-bg: var(--background-card-soft);
+  --operator-card-bg: var(--color-surface-muted);
+  --operator-card-hover-bg:
+    linear-gradient(90deg, var(--accent-ember-soft), transparent 42%),
+    var(--color-surface-hover);
+  --operator-metric-bg: var(--surface-control);
+  --operator-link: #fed7aa;
+  --operator-link-hover: #ffedd5;
+  --operator-title-size: 1rem;
+  --operator-body-size: 0.8125rem;
+  --operator-meta-size: 0.75rem;
+  --operator-label-size: 0.72rem;
+  --operator-value-size: 0.95rem;
+  --select-control-bg: var(--surface-control-raised);
+  --select-control-bg-hover:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 86%),
+    var(--surface-control-raised);
+  --select-control-bg-focus: var(--surface-control-focus);
+  --select-control-border: var(--color-border);
+  --select-control-border-hover: var(--accent-primary-border);
+  --select-control-border-focus: var(--accent-primary-hover-border);
+  --select-control-text: var(--color-text);
+  --select-label-text: var(--color-text-muted);
+  --select-menu-bg:
+    linear-gradient(180deg, rgb(249 115 22 / 0.075), transparent 42%),
+    rgb(8 11 18 / 0.985);
+  --select-menu-border: var(--accent-primary-border);
+  --select-menu-shadow: 0 20px 56px rgb(0 0 0 / 0.52), 0 0 0 1px rgb(255 255 255 / 0.025);
+  --select-search-bg: rgb(5 8 13 / 0.78);
+  --select-option-bg: var(--surface-panel-raised);
+  --select-option-text: var(--color-text);
+  --select-option-hover-bg:
+    linear-gradient(90deg, rgb(249 115 22 / 0.14), transparent),
+    var(--color-surface-hover);
+  --select-option-hover-bg-solid: rgb(47 24 17);
+  --select-option-active-bg:
+    linear-gradient(90deg, rgb(249 115 22 / 0.22), transparent),
+    var(--surface-control-raised);
+  --select-option-active-bg-solid: rgb(66 32 18);
+  --select-option-active-text: var(--accent-ember-text-strong);
+
+  --text-primary: #eef2f8;
+  --text-muted: #9aa6b8;
+  --text-subtle: #687487;
+  --text-on-fire: #fff7ed;
+  --text-on-danger: #fff1f2;
+
+  --accent-fire: #f59e0b;
+  --accent-fire-hover: #fbbf24;
+  --accent-fire-soft: rgb(245 158 11 / 0.12);
+  --accent-ember: #f97316;
+  --accent-ember-soft: rgb(249 115 22 / 0.14);
+  --accent-ember-border: rgb(185 28 28 / 0.62);
+  --accent-ember-text: #fdba74;
+  --accent-ember-text-strong: #fed7aa;
+  --accent-primary-border: rgb(185 28 28 / 0.68);
+  --accent-primary-hover-border: rgb(220 38 38 / 0.82);
+  --accent-ember-hover-bg: rgb(249 115 22 / 0.1);
+  --accent-ember-sidebar-border: rgb(185 28 28 / 0.28);
+  --accent-chart-fill: linear-gradient(90deg, rgb(249 115 22 / 0.8), rgb(251 191 36 / 0.72));
+  --accent-chart-fill-return: linear-gradient(90deg, rgb(249 115 22 / 0.82), rgb(251 191 36 / 0.72));
+  --accent-chart-fill-change-strong: linear-gradient(90deg, rgb(56 189 248 / 0.88), rgb(96 165 250 / 0.78));
+  --accent-chart-fill-change-soft: linear-gradient(90deg, rgb(56 189 248 / 0.72), rgb(96 165 250 / 0.64));
+  --accent-chart-fill-reduced: linear-gradient(90deg, rgb(56 189 248 / 0.7), rgb(96 165 250 / 0.62));
+  --accent-chart-fill-glow-strong: rgb(56 189 248 / 0.24);
+  --accent-chart-fill-glow: rgb(59 130 246 / 0.17);
+  --accent-chart-fill-glow-soft: rgb(56 189 248 / 0.08);
+
+  --state-success: #22c55e;
+  --state-success-soft: rgb(34 197 94 / 0.16);
+  --state-success-border: rgb(34 197 94 / 0.38);
+  --state-success-text: #22c55e;
+  --state-warning: #f59e0b;
+  --state-warning-soft: rgb(245 158 11 / 0.13);
+  --state-warning-border: rgb(245 158 11 / 0.26);
+  --state-danger: #fb7185;
+  --state-danger-soft: rgb(251 113 133 / 0.12);
+  --state-danger-border: rgb(251 113 133 / 0.28);
+  --state-danger-border-strong: rgb(251 113 133 / 0.42);
+  --state-danger-bg-strong: rgb(190 18 60 / 0.82);
+  --state-info: #60a5fa;
+  --state-info-soft: rgb(96 165 250 / 0.12);
+  --state-info-border: rgb(96 165 250 / 0.24);
+
+  --heat-dormant: #64748b;
+  --heat-dormant-soft: var(--surface-panel-muted);
+  --heat-dormant-border: var(--border-subtle);
+  --heat-dormant-text: var(--text-muted);
+  --heat-warm: #d97706;
+  --heat-warm-soft: var(--state-warning-soft);
+  --heat-warm-border: var(--state-warning-border);
+  --heat-warm-text: var(--state-warning);
+  --heat-rising: #f59e0b;
+  --heat-rising-soft: var(--accent-ember-soft);
+  --heat-rising-border: rgb(249 115 22 / 0.3);
+  --heat-rising-text: var(--accent-ember-text);
+  --heat-hot: #fb923c;
+  --heat-hot-soft: rgb(251 146 60 / 0.16);
+  --heat-hot-border: rgb(251 146 60 / 0.34);
+  --heat-hot-text: var(--accent-ember-text-strong);
+
+  --button-primary-bg: linear-gradient(180deg, rgb(249 115 22 / 0.88), rgb(194 65 12 / 0.88));
+  --button-primary-bg-hover: linear-gradient(180deg, rgb(251 146 60 / 0.94), rgb(217 119 6 / 0.9));
+  --button-secondary-bg: var(--surface-control-raised);
+  --button-danger-bg: var(--state-danger-bg-strong);
+
+  --background-page:
+    radial-gradient(circle at 82% -8%, var(--theme-bg-ember-atmosphere), transparent 22rem),
+    radial-gradient(circle at 18% 0%, var(--theme-bg-blue-atmosphere), transparent 24rem),
+    linear-gradient(180deg, var(--theme-bg-base), var(--theme-bg-deep));
+  --background-auth:
+    radial-gradient(circle at 50% -8%, rgb(249 115 22 / 0.12), transparent 26rem),
+    linear-gradient(180deg, var(--theme-bg-base), var(--theme-bg-deep));
+  --background-app-grid:
+    linear-gradient(90deg, var(--theme-bg-grid-x) 1px, transparent 1px),
+    linear-gradient(180deg, var(--theme-bg-grid-y) 1px, transparent 1px),
+    transparent;
+  --background-sidebar:
+    linear-gradient(180deg, rgb(249 115 22 / 0.035), transparent 18rem),
+    var(--surface-sidebar);
+  --background-card-ember:
+    linear-gradient(180deg, rgb(249 115 22 / 0.035), transparent 8rem),
+    var(--surface-panel);
+  --background-card-soft:
+    linear-gradient(180deg, rgb(255 255 255 / 0.026), transparent 7rem),
+    var(--surface-panel);
+  --background-panel-highlight:
+    linear-gradient(180deg, var(--surface-highlight-overlay), transparent),
+    var(--surface-panel);
+  --background-empty-mark:
+    linear-gradient(135deg, rgb(249 115 22 / 0.18), transparent 58%),
+    var(--surface-panel-muted);
+  --background-brand-mark:
+    linear-gradient(180deg, rgb(249 115 22 / 0.2), rgb(249 115 22 / 0.06)),
+    var(--surface-brand-mark);
+  --background-login-mark:
+    linear-gradient(180deg, rgb(249 115 22 / 0.18), rgb(249 115 22 / 0.05)),
+    var(--surface-brand-mark);
+  --background-skeleton: linear-gradient(90deg, rgb(30 35 46 / 0.88), rgb(56 64 78 / 0.72), rgb(30 35 46 / 0.88));
+  --background-overview-skeleton: linear-gradient(90deg, rgb(255 255 255 / 0.055), rgb(249 115 22 / 0.085), rgb(255 255 255 / 0.055));
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --shadow-subtle: 0 18px 54px rgb(0 0 0 / 0.26);
+  --shadow-panel: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 14px 42px rgb(0 0 0 / 0.22);
+  --shadow-brand-mark:
+    drop-shadow(0 0 0.26rem rgb(249 115 22 / 0.2))
+    drop-shadow(0 0.18rem 0.4rem rgb(0 0 0 / 0.34));
+  --focus-ring: 0 0 0 3px rgb(249 115 22 / 0.18);
+
+  --flame-outer-fill: rgb(185 28 28 / 0.82);
+  --flame-outer-stroke: rgb(248 113 113 / 0.72);
+  --flame-middle-fill: rgb(234 88 12 / 0.88);
+  --flame-inner-fill: rgb(249 115 22 / 0.9);
+  --flame-core-fill: rgb(254 240 138 / 0.88);
+
+  --color-bg: var(--theme-bg-base);
+  --color-bg-deep: var(--theme-bg-deep);
+  --color-surface: var(--surface-panel);
+  --color-surface-raised: var(--surface-panel-raised);
+  --color-surface-muted: var(--surface-panel-muted);
+  --color-surface-hover: var(--surface-panel-hover);
+  --color-border: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-primary: var(--accent-fire);
+  --color-primary-hover: var(--accent-fire-hover);
+  --color-primary-soft: var(--accent-fire-soft);
+  --color-success: var(--state-success);
+  --color-success-soft: var(--state-success-soft);
+  --color-warning: var(--state-warning);
+  --color-warning-soft: var(--state-warning-soft);
+  --color-danger: var(--state-danger);
+  --color-danger-soft: var(--state-danger-soft);
+  --color-info: var(--state-info);
+  --color-info-soft: var(--state-info-soft);
+  --color-ember: var(--accent-ember);
+  --color-ember-soft: var(--accent-ember-soft);
+  --color-heat-hot: var(--heat-hot);
+  --color-heat-rising: var(--heat-rising);
+  --color-heat-warm: var(--heat-warm);
+  --color-heat-dormant: var(--heat-dormant);
+}
+
+[data-theme="ash"] {
+  color-scheme: light;
+
+  --theme-bg-base: #f8fafc;
+  --theme-bg-deep: #eef2f7;
+  --theme-bg-ember-atmosphere: rgb(249 115 22 / 0.08);
+  --theme-bg-blue-atmosphere: rgb(59 130 246 / 0.06);
+  --theme-bg-grid-x: rgb(15 23 42 / 0.045);
+  --theme-bg-grid-y: rgb(15 23 42 / 0.035);
+  --theme-backdrop: rgb(15 23 42 / 0.36);
+  --theme-scrollbar-track: rgb(226 232 240 / 0.82);
+  --theme-scrollbar-thumb: rgb(234 88 12 / 0.48);
+  --theme-scrollbar-thumb-hover: rgb(249 115 22 / 0.66);
+
+  --surface-panel: rgb(255 255 255 / 0.9);
+  --surface-panel-raised: rgb(255 255 255 / 0.96);
+  --surface-panel-muted: rgb(248 250 252 / 0.9);
+  --surface-panel-hover: rgb(241 245 249 / 0.92);
+  --surface-control: rgb(255 255 255 / 0.78);
+  --surface-control-focus: rgb(255 255 255 / 0.96);
+  --surface-control-raised: rgb(248 250 252 / 0.92);
+  --surface-table-header: rgb(226 232 240 / 0.98);
+  --surface-table-header-strong:
+    linear-gradient(180deg, rgb(241 245 249 / 0.98), rgb(203 213 225 / 0.9)),
+    var(--surface-table-header);
+  --surface-topbar: rgb(255 255 255 / 0.82);
+  --surface-sidebar: rgb(255 255 255 / 0.92);
+  --surface-brand-mark: rgb(255 247 237 / 0.86);
+  --surface-highlight-overlay: rgb(15 23 42 / 0.025);
+  --surface-active-overlay: rgb(249 115 22 / 0.082);
+  --surface-metric-border: rgb(15 23 42 / 0.09);
+  --surface-chart-track: rgb(15 23 42 / 0.08);
+  --text-table-header: #1e293b;
+  --border-table-header: rgb(71 85 105 / 0.28);
+
+  --border-subtle: rgb(71 85 105 / 0.24);
+  --border-strong: rgb(51 65 85 / 0.36);
+  --border-ember-subtle: rgb(71 85 105 / 0.34);
+  --border-ember-muted: rgb(71 85 105 / 0.28);
+  --border-skeleton-button: rgb(15 23 42 / 0.08);
+
+  --operator-border: var(--accent-ember-border);
+  --operator-border-muted: var(--accent-primary-border);
+  --operator-panel-bg: var(--background-card-soft);
+  --operator-card-bg: var(--color-surface-muted);
+  --operator-card-hover-bg:
+    linear-gradient(90deg, var(--accent-ember-soft), transparent 42%),
+    var(--color-surface-hover);
+  --operator-metric-bg: var(--surface-control);
+  --operator-link: #9a3412;
+  --operator-link-hover: #7f1d1d;
+  --operator-title-size: 1rem;
+  --operator-body-size: 0.8125rem;
+  --operator-meta-size: 0.75rem;
+  --operator-label-size: 0.72rem;
+  --operator-value-size: 0.95rem;
+  --select-control-bg: var(--surface-control-raised);
+  --select-control-bg-hover:
+    linear-gradient(180deg, var(--accent-ember-soft), transparent 86%),
+    var(--surface-control-raised);
+  --select-control-bg-focus: var(--surface-control-focus);
+  --select-control-border: var(--color-border-strong);
+  --select-control-border-hover: var(--accent-primary-border);
+  --select-control-border-focus: var(--accent-primary-hover-border);
+  --select-control-text: var(--color-text);
+  --select-label-text: var(--color-text-muted);
+  --select-menu-bg:
+    linear-gradient(180deg, rgb(249 115 22 / 0.05), transparent 50%),
+    var(--surface-panel-raised);
+  --select-menu-border: var(--accent-primary-border);
+  --select-menu-shadow: 0 20px 48px rgb(15 23 42 / 0.16), 0 0 0 1px rgb(255 255 255 / 0.72);
+  --select-search-bg: var(--surface-control);
+  --select-option-bg: var(--surface-panel-raised);
+  --select-option-text: var(--color-text);
+  --select-option-hover-bg:
+    linear-gradient(90deg, rgb(249 115 22 / 0.1), transparent),
+    var(--color-surface-hover);
+  --select-option-hover-bg-solid: #fff1e7;
+  --select-option-active-bg:
+    linear-gradient(90deg, rgb(153 27 27 / 0.12), transparent),
+    var(--surface-control-raised);
+  --select-option-active-bg-solid: #fee2e2;
+  --select-option-active-text: var(--operator-link-hover);
+
+  --text-primary: #172033;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+  --text-on-fire: #fff7ed;
+  --text-on-danger: #fff1f2;
+
+  --accent-fire: #d97706;
+  --accent-fire-hover: #f97316;
+  --accent-fire-soft: rgb(217 119 6 / 0.12);
+  --accent-ember: #ea580c;
+  --accent-ember-soft: rgb(249 115 22 / 0.12);
+  --accent-ember-border: rgb(153 27 27 / 0.58);
+  --accent-ember-text: #c2410c;
+  --accent-ember-text-strong: #9a3412;
+  --accent-primary-border: rgb(153 27 27 / 0.58);
+  --accent-primary-hover-border: rgb(185 28 28 / 0.72);
+  --accent-ember-hover-bg: rgb(249 115 22 / 0.09);
+  --accent-ember-sidebar-border: rgb(153 27 27 / 0.34);
+  --accent-chart-fill: linear-gradient(90deg, rgb(234 88 12 / 0.78), rgb(245 158 11 / 0.68));
+  --accent-chart-fill-return: linear-gradient(90deg, rgb(234 88 12 / 0.8), rgb(245 158 11 / 0.68));
+  --accent-chart-fill-change-strong: linear-gradient(90deg, rgb(14 165 233 / 0.84), rgb(59 130 246 / 0.74));
+  --accent-chart-fill-change-soft: linear-gradient(90deg, rgb(14 165 233 / 0.64), rgb(59 130 246 / 0.56));
+  --accent-chart-fill-reduced: linear-gradient(90deg, rgb(14 165 233 / 0.58), rgb(59 130 246 / 0.5));
+  --accent-chart-fill-glow-strong: rgb(14 165 233 / 0.2);
+  --accent-chart-fill-glow: rgb(59 130 246 / 0.14);
+  --accent-chart-fill-glow-soft: rgb(14 165 233 / 0.08);
+
+  --state-success: #047857;
+  --state-success-soft: rgb(4 120 87 / 0.14);
+  --state-success-border: rgb(4 120 87 / 0.36);
+  --state-success-text: #065f46;
+  --state-warning: #d97706;
+  --state-warning-soft: rgb(217 119 6 / 0.11);
+  --state-warning-border: rgb(217 119 6 / 0.24);
+  --state-danger: #e11d48;
+  --state-danger-soft: rgb(225 29 72 / 0.1);
+  --state-danger-border: rgb(225 29 72 / 0.24);
+  --state-danger-border-strong: rgb(225 29 72 / 0.36);
+  --state-danger-bg-strong: rgb(190 18 60 / 0.88);
+  --state-info: #2563eb;
+  --state-info-soft: rgb(37 99 235 / 0.1);
+  --state-info-border: rgb(37 99 235 / 0.22);
+
+  --heat-dormant: #64748b;
+  --heat-dormant-soft: rgb(241 245 249 / 0.94);
+  --heat-dormant-border: rgb(100 116 139 / 0.2);
+  --heat-dormant-text: #64748b;
+  --heat-warm: #b45309;
+  --heat-warm-soft: var(--state-warning-soft);
+  --heat-warm-border: var(--state-warning-border);
+  --heat-warm-text: #b45309;
+  --heat-rising: #d97706;
+  --heat-rising-soft: var(--accent-ember-soft);
+  --heat-rising-border: rgb(249 115 22 / 0.28);
+  --heat-rising-text: #c2410c;
+  --heat-hot: #ea580c;
+  --heat-hot-soft: rgb(234 88 12 / 0.12);
+  --heat-hot-border: rgb(234 88 12 / 0.28);
+  --heat-hot-text: #9a3412;
+
+  --button-primary-bg: linear-gradient(180deg, rgb(249 115 22 / 0.94), rgb(194 65 12 / 0.9));
+  --button-primary-bg-hover: linear-gradient(180deg, rgb(251 146 60 / 0.98), rgb(217 119 6 / 0.94));
+  --button-secondary-bg: var(--surface-control-raised);
+  --button-danger-bg: var(--state-danger-bg-strong);
+
+  --background-page:
+    radial-gradient(circle at 82% -8%, var(--theme-bg-ember-atmosphere), transparent 22rem),
+    radial-gradient(circle at 18% 0%, var(--theme-bg-blue-atmosphere), transparent 24rem),
+    linear-gradient(180deg, var(--theme-bg-base), var(--theme-bg-deep));
+  --background-auth:
+    radial-gradient(circle at 50% -8%, rgb(249 115 22 / 0.08), transparent 26rem),
+    linear-gradient(180deg, var(--theme-bg-base), var(--theme-bg-deep));
+  --background-app-grid:
+    linear-gradient(90deg, var(--theme-bg-grid-x) 1px, transparent 1px),
+    linear-gradient(180deg, var(--theme-bg-grid-y) 1px, transparent 1px),
+    transparent;
+  --background-sidebar:
+    linear-gradient(180deg, rgb(249 115 22 / 0.055), transparent 18rem),
+    var(--surface-sidebar);
+  --background-card-ember:
+    linear-gradient(180deg, rgb(249 115 22 / 0.055), transparent 8rem),
+    var(--surface-panel);
+  --background-card-soft:
+    linear-gradient(180deg, rgb(15 23 42 / 0.025), transparent 7rem),
+    var(--surface-panel);
+  --background-panel-highlight:
+    linear-gradient(180deg, var(--surface-highlight-overlay), transparent),
+    var(--surface-panel);
+  --background-empty-mark:
+    linear-gradient(135deg, rgb(249 115 22 / 0.12), transparent 58%),
+    var(--surface-panel-muted);
+  --background-brand-mark:
+    linear-gradient(180deg, rgb(249 115 22 / 0.16), rgb(249 115 22 / 0.045)),
+    var(--surface-brand-mark);
+  --background-login-mark:
+    linear-gradient(180deg, rgb(249 115 22 / 0.16), rgb(249 115 22 / 0.045)),
+    var(--surface-brand-mark);
+  --background-skeleton: linear-gradient(90deg, rgb(226 232 240 / 0.9), rgb(241 245 249 / 0.92), rgb(226 232 240 / 0.9));
+  --background-overview-skeleton: linear-gradient(90deg, rgb(15 23 42 / 0.055), rgb(249 115 22 / 0.075), rgb(15 23 42 / 0.055));
+
+  --shadow-subtle: 0 18px 48px rgb(15 23 42 / 0.1);
+  --shadow-panel: inset 0 1px 0 rgb(255 255 255 / 0.72), 0 14px 36px rgb(15 23 42 / 0.09);
+  --shadow-brand-mark:
+    drop-shadow(0 0 0.22rem rgb(249 115 22 / 0.18))
+    drop-shadow(0 0.16rem 0.34rem rgb(15 23 42 / 0.14));
+  --focus-ring: 0 0 0 3px rgb(249 115 22 / 0.2);
+
+  --flame-outer-fill: rgb(185 28 28 / 0.76);
+  --flame-outer-stroke: rgb(220 38 38 / 0.52);
+  --flame-middle-fill: rgb(234 88 12 / 0.82);
+  --flame-inner-fill: rgb(249 115 22 / 0.86);
+  --flame-core-fill: rgb(250 204 21 / 0.82);
+
+  --color-bg: var(--theme-bg-base);
+  --color-bg-deep: var(--theme-bg-deep);
+  --color-surface: var(--surface-panel);
+  --color-surface-raised: var(--surface-panel-raised);
+  --color-surface-muted: var(--surface-panel-muted);
+  --color-surface-hover: var(--surface-panel-hover);
+  --color-border: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-primary: var(--accent-fire);
+  --color-primary-hover: var(--accent-fire-hover);
+  --color-primary-soft: var(--accent-fire-soft);
+  --color-success: var(--state-success);
+  --color-success-soft: var(--state-success-soft);
+  --color-warning: var(--state-warning);
+  --color-warning-soft: var(--state-warning-soft);
+  --color-danger: var(--state-danger);
+  --color-danger-soft: var(--state-danger-soft);
+  --color-info: var(--state-info);
+  --color-info-soft: var(--state-info-soft);
+  --color-ember: var(--accent-ember);
+  --color-ember-soft: var(--accent-ember-soft);
+  --color-heat-hot: var(--heat-hot);
+  --color-heat-rising: var(--heat-rising);
+  --color-heat-warm: var(--heat-warm);
+  --color-heat-dormant: var(--heat-dormant);
+}

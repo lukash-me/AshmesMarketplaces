@@ -1,0 +1,59 @@
+{
+  "defaultProxy": {
+    "key": "local-proxy",
+    "type": "direct",
+    "cooldownSeconds": 300
+  },
+  "proxies": [
+    {
+      "key": "proxy-1",
+      "type": "http-proxy",
+      "baseUrl": "http://127.0.0.1:18001",
+      "cooldownSeconds": 300
+    },
+    {
+      "key": "proxy-2",
+      "type": "http-proxy",
+      "baseUrl": "http://127.0.0.1:18002",
+      "cooldownSeconds": 300
+    },
+    {
+      "key": "proxy-3",
+      "type": "http-proxy",
+      "baseUrl": "http://127.0.0.1:18003",
+      "cooldownSeconds": 300
+    },
+    {
+      "key": "proxy-4",
+      "type": "http-proxy",
+      "baseUrl": "http://127.0.0.1:18004",
+      "cooldownSeconds": 300
+    },
+    {
+      "key": "proxy-5",
+      "type": "http-proxy",
+      "baseUrl": "http://127.0.0.1:18005",
+      "cooldownSeconds": 300
+    }
+  ],
+  "niches": [
+    {
+      "sourceCategory": "Женщинам",
+      "sourceSubcategory": "Платья и сарафаны",
+      "proxyKey": "proxy-1",
+      "enabled": true
+    },
+    {
+      "sourceCategory": "Обувь",
+      "sourceSubcategory": "Мужские кеды и кроссовки",
+      "proxyKey": "proxy-2",
+      "enabled": true
+    },
+    {
+      "sourceCategory": "Красота",
+      "sourceSubcategory": "Органическая косметика",
+      "proxyKey": "proxy-3",
+      "enabled": true
+    }
+  ]
+}

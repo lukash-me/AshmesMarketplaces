@@ -1,0 +1,73 @@
+﻿{
+    "pipeline_name":  "selected_niches_market_refresh_batched",
+    "output_base_dir":  "/parser-data/output",
+    "defaults":  {
+                     "fail_fast":  false,
+                     "ingestion":  "disabled"
+                 },
+    "modes":  {
+                  "batched_full_enrichment":  {
+                                                  "batching":  {
+                                                                   "batch_size":  100,
+                                                                   "worker_id":  "production-worker-1",
+                                                                   "shard_key":  "production-selected-niches"
+                                                               },
+                                                  "product":  {
+                                                                  "config":  "Parser/presets/home_goods_demo.env",
+                                                                  "timeout_seconds":  86400,
+                                                                  "env":  {
+                                                                              "PARSER_PRODUCT_FETCH_MODE":  "price_split",
+                                                                              "PARSER_MAX_CATALOG_PAGES_PER_SUBCATEGORY":  "0",
+                                                                              "PARSER_MAX_ITEMS_PER_SUBCATEGORY":  "33334",
+                                                                              "PARSER_INCLUDE_XLSX":  "false",
+                                                                              "PARSER_MAX_CONCURRENT":  "2",
+                                                                              "PARSER_BATCH_SIZE":  "10",
+                                                                              "PARSER_REQUEST_DELAY_MIN_SECONDS":  "0.3",
+                                                                              "PARSER_REQUEST_DELAY_MAX_SECONDS":  "0.9",
+                                                                              "PARSER_BATCH_DELAY_MIN_SECONDS":  "2",
+                                                                              "PARSER_BATCH_DELAY_MAX_SECONDS":  "5",
+                                                                              "PARSER_OUTPUT_BASE_DIR":  "/parser-data/output"
+                                                                          }
+                                                              },
+                                                  "rank":  {
+                                                               "config":  "Parser/presets/home_goods_search_rank_demo.prod.json",
+                                                               "timeout_seconds":  10800
+                                                           },
+                                                  "reviews":  {
+                                                                  "config":  "Parser/presets/home_goods_demo.env",
+                                                                  "timeout_seconds":  172800,
+                                                                  "max_concurrent":  5,
+                                                                  "source_subcategories":  [
+                                                                                               "Органайзеры для хранения вещей",
+                                                                                               "Коврики для ванной",
+                                                                                               "Светильники бра"
+                                                                                           ]
+                                                              },
+                                                  "logistics":  {
+                                                                    "enabled":  true,
+                                                                    "dest":  "12354108",
+                                                                    "delay_ms":  300,
+                                                                    "timeout_sec":  10,
+                                                                    "retries":  1,
+                                                                    "max_concurrent":  6,
+                                                                    "checkpoint_interval":  100,
+                                                                    "retry_queue_passes":  1,
+                                                                    "adaptive_delay":  true,
+                                                                    "timeout_seconds":  172800,
+                                                                    "delivery_profile_config":  "Parser/presets/delivery_profiles.json",
+                                                                    "delivery_profile":  "nationwide_v1"
+                                                                },
+                                                  "product_details":  {
+                                                                          "enabled":  true,
+                                                                          "delay_ms":  250,
+                                                                          "timeout_sec":  10,
+                                                                          "retries":  1,
+                                                                          "max_concurrent":  6,
+                                                                          "checkpoint_interval":  100,
+                                                                          "retry_queue_passes":  1,
+                                                                          "adaptive_delay":  true,
+                                                                          "timeout_seconds":  172800
+                                                                      }
+                                              }
+              }
+}

@@ -1,0 +1,750 @@
+<script setup lang="ts">
+import { ExternalLink } from 'lucide-vue-next';
+import { computed, ref, watch } from 'vue';
+
+import { getParserReview, getParserReviewReplies, getParserReviews } from '@/features/parser-reviews/parserReviews.api';
+import type {
+  ParserReviewDetail,
+  ParserReviewListItem,
+  ParserReviewReply
+} from '@/features/parser-reviews/parserReviews.types';
+import { getProblemMessage } from '@/shared/api/problemDetails';
+import Badge from '@/shared/ui/Badge.vue';
+import Button from '@/shared/ui/Button.vue';
+import EmptyState from '@/shared/ui/EmptyState.vue';
+import HelpTooltip from '@/shared/ui/HelpTooltip.vue';
+import LoadingState from '@/shared/ui/LoadingState.vue';
+
+import type { ParserProductListItem } from './parserProducts.types';
+import { getWildberriesProductUrl } from './wildberriesLinks';
+
+const props = defineProps<{
+  product: ParserProductListItem;
+}>();
+
+const pageSize = 10;
+const rows = ref<ParserReviewListItem[]>([]);
+const totalCount = ref(0);
+const page = ref(1);
+const sort = ref('-createdAtOnMp');
+const ratingFilter = ref('');
+const selected = ref<ParserReviewListItem | null>(null);
+const detail = ref<ParserReviewDetail | null>(null);
+const replies = ref<ParserReviewReply[]>([]);
+const listLoading = ref(false);
+const detailLoading = ref(false);
+const repliesLoading = ref(false);
+const listError = ref('');
+const detailError = ref('');
+const repliesError = ref('');
+let listVersion = 0;
+let detailVersion = 0;
+let repliesVersion = 0;
+
+const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / pageSize)));
+const pageStart = computed(() => (totalCount.value === 0 ? 0 : (page.value - 1) * pageSize + 1));
+const pageEnd = computed(() => Math.min(totalCount.value, page.value * pageSize));
+const displayReview = computed(() => detail.value ?? selected.value);
+const detailProductUrl = computed(() => getWildberriesProductUrl(displayReview.value?.wbProductId));
+
+watch(
+  () => [props.product.id, props.product.wbProductId] as const,
+  async () => {
+    page.value = 1;
+    selected.value = null;
+    clearDetail();
+    await loadRows();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => page.value,
+  async () => {
+    await loadRows();
+  }
+);
+
+watch(
+  () => [sort.value, ratingFilter.value] as const,
+  async () => {
+    page.value = 1;
+    await loadRows();
+  }
+);
+
+watch(
+  () => selected.value?.id,
+  async (id) => {
+    if (!id) {
+      clearDetail();
+      return;
+    }
+
+    await Promise.all([loadDetail(id), loadReplies(id)]);
+  }
+);
+
+async function loadRows() {
+  const version = ++listVersion;
+  listLoading.value = true;
+  listError.value = '';
+
+  try {
+    const response = await getParserReviews({
+      page: page.value,
+      pageSize,
+      sort: sort.value,
+      ...(ratingFilter.value ? { rating: Number(ratingFilter.value) } : {}),
+      wbProductId: props.product.wbProductId
+    });
+
+    if (version === listVersion) {
+      rows.value = response.items;
+      totalCount.value = response.totalCount;
+    }
+  } catch (err) {
+    if (version === listVersion) {
+      rows.value = [];
+      totalCount.value = 0;
+      listError.value = getProblemMessage(err, 'Не удалось загрузить отзывы.');
+    }
+  } finally {
+    if (version === listVersion) {
+      listLoading.value = false;
+    }
+  }
+}
+
+async function loadDetail(id: string) {
+  const version = ++detailVersion;
+  detailLoading.value = true;
+  detailError.value = '';
+  detail.value = null;
+
+  try {
+    const response = await getParserReview(id);
+    if (version === detailVersion) {
+      detail.value = response;
+    }
+  } catch (err) {
+    if (version === detailVersion) {
+      detailError.value = getProblemMessage(err, 'Не удалось загрузить детали отзыва.');
+    }
+  } finally {
+    if (version === detailVersion) {
+      detailLoading.value = false;
+    }
+  }
+}
+
+async function loadReplies(id: string) {
+  const version = ++repliesVersion;
+  repliesLoading.value = true;
+  repliesError.value = '';
+  replies.value = [];
+
+  try {
+    const response = await getParserReviewReplies(id, {
+      page: 1,
+      pageSize: 50,
+      sort: '-createdAtOnMp'
+    });
+
+    if (version === repliesVersion) {
+      replies.value = response.items;
+    }
+  } catch (err) {
+    if (version === repliesVersion) {
+      repliesError.value = getProblemMessage(err, 'Не удалось загрузить ответы продавца.');
+    }
+  } finally {
+    if (version === repliesVersion) {
+      repliesLoading.value = false;
+    }
+  }
+}
+
+function clearDetail() {
+  detail.value = null;
+  replies.value = [];
+  detailError.value = '';
+  repliesError.value = '';
+  detailLoading.value = false;
+  repliesLoading.value = false;
+}
+
+function changePage(value: number) {
+  page.value = value;
+}
+
+function updateSort(event: Event) {
+  sort.value = (event.target as HTMLSelectElement).value;
+}
+
+function updateRatingFilter(event: Event) {
+  ratingFilter.value = (event.target as HTMLSelectElement).value;
+}
+
+function fieldValue(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === '' ? 'Нет данных' : String(value);
+}
+
+function reviewTextValue(value: string | null | undefined): string {
+  return value === null || value === undefined || value.trim() === '' ? '—' : value;
+}
+
+function reviewPreviewRows(row: ParserReviewListItem): Array<{ label: string; text: string }> {
+  return [
+    { label: 'Отзыв', text: row.textPreview?.trim() ?? '' },
+    { label: 'Плюсы', text: row.prosPreview?.trim() ?? '' },
+    { label: 'Минусы', text: row.consPreview?.trim() ?? '' }
+  ].filter((item) => item.text.length > 0);
+}
+
+function formatDate(value: string | null | undefined): string {
+  if (!value) {
+    return 'Нет данных';
+  }
+
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat('ru-RU', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }).format(date)
+    : 'Нет данных';
+}
+
+function ratingTone(value: number | null): string {
+  if (value === null) {
+    return 'unknown';
+  }
+
+  if (value <= 2) {
+    return 'negative';
+  }
+
+  return value === 3 ? 'neutral' : 'positive';
+}
+</script>
+
+<template>
+  <section class="reviews">
+    <header class="reviews__header">
+      <div>
+        <h3>
+          <span>Отзывы покупателей</span>
+          <HelpTooltip text="Читайте отзывы и ответы продавца по карточке." />
+        </h3>
+      </div>
+      <div class="review-controls" aria-label="Настройки отзывов">
+        <label class="app-select-field" :class="{ 'review-controls__field--active': sort !== '-createdAtOnMp' }">
+          <span>Сортировка</span>
+          <select class="app-select" :value="sort" @change="updateSort">
+            <option value="-createdAtOnMp">Сначала новые</option>
+            <option value="createdAtOnMp">Сначала старые</option>
+            <option value="-rating">С высокой оценкой</option>
+            <option value="rating">С низкой оценкой</option>
+          </select>
+        </label>
+        <label class="app-select-field" :class="{ 'review-controls__field--active': ratingFilter !== '' }">
+          <span>Оценка</span>
+          <select class="app-select" :value="ratingFilter" @change="updateRatingFilter">
+            <option value="">Все оценки</option>
+            <option value="5">5 звёзд</option>
+            <option value="4">4 звезды</option>
+            <option value="3">3 звезды</option>
+            <option value="2">2 звезды</option>
+            <option value="1">1 звезда</option>
+          </select>
+        </label>
+      </div>
+    </header>
+
+    <LoadingState v-if="listLoading" class="review-state" :rows="3" />
+    <EmptyState
+      v-else-if="listError"
+      class="review-state"
+      title="Не удалось загрузить отзывы"
+      :description="listError"
+    />
+    <EmptyState
+      v-else-if="rows.length === 0"
+      class="review-state"
+      title="Отзывы не найдены"
+      description="Отзывы для этой карточки пока не найдены."
+    />
+    <div v-else class="review-list">
+      <button
+        v-for="row in rows"
+        :key="row.id"
+        class="review-card"
+        :class="[`review-card--${ratingTone(row.rating)}`, { 'review-card--selected': selected?.id === row.id }]"
+        type="button"
+        :aria-label="`Открыть детали отзыва с рейтингом ${fieldValue(row.rating)}`"
+        @click="selected = row"
+      >
+        <span class="rating-pill" :class="`rating-pill--${ratingTone(row.rating)}`">
+          {{ fieldValue(row.rating) }}
+        </span>
+        <span class="review-card__body">
+          <span v-if="reviewPreviewRows(row).length" class="review-card__preview-list">
+            <span v-for="preview in reviewPreviewRows(row)" :key="`${row.id}:${preview.label}`" class="review-card__preview">
+              <span>{{ preview.label }}</span>
+              <strong>{{ preview.text }}</strong>
+            </span>
+          </span>
+          <strong v-else>—</strong>
+          <small>{{ formatDate(row.createdAtOnMp) }}</small>
+        </span>
+        <Badge :tone="row.hasObservedReply ? 'success' : 'neutral'">
+          {{ row.hasObservedReply ? 'Есть ответ' : 'Без ответа' }}
+        </Badge>
+      </button>
+
+      <footer class="pager">
+        <span class="numeric">Показаны {{ pageStart }}-{{ pageEnd }} из {{ totalCount }}</span>
+        <div class="pager__actions">
+          <Button class="pager__nav" variant="secondary" :disabled="page <= 1" @click="changePage(page - 1)">Назад</Button>
+          <span class="numeric">Страница {{ page }} / {{ pageCount }}</span>
+          <Button class="pager__nav" variant="secondary" :disabled="page >= pageCount" @click="changePage(page + 1)">Далее</Button>
+        </div>
+      </footer>
+    </div>
+
+    <section v-if="displayReview" class="detail">
+      <header class="detail__header">
+        <div class="detail__summary">
+          <span class="rating-pill rating-pill--large" :class="`rating-pill--${ratingTone(displayReview.rating)}`">
+            {{ fieldValue(displayReview.rating) }}
+          </span>
+          <dl>
+            <div><dt>Дата</dt><dd>{{ formatDate(displayReview.createdAtOnMp) }}</dd></div>
+            <div><dt>Автор</dt><dd>{{ fieldValue(detail?.reviewerName) }}</dd></div>
+            <div>
+              <dt>Ответ</dt>
+              <dd>{{ displayReview.hasObservedReply ? 'Есть ответ продавца' : 'Ответ не найден' }}</dd>
+            </div>
+          </dl>
+        </div>
+        <Button variant="ghost" @click="selected = null">Закрыть</Button>
+      </header>
+
+      <LoadingState v-if="detailLoading" class="detail-state" :rows="2" />
+      <div v-if="detailError" class="notice">{{ detailError }}</div>
+
+      <section class="detail__section">
+        <h4>Отзыв</h4>
+        <p class="body-text">{{ reviewTextValue(detail?.text ?? displayReview.textPreview) }}</p>
+        <dl class="review-fields">
+          <div><dt>Плюсы</dt><dd class="body-text">{{ reviewTextValue(detail?.pros) }}</dd></div>
+          <div><dt>Минусы</dt><dd class="body-text">{{ reviewTextValue(detail?.cons) }}</dd></div>
+        </dl>
+      </section>
+
+      <section class="detail__section">
+        <h4>Ответ продавца</h4>
+        <LoadingState v-if="repliesLoading" class="detail-state" :rows="2" />
+        <div v-else-if="repliesError" class="notice">{{ repliesError }}</div>
+        <p v-else-if="replies.length === 0" class="placeholder">Ответ продавца не найден.</p>
+        <div v-else class="reply-list">
+          <article v-for="reply in replies" :key="reply.id" class="reply">
+            <p class="body-text">{{ reviewTextValue(reply.text) }}</p>
+            <small>{{ formatDate(reply.createdAtOnMp) }}</small>
+          </article>
+        </div>
+      </section>
+
+      <section v-if="detailProductUrl" class="detail__actions">
+        <a :href="detailProductUrl" target="_blank" rel="noreferrer">
+          <ExternalLink :size="16" />
+          Открыть карточку на WB
+        </a>
+      </section>
+    </section>
+  </section>
+</template>
+
+<style scoped>
+.reviews,
+.review-list,
+.detail,
+.detail__section,
+.reply-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.reviews__header,
+.review-state,
+.review-list,
+.detail,
+.detail__section {
+  position: relative;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel-muted);
+  padding: var(--space-3);
+}
+
+.reviews__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.reviews__header::before,
+.detail::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: linear-gradient(180deg, var(--accent-ember-border), transparent 70%);
+  content: '';
+}
+
+.reviews__header h3,
+.detail h4,
+.detail p,
+.reply p {
+  margin: 0;
+}
+
+.reviews__header h3,
+.detail h4 {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.78rem;
+  font-weight: 740;
+  text-transform: uppercase;
+}
+
+.review-card small,
+.reply small,
+.pager {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.review-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.review-controls label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.review-controls span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.review-controls__field--active span {
+  color: var(--accent-ember-text);
+}
+
+.review-controls__field--active select {
+  border-color: var(--accent-ember-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.08), transparent),
+    var(--surface-control-focus);
+  box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.07), 0 0 0 1px rgb(249 115 22 / 0.04);
+}
+
+.review-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-control);
+  color: var(--color-text);
+  padding: var(--space-3);
+  text-align: left;
+}
+
+.review-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--color-border-strong);
+  content: '';
+}
+
+.review-card:hover,
+.review-card--selected {
+  border-color: var(--accent-primary-border);
+  background: var(--color-surface-hover);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 10px 26px rgb(249 115 22 / 0.07);
+}
+
+.review-card--negative::before {
+  background: var(--state-danger);
+}
+
+.review-card--neutral::before {
+  background: var(--state-warning);
+}
+
+.review-card--positive::before {
+  background: var(--state-success);
+}
+
+.review-card__body {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.review-card__preview-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.review-card__preview {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.review-card__preview span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 740;
+  text-transform: uppercase;
+}
+
+.review-card__body strong {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.38;
+  font-size: 0.875rem;
+  font-weight: 620;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rating-pill {
+  display: grid;
+  min-height: 2rem;
+  min-width: 2rem;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--surface-control-raised);
+  color: var(--color-text);
+  font-weight: 740;
+}
+
+.rating-pill--negative {
+  border-color: var(--state-danger-border);
+  background: var(--state-danger-soft);
+}
+
+.rating-pill--neutral {
+  border-color: var(--state-warning-border);
+  background: var(--state-warning-soft);
+}
+
+.rating-pill--positive {
+  border-color: var(--state-success-border);
+  background: var(--state-success-soft);
+}
+
+.rating-pill--large {
+  min-height: 2.5rem;
+  min-width: 2.5rem;
+  font-size: 1rem;
+}
+
+.pager,
+.pager__actions,
+.detail__header,
+.detail__summary,
+.detail__actions a {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.pager,
+.detail__header {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pager__actions,
+.detail__summary {
+  align-items: center;
+}
+
+.pager__nav {
+  border-color: var(--accent-primary-border);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.14), rgb(249 115 22 / 0.05)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  font-weight: 720;
+}
+
+.pager__nav:hover:not(:disabled) {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.2), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.pager__nav:disabled {
+  border-color: var(--color-border);
+  background: var(--surface-control);
+  color: var(--color-text-muted);
+  opacity: 0.58;
+}
+
+.detail {
+  background: var(--surface-control);
+}
+
+.detail__summary {
+  min-width: 0;
+}
+
+.detail__summary dl,
+.review-fields {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.detail__summary dl {
+  grid-template-columns: repeat(3, minmax(0, auto));
+}
+
+.detail__summary div,
+.review-fields div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.detail dt,
+.review-fields dt {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.detail dd,
+.review-fields dd {
+  margin: 0;
+}
+
+.body-text {
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.reply,
+.placeholder,
+.notice {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel-muted);
+  padding: var(--space-3);
+}
+
+.reply {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.placeholder {
+  border-style: dashed;
+  color: var(--color-text-muted);
+}
+
+.notice {
+  border-color: var(--state-danger-border);
+  background: var(--state-danger-soft);
+  color: var(--state-danger);
+}
+
+.detail__actions a {
+  width: fit-content;
+  min-height: 2.125rem;
+  align-items: center;
+  border: 1px solid var(--accent-primary-border);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgb(249 115 22 / 0.18), rgb(249 115 22 / 0.06)),
+    var(--surface-control-raised);
+  color: var(--accent-ember-text-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 10px 26px rgb(249 115 22 / 0.08);
+  padding: 0 var(--space-3);
+  font-size: 0.8125rem;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.detail__actions a:hover {
+  border-color: var(--accent-primary-hover-border);
+  background:
+    linear-gradient(180deg, rgb(251 146 60 / 0.22), rgb(249 115 22 / 0.08)),
+    var(--color-surface-hover);
+}
+
+.detail__actions a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), 0 10px 26px rgb(249 115 22 / 0.1);
+}
+
+@media (min-width: 680px) {
+  .review-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 679px) {
+  .reviews__header {
+    grid-template-columns: 1fr;
+  }
+
+  .review-controls {
+    justify-content: flex-start;
+  }
+
+  .review-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .review-card :deep(.badge) {
+    grid-column: 2;
+    width: fit-content;
+  }
+
+  .detail__summary,
+  .detail__summary dl {
+    width: 100%;
+  }
+
+  .detail__summary dl {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

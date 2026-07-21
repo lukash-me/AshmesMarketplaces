@@ -1,0 +1,343 @@
+{
+  "generatedAtUtc": "2026-06-16T14:14:33.853764Z",
+  "mode": "audit",
+  "defectiveProductRows": 60,
+  "domainProductsSafeToDelete": 3,
+  "reasonSummary": [
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0338",
+      "products": 7,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0338_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0013",
+      "products": 5,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0013_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0335",
+      "products": 5,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0335_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0012",
+      "products": 4,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0012_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0355",
+      "products": 4,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0355_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0002",
+      "products": 3,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0002_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0108",
+      "products": 3,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0108_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0187",
+      "products": 3,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0187_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0337",
+      "products": 3,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0337_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0359",
+      "products": 3,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0359_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_180847_db637fd:batch:0002",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_180847_db637fd_batch_0002_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0062",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0062_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0250",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0250_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0336",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0336_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0341",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0341_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0356",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0356_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0363",
+      "products": 2,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0363_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0110",
+      "products": 1,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0110_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0189",
+      "products": 1,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0189_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0190",
+      "products": 1,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0190_products",
+      "source_subcategory": "\u041E\u0440\u0433\u0430\u043D\u0430\u0439\u0437\u0435\u0440\u044B \u0434\u043B\u044F \u0445\u0440\u0430\u043D\u0435\u043D\u0438\u044F \u0432\u0435\u0449\u0435\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0329",
+      "products": 1,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0329_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0339",
+      "products": 1,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0339_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    },
+    {
+      "reason": "missing_review_fetch",
+      "batch_id": "market_refresh_20260615_183028_db637fd:batch:0364",
+      "products": 1,
+      "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0364_products",
+      "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+    }
+  ],
+  "samples": {
+    "missing_review_fetch": [
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 3D \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439 60\u044590 \u0441\u043C",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0364",
+        "wb_root_id": "164536762",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0364_products",
+        "wb_product_id": "456602731",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u041F\u0412\u0425 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 65\u0445100 \u0441\u043C \u0440\u0435\u0437\u0438\u043D\u043E\u0432\u044B\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0363",
+        "wb_root_id": "918868780",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0363_products",
+        "wb_product_id": "851753578",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043960\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0363",
+        "wb_root_id": "811910651",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0363_products",
+        "wb_product_id": "953642709",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043960\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0359",
+        "wb_root_id": "811910651",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0359_products",
+        "wb_product_id": "784222326",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043960\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0359",
+        "wb_root_id": "811910651",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0359_products",
+        "wb_product_id": "784222328",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043960\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0359",
+        "wb_root_id": "811910651",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0359_products",
+        "wb_product_id": "953642706",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0356",
+        "wb_root_id": "505276054",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0356_products",
+        "wb_product_id": "1013416248",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0356",
+        "wb_root_id": "505276054",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0356_products",
+        "wb_product_id": "1013437951",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0355",
+        "wb_root_id": "505276054",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0355_products",
+        "wb_product_id": "1013397911",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0355",
+        "wb_root_id": "505276054",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0355_products",
+        "wb_product_id": "1013420952",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0355",
+        "wb_root_id": "505276054",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0355_products",
+        "wb_product_id": "1013424576",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u043F\u0440\u043E\u0442\u0438\u0432\u043E\u0441\u043A\u043E\u043B\u044C\u0437\u044F\u0449\u0438\u0439",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0355",
+        "wb_root_id": "505276054",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0355_products",
+        "wb_product_id": "1013430551",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0341",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0341_products",
+        "wb_product_id": "782706439",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0341",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0341_products",
+        "wb_product_id": "782706444",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0339",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0339_products",
+        "wb_product_id": "782706447",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0338",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0338_products",
+        "wb_product_id": "782706441",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0338",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0338_products",
+        "wb_product_id": "782706442",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0338",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0338_products",
+        "wb_product_id": "782706443",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0338",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0338_products",
+        "wb_product_id": "782706448",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      },
+      {
+        "name": "\u041A\u043E\u0432\u0440\u0438\u043A \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439 \u0438 \u0442\u0443\u0430\u043B\u0435\u0442\u0430 \u0431\u044B\u0441\u0442\u0440\u043E\u0441\u043E\u0445\u043D\u0443\u0449\u0438\u0439 \u0434\u0438\u0430\u0442\u043E\u043C\u0438\u0442\u043E\u0432\u044B\u043940\u044560",
+        "batch_id": "market_refresh_20260615_183028_db637fd:batch:0338",
+        "wb_root_id": "809992398",
+        "parser_run_id": "market_refresh_20260615_183028_db637fd_batch_0338_products",
+        "wb_product_id": "782706450",
+        "source_subcategory": "\u041A\u043E\u0432\u0440\u0438\u043A\u0438 \u0434\u043B\u044F \u0432\u0430\u043D\u043D\u043E\u0439"
+      }
+    ]
+  },
+  "deleteSummary": {
+    "detailRows": 60,
+    "reviewRows": 0,
+    "productRows": 60,
+    "logisticsRows": 420,
+    "warehouseRows": 420,
+    "reviewReplyRows": 0,
+    "reviewRootFetches": 0,
+    "domainProductsSafeToDelete": 3
+  }
+}
