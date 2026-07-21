@@ -107,8 +107,7 @@ export const parserAdminTexts = {
     title: 'Подробности запуска parser-а',
     ip: 'IP',
     created: 'Новых карточек',
-    updated: 'Обновлено',
-    missingLedger: 'Для этого запуска журнал эффектов не сохранен.'
+    updated: 'Обновлено'
   },
   empty: {
     proxyRuns: 'Proxy-процессы еще не запускались.',

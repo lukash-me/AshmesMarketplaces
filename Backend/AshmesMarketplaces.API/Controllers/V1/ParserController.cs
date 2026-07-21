@@ -276,6 +276,16 @@ public sealed class ParserController : ControllerBase
         return ToActionResult(result);
     }
 
+    [HttpGet("products/covered-niches")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(IReadOnlyList<ParserProductCoveredNicheDto>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<ParserProductCoveredNicheDto>>> GetProductCoveredNiches(
+        CancellationToken cancellationToken)
+    {
+        var result = await _productReadService.GetCoveredNichesAsync(cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("products/demo-card-options")]
     [AllowAnonymous]
     [ProducesResponseType(typeof(ParserDemoCardOptionsDto), StatusCodes.Status200OK)]

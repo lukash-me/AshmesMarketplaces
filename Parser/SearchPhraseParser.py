@@ -62,6 +62,11 @@ class SearchPhraseParser:
         self.final_ranges_count = 0
         self.empty_ranges_count = 0
         self.split_ranges_count = 0
+        self.unbounded_total: int | None = None
+        self.bounded_total: int | None = None
+        self.anti_full_range_detected = False
+        self.effective_min_price_u: int | None = None
+        self.effective_max_price_u: int | None = None
 
         self.default_step = 500 * 100
         self.max_count_of_good = 5000
@@ -71,6 +76,7 @@ class SearchPhraseParser:
 
         self.max_split_depth = 10
         self.low_goods_threshold = 500
+        self.anti_full_range_total_ratio = _env_float("PARSER_ANTI_FULL_RANGE_TOTAL_RATIO", 1.25)
 
     def _emit_parser_event(self, event_name: str, *, phase: str = "ranges", extra: dict | None = None) -> None:
         payload = {
@@ -454,6 +460,8 @@ class SearchPhraseParser:
             logger.error("Не удалось получить данные")
             return None
 
+        base_data = self._resolve_effective_base_range(base_data)
+
         result: list[DataPage] = []
         step = self.default_step
         start_price = base_data.min_price
@@ -524,6 +532,43 @@ class SearchPhraseParser:
             },
         )
         return result
+
+    def _resolve_effective_base_range(self, base_data: DataPage) -> DataPage:
+        self.unbounded_total = int(base_data.total or 0)
+        self.bounded_total = None
+        self.anti_full_range_detected = False
+        self.effective_min_price_u = base_data.min_price
+        self.effective_max_price_u = base_data.max_price
+
+        if base_data.max_price <= base_data.min_price:
+            return base_data
+
+        bounded_max_price = base_data.max_price - 1
+        bounded_payload = self.fetch_data(add_params={"priceU": f"{base_data.min_price};{bounded_max_price}"})
+        bounded_data = self.get_price_range(
+            data=bounded_payload,
+            fallback_min_price=base_data.min_price,
+            fallback_max_price=bounded_max_price,
+        )
+        if self.aborted_by_rate_limit or not bounded_data:
+            return base_data
+
+        bounded_total = int(bounded_data.total or 0)
+        self.bounded_total = bounded_total
+        threshold_total = int(self.unbounded_total * self.anti_full_range_total_ratio)
+        if bounded_total > threshold_total:
+            self.anti_full_range_detected = True
+            self.effective_max_price_u = bounded_max_price
+            logger.warning(
+                "WB anti-full-range total detected: unbounded_total={} bounded_total={} effective_priceU={};{}",
+                self.unbounded_total,
+                bounded_total,
+                base_data.min_price,
+                bounded_max_price,
+            )
+            return DataPage(base_data.min_price, bounded_max_price, bounded_total)
+
+        return base_data
 
 
 def _env_int(name: str, default: int) -> int:

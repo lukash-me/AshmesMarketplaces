@@ -183,6 +183,34 @@ public sealed class AdminParserController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("scope-subject-mappings")]
+    [ProducesResponseType(typeof(IReadOnlyList<WbCategoryScopeSubjectMappingDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<IReadOnlyList<WbCategoryScopeSubjectMappingDto>>> GetScopeSubjectMappings(
+        [FromQuery] long wbMenuId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _proxyManagementService.GetScopeSubjectMappingsAsync(wbMenuId, cancellationToken);
+        return ToActionResult(result);
+    }
+
+    [HttpPatch("scope-subject-mappings/{id:guid}")]
+    [ProducesResponseType(typeof(WbCategoryScopeSubjectMappingDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<WbCategoryScopeSubjectMappingDto>> UpdateScopeSubjectMapping(
+        Guid id,
+        [FromBody] UpdateWbCategoryScopeSubjectMappingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _proxyManagementService.UpdateScopeSubjectMappingAsync(id, request, cancellationToken);
+        return ToActionResult(result);
+    }
+
     [HttpGet("instances")]
     [ProducesResponseType(typeof(IReadOnlyList<ParserAdminInstanceDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]

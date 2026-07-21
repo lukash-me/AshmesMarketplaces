@@ -14,6 +14,8 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
 {
     private const string AdminRoleName = "Admin";
     private const string DefaultProxyKey = "local-proxy";
+    private const string AcceptanceModeMenuTokenTrusted = "menu_token_trusted";
+    private const string AcceptanceModeAllowedSubjectSet = "allowed_subject_set";
 
     private readonly ApplicationDbContext _dbContext;
     private readonly ICurrentUser _currentUser;
@@ -47,9 +49,17 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
         var assignedInstances = await ActiveAssignedInstancesAsync(
             proxies.Select(x => x.Id).ToList(),
             cancellationToken);
+        var activeSubjectIdsByMenuId = await ActiveSubjectIdsByMenuIdAsync(
+            proxies
+                .Select(x => x.Assignment?.WbCategoryId)
+                .Where(x => x.HasValue)
+                .Select(x => x!.Value)
+                .Distinct()
+                .ToList(),
+            cancellationToken);
 
         return ServiceResult<IReadOnlyList<ParserProxyDto>>.Success(
-            proxies.Select(x => MapAdmin(x, assignedInstances.GetValueOrDefault(x.Id))).ToList());
+            proxies.Select(x => MapAdmin(x, assignedInstances.GetValueOrDefault(x.Id), activeSubjectIdsByMenuId)).ToList());
     }
 
     public async Task<ServiceResult<ParserProxyDto>> CreateAsync(
@@ -86,7 +96,10 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         var created = await LoadProxyAsync(proxy.Id, cancellationToken);
-        return ServiceResult<ParserProxyDto>.Success(MapAdmin(created!, null));
+        var createdSubjectIds = await ActiveSubjectIdsByMenuIdAsync(
+            created!.Assignment is null ? [] : [created.Assignment.WbCategoryId],
+            cancellationToken);
+        return ServiceResult<ParserProxyDto>.Success(MapAdmin(created!, null, createdSubjectIds));
     }
 
     public async Task<ServiceResult<ParserProxyDto>> UpdateAsync(
@@ -141,7 +154,7 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
                     categoryResult.Value.SourceSubcategory,
                     categoryResult.Value.Path,
                     categoryResult.Value.SearchQuery ?? categoryResult.Value.Name,
-                    categoryResult.Value.SourceSubcategory,
+                    NormalizeParserSearchText(categoryResult.Value.SearchQuery, categoryResult.Value.HumanSearchQuery, categoryResult.Value.SourceSubcategory),
                     enabled,
                     now);
             }
@@ -155,7 +168,10 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
 
         var updated = await LoadProxyAsync(proxy.Id, cancellationToken);
         var assigned = await ActiveAssignedInstancesAsync([updated!.Id], cancellationToken);
-        return ServiceResult<ParserProxyDto>.Success(MapAdmin(updated, assigned.GetValueOrDefault(updated.Id)));
+        var updatedSubjectIds = await ActiveSubjectIdsByMenuIdAsync(
+            updated.Assignment is null ? [] : [updated.Assignment.WbCategoryId],
+            cancellationToken);
+        return ServiceResult<ParserProxyDto>.Success(MapAdmin(updated, assigned.GetValueOrDefault(updated.Id), updatedSubjectIds));
     }
 
     public async Task<ServiceResult> DeleteAsync(Guid id, CancellationToken cancellationToken)
@@ -229,6 +245,9 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
 
         var runtimeProxies = new List<ParserRuntimeProxyDefinitionDto>();
         var runtimeNiches = new List<ParserRuntimeNicheAssignmentDto>();
+        var activeSubjectIdsByMenuId = await ActiveSubjectIdsByMenuIdAsync(
+            launchable.Select(x => x.Assignment!.WbCategoryId).Distinct().ToList(),
+            cancellationToken);
         foreach (var proxy in launchable)
         {
             string password;
@@ -250,13 +269,16 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
                 new ParserRuntimeProxyCredentialsDto(proxy.Login, password)));
 
             var assignment = proxy.Assignment!;
+            var allowedSubjectIds = activeSubjectIdsByMenuId.GetValueOrDefault(assignment.WbCategoryId) ?? [];
             runtimeNiches.Add(new ParserRuntimeNicheAssignmentDto(
                 assignment.WbCategoryId,
                 assignment.SourceCategory,
                 assignment.SourceSubcategory,
                 assignment.SourcePath,
                 assignment.SearchQuery,
-                assignment.ParserSearchText,
+                NormalizeParserSearchText(assignment.SearchQuery, assignment.ParserSearchText, assignment.SourceSubcategory),
+                DetermineAcceptanceMode(allowedSubjectIds),
+                allowedSubjectIds,
                 proxy.Key,
                 assignment.Enabled));
         }
@@ -317,6 +339,54 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
                 latestReviewDateUtc,
                 knownReviewIds,
                 unansweredReviewIds));
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<WbCategoryScopeSubjectMappingDto>>> GetScopeSubjectMappingsAsync(
+        long wbMenuId,
+        CancellationToken cancellationToken)
+    {
+        var access = await EnsureAdminAsync(cancellationToken);
+        if (!access.IsSuccess)
+            return AccessError<IReadOnlyList<WbCategoryScopeSubjectMappingDto>>(access.Error!);
+        if (wbMenuId <= 0)
+            return ServiceResult<IReadOnlyList<WbCategoryScopeSubjectMappingDto>>.BadRequest("WB menu id is required.");
+
+        var mappings = await _dbContext.WbCategoryScopeSubjectMappings
+            .AsNoTracking()
+            .Where(x => x.WbMenuId == wbMenuId)
+            .OrderBy(x => x.Status)
+            .ThenBy(x => x.SubjectId)
+            .Select(x => MapScopeSubjectMapping(x))
+            .ToListAsync(cancellationToken);
+
+        return ServiceResult<IReadOnlyList<WbCategoryScopeSubjectMappingDto>>.Success(mappings);
+    }
+
+    public async Task<ServiceResult<WbCategoryScopeSubjectMappingDto>> UpdateScopeSubjectMappingAsync(
+        Guid id,
+        UpdateWbCategoryScopeSubjectMappingRequest request,
+        CancellationToken cancellationToken)
+    {
+        var access = await EnsureAdminAsync(cancellationToken);
+        if (!access.IsSuccess)
+            return AccessError<WbCategoryScopeSubjectMappingDto>(access.Error!);
+
+        var mapping = await _dbContext.WbCategoryScopeSubjectMappings
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (mapping is null)
+            return ServiceResult<WbCategoryScopeSubjectMappingDto>.NotFound("WB category scope subject mapping was not found.");
+
+        var status = (request.Status ?? string.Empty).Trim();
+        if (status is not (WbCategoryScopeSubjectMappingStatuses.Active or
+            WbCategoryScopeSubjectMappingStatuses.Rejected or
+            WbCategoryScopeSubjectMappingStatuses.NeedsReview))
+        {
+            return ServiceResult<WbCategoryScopeSubjectMappingDto>.BadRequest("Unknown scope subject mapping status.");
+        }
+
+        mapping.ChangeStatus(status, WbCategoryScopeSubjectMappingSources.Manual, DateTime.UtcNow);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return ServiceResult<WbCategoryScopeSubjectMappingDto>.Success(MapScopeSubjectMapping(mapping));
     }
 
     private async Task<ServiceResult> EnsureAdminAsync(CancellationToken cancellationToken)
@@ -399,7 +469,7 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
             category.SourceSubcategory,
             category.Path,
             category.SearchQuery ?? category.Name,
-            category.SourceSubcategory,
+            NormalizeParserSearchText(category.SearchQuery, category.HumanSearchQuery, category.SourceSubcategory),
             enabled,
             nowUtc);
     }
@@ -434,8 +504,43 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
                 cancellationToken);
     }
 
-    private static ParserProxyDto MapAdmin(ParserProxy proxy, ParserProxyAssignedInstanceDto? assignedInstance)
+    private async Task<IReadOnlyDictionary<long, IReadOnlyList<long>>> ActiveSubjectIdsByMenuIdAsync(
+        IReadOnlyCollection<long> wbMenuIds,
+        CancellationToken cancellationToken)
     {
+        if (wbMenuIds.Count == 0)
+            return new Dictionary<long, IReadOnlyList<long>>();
+
+        var rows = await _dbContext.WbCategoryScopeSubjectMappings
+            .AsNoTracking()
+            .Where(x => wbMenuIds.Contains(x.WbMenuId) &&
+                        x.Status == WbCategoryScopeSubjectMappingStatuses.Active)
+            .Select(x => new { x.WbMenuId, x.SubjectId })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .GroupBy(x => x.WbMenuId)
+            .ToDictionary(
+                x => x.Key,
+                x => (IReadOnlyList<long>)x.Select(row => row.SubjectId).Distinct().Order().ToList());
+    }
+
+    private static string DetermineAcceptanceMode(IReadOnlyCollection<long> allowedSubjectIds)
+    {
+        return allowedSubjectIds.Count > 0
+            ? AcceptanceModeAllowedSubjectSet
+            : AcceptanceModeMenuTokenTrusted;
+    }
+
+    private static ParserProxyDto MapAdmin(
+        ParserProxy proxy,
+        ParserProxyAssignedInstanceDto? assignedInstance,
+        IReadOnlyDictionary<long, IReadOnlyList<long>> activeSubjectIdsByMenuId)
+    {
+        var allowedSubjectIds = proxy.Assignment is null
+            ? []
+            : activeSubjectIdsByMenuId.GetValueOrDefault(proxy.Assignment.WbCategoryId) ?? [];
+
         return new ParserProxyDto(
             proxy.Id,
             proxy.Key,
@@ -456,8 +561,31 @@ public sealed class ParserProxyManagementService : IParserProxyManagementService
                     proxy.Assignment.SourceSubcategory,
                     proxy.Assignment.SourcePath,
                     proxy.Assignment.SearchQuery,
-                    proxy.Assignment.ParserSearchText,
+                    NormalizeParserSearchText(proxy.Assignment.SearchQuery, proxy.Assignment.ParserSearchText, proxy.Assignment.SourceSubcategory),
+                    DetermineAcceptanceMode(allowedSubjectIds),
+                    allowedSubjectIds,
                     proxy.Assignment.Enabled),
             assignedInstance);
+    }
+
+    private static WbCategoryScopeSubjectMappingDto MapScopeSubjectMapping(WbCategoryScopeSubjectMapping mapping)
+    {
+        return new WbCategoryScopeSubjectMappingDto(
+            mapping.Id,
+            mapping.WbMenuId,
+            mapping.MenuToken,
+            mapping.SourcePath,
+            mapping.SubjectId,
+            mapping.SubjectName,
+            mapping.Status,
+            mapping.MappingSource,
+            mapping.ObservedAtUtc,
+            mapping.UpdatedAtUtc);
+    }
+
+    private static string NormalizeParserSearchText(string? rawSearchQuery, string? storedParserSearchText, string sourceSubcategory)
+    {
+        return WildberriesCategoryTreeParser.BuildHumanSearchQuery(rawSearchQuery, sourceSubcategory)
+            ?? (string.IsNullOrWhiteSpace(storedParserSearchText) ? sourceSubcategory.Trim() : storedParserSearchText.Trim());
     }
 }

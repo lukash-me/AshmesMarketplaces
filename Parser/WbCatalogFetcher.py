@@ -26,6 +26,17 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if not value or not value.strip():
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
 class WbCatalogFetcher:
     def __init__(self,
                  pages: List[DataPage],
@@ -49,7 +60,10 @@ class WbCatalogFetcher:
                  source_subcategory: str | None=None,
                  proxy_url: str | None=None,
                  proxy_key: str | None=None,
-                 rate_limiter: AsyncProxyRateLimiter | None=None):
+                 rate_limiter: AsyncProxyRateLimiter | None=None,
+                 catalog_limit_cooldown_signals: int | None=None,
+                 catalog_rate_limit_cooldown_seconds: float | None=None,
+                 max_total_retryable_attempts: int | None=None):
 
         self.pages = pages
         self.search_phrase = search_phrase
@@ -75,6 +89,19 @@ class WbCatalogFetcher:
         self.proxy_url = proxy_url
         self.proxy_key = (proxy_key or "direct").strip() or "direct"
         self.rate_limiter = rate_limiter or global_proxy_rate_limiter()
+        self.catalog_limit_cooldown_signals = catalog_limit_cooldown_signals or _env_int(
+            "PARSER_CATALOG_LIMIT_COOLDOWN_SIGNALS",
+            2,
+        )
+        self.catalog_rate_limit_cooldown_seconds = (
+            catalog_rate_limit_cooldown_seconds
+            if catalog_rate_limit_cooldown_seconds is not None
+            else _env_float("PARSER_CATALOG_RATE_LIMIT_COOLDOWN_SECONDS", 120.0)
+        )
+        self.max_total_retryable_attempts = max_total_retryable_attempts or _env_int(
+            "PARSER_CATALOG_MAX_TOTAL_RETRYABLE_ATTEMPTS",
+            80,
+        )
         self.post_request_gap_seconds = _env_float(
             "PARSER_PROXY_POST_REQUEST_GAP_SECONDS",
             0.0,
@@ -84,6 +111,11 @@ class WbCatalogFetcher:
             0.0,
         )
         self.limit_signals = 0
+        self.catalog_limit_signals = 0
+        self.consecutive_catalog_limit_signals = 0
+        self.catalog_cooldowns_count = 0
+        self.catalog_recovered_after_cooldown = False
+        self.catalog_tasks_count = 0
         self.stop_requested = False
 
     async def _post_request_delay(self) -> None:
@@ -134,10 +166,44 @@ class WbCatalogFetcher:
             self.backoff_recorder(seconds)
         await asyncio.sleep(seconds)
 
-    def _mark_limit_signal(self):
+    async def _mark_limit_signal(self):
         self.limit_signals += 1
-        if self.limit_signals >= self.max_limit_signals:
+        self.catalog_limit_signals += 1
+        self.consecutive_catalog_limit_signals += 1
+        if self.catalog_limit_signals >= self.max_total_retryable_attempts:
             self.stop_requested = True
+            return
+
+        if self.consecutive_catalog_limit_signals >= self.catalog_limit_cooldown_signals:
+            self.catalog_cooldowns_count += 1
+            defer = getattr(self.rate_limiter, "defer", None)
+            if callable(defer):
+                defer(self.proxy_key, self.catalog_rate_limit_cooldown_seconds)
+            if self.backoff_recorder:
+                self.backoff_recorder(self.catalog_rate_limit_cooldown_seconds)
+            await asyncio.sleep(self.catalog_rate_limit_cooldown_seconds)
+            self.consecutive_catalog_limit_signals = 0
+
+    def _mark_success(self) -> None:
+        if self.catalog_cooldowns_count > 0:
+            self.catalog_recovered_after_cooldown = True
+        self.consecutive_catalog_limit_signals = 0
+
+    def _effective_initial_batch_size(self, task_count: int) -> int:
+        if self.batch_size <= 2:
+            return self.batch_size
+        if len(self.pages) > 120 or task_count > 5000:
+            return 2
+        return self.batch_size
+
+    def _next_batch_size(self, current_size: int, success_streak: int) -> int:
+        if current_size >= self.batch_size:
+            return self.batch_size
+        if current_size == 2 and success_streak >= 1:
+            return min(4, self.batch_size)
+        if current_size >= 4 and success_streak >= 5:
+            return self.batch_size
+        return current_size
 
 
     def _build_tasks(self) -> list[dict]:
@@ -149,6 +215,7 @@ class WbCatalogFetcher:
                 tasks.append({"page": page_num})
 
             logger.info(f"Direct catalog mode tasks: {len(tasks)}")
+            self.catalog_tasks_count = len(tasks)
             return tasks
 
         for page in self.pages:
@@ -170,9 +237,11 @@ class WbCatalogFetcher:
                 if self.max_catalog_pages and len(tasks) >= self.max_catalog_pages:
                     logger.warning(f"Catalog page cap reached: {self.max_catalog_pages}")
                     logger.info(f"Сформировано задач: {len(tasks)}")
+                    self.catalog_tasks_count = len(tasks)
                     return tasks
 
         logger.info(f"Сформировано задач: {len(tasks)}")
+        self.catalog_tasks_count = len(tasks)
         return tasks
 
     def _build_params(self, task: dict) -> dict:
@@ -203,7 +272,7 @@ class WbCatalogFetcher:
     async def _fetch_one(self, client: httpx.AsyncClient, task: dict) -> dict | None:
         params = self._build_params(task=task)
 
-        max_attempts = self.max_retries + 1
+        max_attempts = max(self.max_retries + 1, self.max_total_retryable_attempts)
         for attempt in range(1, max_attempts + 1):
             if self.stop_requested:
                 return None
@@ -235,7 +304,7 @@ class WbCatalogFetcher:
 
                         wb_code = self._extract_wb_code(data)
                         if wb_code:
-                            self._mark_limit_signal()
+                            await self._mark_limit_signal()
                             self._record_error(
                                 message="WB catalog response contains error code",
                                 wb_code=wb_code,
@@ -253,6 +322,7 @@ class WbCatalogFetcher:
                             data["__parser_page"] = task.get("page")
                             data["__parser_page_count"] = task.get("page_count")
                             data["__parser_start_offset"] = task.get("start_offset") or 0
+                            self._mark_success()
                             logger.debug(self._task_label(task))
                             return data
                         else:
@@ -269,13 +339,16 @@ class WbCatalogFetcher:
                                 self.proxy_key,
                                 reason=f"WB catalog HTTP status {response.status_code}",
                             )
-                        if self._is_retryable_status(response.status_code):
-                            self._mark_limit_signal()
+                        retryable_status = self._is_retryable_status(response.status_code)
+                        if retryable_status:
+                            await self._mark_limit_signal()
                         self._record_error(
                             message=f"WB catalog HTTP status {response.status_code}",
                             http_status=response.status_code,
                             attempt=attempt,
                             action="retry" if attempt < max_attempts else "stopped")
+                        if not retryable_status:
+                            return None
 
             except httpx.RequestError as err:
                 await self._post_request_delay()
@@ -296,28 +369,41 @@ class WbCatalogFetcher:
     async def iter_result_batches(self):
         tasks = self._build_tasks()
         total_results = 0
+        batch_size = self._effective_initial_batch_size(len(tasks))
+        consecutive_successful_batches = 0
 
         async with httpx.AsyncClient(**httpx_proxy_kwargs(self.proxy_url)) as client:
-            for i in range(0, len(tasks), self.batch_size):
+            i = 0
+            batch_number = 1
+            while i < len(tasks):
                 if self.stop_requested:
                     logger.warning("Catalog fetching stopped after repeated WB limit signals")
                     break
 
-                batch = tasks[i: i + self.batch_size]
+                batch = tasks[i: i + batch_size]
 
-                logger.info(f"Catalog request batch {i // self.batch_size + 1} ({len(batch)}) requests")
+                logger.info(f"Catalog request batch {batch_number} ({len(batch)}) requests")
 
                 coroutines = [
                     self._fetch_one(client, task) for task in batch
                 ]
 
+                before_limit_signals = self.catalog_limit_signals
                 batch_results = await asyncio.gather(*coroutines)
                 batch_results = [r for r in batch_results if r]
                 total_results += len(batch_results)
+                i += len(batch)
+                batch_number += 1
 
                 logger.success(f"Catalog request batch completed, total responses: {total_results}")
                 if batch_results:
                     yield batch_results
+
+                if self.catalog_limit_signals == before_limit_signals and batch_results:
+                    consecutive_successful_batches += 1
+                else:
+                    consecutive_successful_batches = 0
+                batch_size = self._next_batch_size(batch_size, consecutive_successful_batches)
 
                 delay_min, delay_max = self.batch_delay_bounds
                 if delay_max > 0:

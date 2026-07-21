@@ -121,7 +121,8 @@ class ProductFetchModeTests(unittest.TestCase):
             proxy_key="proxy-1",
             rate_limiter=NoopLimiter(),
             max_retries=0,
-            max_limit_signals=1,
+            max_total_retryable_attempts=1,
+            catalog_rate_limit_cooldown_seconds=0.0,
         )
 
         with patch(

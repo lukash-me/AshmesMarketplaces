@@ -32,6 +32,8 @@ export type ParserProductQueryFilterKey =
   | 'sort'
   | 'search'
   | 'parserRunId'
+  | 'sourcePath'
+  | 'wbCategoryId'
   | 'sourceCategory'
   | 'sourceSubcategory'
   | 'brandName'
@@ -55,6 +57,8 @@ export function parseParserProductsQuery(query: LocationQuery): ParserProductQue
     parserRunId: readString(query.parserRunId),
     sourceCategory: readString(query.sourceCategory),
     sourceSubcategory: readString(query.sourceSubcategory),
+    wbCategoryId: readString(query.wbCategoryId),
+    sourcePath: readString(query.sourcePath),
     brandName: readString(query.brandName),
     sellerName: readString(query.sellerName),
     wbRootId: readString(query.wbRootId),
@@ -122,6 +126,8 @@ export function toParserProductsRouteQuery(state: ParserProductQueryState): Loca
     sort: state.sort || undefined,
     search: state.search || undefined,
     parserRunId: state.parserRunId || undefined,
+    wbCategoryId: state.wbCategoryId || undefined,
+    sourcePath: state.sourcePath || undefined,
     sourceCategory: state.sourceCategory || undefined,
     sourceSubcategory: state.sourceSubcategory || undefined,
     brandName: state.brandName || undefined,
@@ -147,6 +153,8 @@ export function resetParserProductQueryFilters(
     parserRunId: '',
     sourceCategory: '',
     sourceSubcategory: '',
+    wbCategoryId: '',
+    sourcePath: '',
     brandName: '',
     sellerName: '',
     wbRootId: '',
@@ -163,6 +171,17 @@ export function removeParserProductQueryFilter(
   state: ParserProductQueryState,
   key: ParserProductQueryFilterKey
 ): ParserProductQueryState {
+  if (key === 'sourcePath' || key === 'wbCategoryId' || key === 'sourceCategory' || key === 'sourceSubcategory') {
+    return {
+      ...state,
+      page: DEFAULT_PAGE,
+      wbCategoryId: '',
+      sourcePath: '',
+      sourceCategory: '',
+      sourceSubcategory: ''
+    };
+  }
+
   return {
     ...state,
     page: DEFAULT_PAGE,

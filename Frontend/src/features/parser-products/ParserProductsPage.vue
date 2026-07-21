@@ -8,7 +8,7 @@ import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
 
 import MarketProductDetailDrawer from './ParserProductDetailDrawer.vue';
-import { getParserProductFilterOptions, getParserProducts } from './parserProducts.api';
+import { getParserProductCoveredNiches, getParserProductFilterOptions, getParserProducts } from './parserProducts.api';
 import MarketProductsFilters from './ParserProductsFilters.vue';
 import {
   parseParserProductsQuery,
@@ -22,6 +22,7 @@ import {
 import MarketProductsTable from './ParserProductsTable.vue';
 import type {
   ParserProductFilterOptions,
+  ParserProductCoveredNiche,
   ParserProductListItem,
   ParserProductQueryState
 } from './parserProducts.types';
@@ -38,8 +39,11 @@ const emptyFilterOptions: ParserProductFilterOptions = {
   sellers: []
 };
 const filterOptions = ref<ParserProductFilterOptions>(emptyFilterOptions);
+const coveredNiches = ref<ParserProductCoveredNiche[]>([]);
 const filterOptionsLoading = ref(false);
 const filterOptionsError = ref('');
+const coveredNichesLoading = ref(false);
+const coveredNichesError = ref('');
 const loading = ref(false);
 const error = ref('');
 const selected = ref<ParserProductListItem | null>(null);
@@ -49,7 +53,7 @@ watch(
   () => route.query,
   async (query) => {
     queryState.value = parseParserProductsQuery(query);
-    await Promise.all([loadRows(), loadFilterOptions()]);
+    await Promise.all([loadRows(), loadFilterOptions(), loadCoveredNiches()]);
   },
   { immediate: true }
 );
@@ -101,6 +105,23 @@ async function loadFilterOptions() {
   }
 }
 
+async function loadCoveredNiches() {
+  coveredNichesLoading.value = true;
+  coveredNichesError.value = '';
+
+  try {
+    coveredNiches.value = await getParserProductCoveredNiches();
+  } catch (err) {
+    coveredNiches.value = [];
+    coveredNichesError.value = getProblemMessage(
+      err,
+      'Не удалось загрузить список покрытых ниш. Фильтр ниши временно недоступен.'
+    );
+  } finally {
+    coveredNichesLoading.value = false;
+  }
+}
+
 function updateQuery(patch: Partial<ParserProductQueryState>) {
   void router.replace({
     query: toParserProductsRouteQuery({ ...queryState.value, ...patch })
@@ -130,8 +151,11 @@ function removeFilter(key: ParserProductQueryFilterKey) {
     <MarketProductsFilters
       :state="queryState"
       :filter-options="filterOptions"
+      :covered-niches="coveredNiches"
       :filter-options-loading="filterOptionsLoading"
       :filter-options-error="filterOptionsError"
+      :covered-niches-loading="coveredNichesLoading"
+      :covered-niches-error="coveredNichesError"
       @apply="updateQuery"
       @reset="resetFilters"
       @remove="removeFilter"

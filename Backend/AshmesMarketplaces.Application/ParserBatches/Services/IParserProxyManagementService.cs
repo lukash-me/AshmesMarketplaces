@@ -25,4 +25,13 @@ public interface IParserProxyManagementService
     Task<ServiceResult<ParserRuntimeReviewSyncStateDto>> GetRuntimeReviewSyncStateAsync(
         string? wbProductId,
         CancellationToken cancellationToken);
+
+    Task<ServiceResult<IReadOnlyList<WbCategoryScopeSubjectMappingDto>>> GetScopeSubjectMappingsAsync(
+        long wbMenuId,
+        CancellationToken cancellationToken);
+
+    Task<ServiceResult<WbCategoryScopeSubjectMappingDto>> UpdateScopeSubjectMappingAsync(
+        Guid id,
+        UpdateWbCategoryScopeSubjectMappingRequest request,
+        CancellationToken cancellationToken);
 }

@@ -6,6 +6,9 @@ export interface ParserAdminProxyRun {
   proxyKey: string;
   sourceCategory: string;
   sourceSubcategory: string;
+  sourcePath: string | null;
+  wbCategoryId: number | null;
+  parserSearchText: string | null;
   egressIp: string | null;
   status: string;
   phase: string;
@@ -101,6 +104,7 @@ export interface ParserAdminProxyRunJournal {
   createdProductsCount: number;
   updatedProductsCount: number;
   hasProductEffectsLedger: boolean;
+  hasCompletedRollback: boolean;
   plannedRangesCount: number;
   completedRangesCount: number;
   rangeProgressPercent: number;
@@ -213,6 +217,8 @@ export interface ParserProxyAssignment {
   sourcePath: string;
   searchQuery: string;
   parserSearchText: string;
+  scopeAcceptanceMode: 'menu_token_trusted' | 'allowed_subject_set' | 'exact_subject';
+  allowedSubjectIds: number[];
   enabled: boolean;
 }
 

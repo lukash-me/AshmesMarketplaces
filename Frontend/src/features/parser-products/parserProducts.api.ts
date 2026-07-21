@@ -4,6 +4,7 @@ import { publicHttp } from '@/shared/api/http';
 import type {
   ParserDemoCardOptions,
   ParserDemoCardCharacteristics,
+  ParserProductCoveredNiche,
   ParserProductDetail,
   ParserProductFilterOptions,
   ParserProductFilterOptionsParams,
@@ -36,6 +37,11 @@ export async function getParserProductFilterOptions(
   params: ParserProductFilterOptionsParams
 ): Promise<ParserProductFilterOptions> {
   const response = await publicHttp.get<ParserProductFilterOptions>('/parser/products/filter-options', { params });
+  return response.data;
+}
+
+export async function getParserProductCoveredNiches(): Promise<ParserProductCoveredNiche[]> {
+  const response = await publicHttp.get<ParserProductCoveredNiche[]>('/parser/products/covered-niches');
   return response.data;
 }
 

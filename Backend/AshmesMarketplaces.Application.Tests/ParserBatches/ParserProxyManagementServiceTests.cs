@@ -1,4 +1,4 @@
-using AshmesMarketplaces.Application.Auth.Security;
+﻿using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
 using AshmesMarketplaces.Application.MarketplaceCategories.Dtos;
 using AshmesMarketplaces.Application.MarketplaceCategories.Services;
@@ -52,7 +52,7 @@ public sealed class ParserProxyManagementServiceTests
         Assert.Equal("Обувь", result.Value.Assignment.SourceCategory);
         Assert.Equal("Кеды и кроссовки", result.Value.Assignment.SourceSubcategory);
         Assert.Equal("Обувь / Мужская / Кеды и кроссовки", result.Value.Assignment.SourcePath);
-        Assert.Equal(result.Value.Assignment.SourceSubcategory, result.Value.Assignment.ParserSearchText);
+        Assert.Equal("мужские кеды и кроссовки", result.Value.Assignment.ParserSearchText);
         Assert.NotEqual(result.Value.Assignment.SearchQuery, result.Value.Assignment.ParserSearchText);
     }
 
@@ -127,8 +127,44 @@ public sealed class ParserProxyManagementServiceTests
         Assert.Equal("secret1", runtimeProxy.Credentials!.Password);
         var niche = Assert.Single(result.Value.Niches);
         Assert.Equal(proxy1.Id.ToString("D"), niche.ProxyKey);
-        Assert.Equal(niche.SourceSubcategory, niche.ParserSearchText);
+        Assert.Equal("мужские кеды и кроссовки", niche.ParserSearchText);
         Assert.NotEqual(niche.SearchQuery, niche.ParserSearchText);
+        Assert.Equal("menu_token_trusted", niche.ScopeAcceptanceMode);
+        Assert.Empty(niche.AllowedSubjectIds);
+    }
+
+    [Fact]
+    public async Task RuntimeAssignments_returns_allowed_subject_set_when_active_mappings_exist()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var service = CreateService(context, adminRole.Id);
+        await service.CreateAsync(
+            new CreateParserProxyRequest("10.0.0.1", 8080, 1080, "user", "secret1", 8194),
+            CancellationToken.None);
+
+        var proxy = await context.ParserProxies.SingleAsync();
+        var now = DateTime.UtcNow;
+        context.WbCategoryScopeSubjectMappings.Add(new WbCategoryScopeSubjectMapping(
+            8194,
+            "menu_redirect_subject_v2_8194",
+            "Обувь / Мужская / Кеды и кроссовки",
+            631,
+            "Sneakers",
+            WbCategoryScopeSubjectMappingStatuses.Active,
+            WbCategoryScopeSubjectMappingSources.Manual,
+            now));
+        var localInstance = new ParserInstanceConfiguration("parser-local-01", "Local parser", ParserInstanceHostKinds.Local, now);
+        context.ParserInstanceConfigurations.Add(localInstance);
+        context.ParserInstanceProxyAssignments.Add(new ParserInstanceProxyAssignment(localInstance.Id, proxy.Id, now));
+        await context.SaveChangesAsync();
+
+        var result = await service.GetRuntimeAssignmentsAsync("parser-local-01", CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var niche = Assert.Single(result.Value!.Niches);
+        Assert.Equal("allowed_subject_set", niche.ScopeAcceptanceMode);
+        Assert.Equal([631], niche.AllowedSubjectIds);
     }
 
     [Fact]
@@ -480,7 +516,8 @@ public sealed class ParserProxyManagementServiceTests
                 typeof(ParserInstanceProxyAssignment),
                 typeof(ParserReviewRow),
                 typeof(ParserReviewReplyRow),
-                typeof(ParserCurrentProductReviewsSummary)
+                typeof(ParserCurrentProductReviewsSummary),
+                typeof(WbCategoryScopeSubjectMapping)
             };
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes().Select(x => x.ClrType).ToList())
@@ -534,6 +571,11 @@ public sealed class ParserProxyManagementServiceTests
                 builder.Property(x => x.Id).ValueGeneratedNever();
             });
             modelBuilder.Entity<ParserCurrentProductReviewsSummary>(builder =>
+            {
+                builder.HasKey(x => x.Id);
+                builder.Property(x => x.Id).ValueGeneratedNever();
+            });
+            modelBuilder.Entity<WbCategoryScopeSubjectMapping>(builder =>
             {
                 builder.HasKey(x => x.Id);
                 builder.Property(x => x.Id).ValueGeneratedNever();

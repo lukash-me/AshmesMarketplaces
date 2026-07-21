@@ -7,13 +7,20 @@ import Input from '@/shared/ui/Input.vue';
 
 import MarketFilterSelect from './MarketFilterSelect.vue';
 import type { ParserProductQueryFilterKey } from './parserProductsQuery';
-import type { ParserProductFilterOptions, ParserProductQueryState } from './parserProducts.types';
+import type {
+  ParserProductCoveredNiche,
+  ParserProductFilterOptions,
+  ParserProductQueryState
+} from './parserProducts.types';
 
 const props = defineProps<{
   state: ParserProductQueryState;
   filterOptions: ParserProductFilterOptions;
+  coveredNiches: ParserProductCoveredNiche[];
   filterOptionsLoading: boolean;
   filterOptionsError: string;
+  coveredNichesLoading: boolean;
+  coveredNichesError: string;
 }>();
 
 const emit = defineEmits<{
@@ -24,8 +31,7 @@ const emit = defineEmits<{
 
 const form = reactive({
   search: props.state.search,
-  sourceCategory: props.state.sourceCategory,
-  sourceSubcategory: props.state.sourceSubcategory,
+  sourcePath: resolveNichePath(props.state),
   brandName: props.state.brandName,
   sellerName: props.state.sellerName,
   priceDiscountedFrom: props.state.priceDiscountedFrom,
@@ -37,11 +43,10 @@ const form = reactive({
 });
 
 watch(
-  () => props.state,
-  (state) => {
+  () => [props.state, props.coveredNiches] as const,
+  ([state]) => {
     form.search = state.search;
-    form.sourceCategory = state.sourceCategory;
-    form.sourceSubcategory = state.sourceSubcategory;
+    form.sourcePath = resolveNichePath(state);
     form.brandName = state.brandName;
     form.sellerName = state.sellerName;
     form.priceDiscountedFrom = state.priceDiscountedFrom;
@@ -54,8 +59,7 @@ watch(
   { deep: true }
 );
 
-const categoryOptions = computed(() => props.filterOptions.categories);
-const subcategoryOptions = computed(() => props.filterOptions.subcategories);
+const nicheOptions = computed(() => props.coveredNiches.map((niche) => niche.sourcePath));
 const brandOptions = computed(() => props.filterOptions.brands);
 const sellerOptions = computed(() => props.filterOptions.sellers);
 const rangeKeys = [
@@ -67,25 +71,48 @@ const rangeKeys = [
   'feedbackCountTo'
 ] as const;
 
-const chips = computed(() =>
-  (Object.keys(form) as Array<keyof typeof form>)
+const chips = computed(() => {
+  const items = (Object.keys(form) as Array<keyof typeof form>)
     .filter((key) => props.state[key])
     .map((key) => ({
       key: key as ParserProductQueryFilterKey,
       label: getLabel(key),
-      value: props.state[key]
-    }))
-    .concat(
-      props.state.sort
-        ? [{ key: 'sort' as ParserProductQueryFilterKey, label: 'Сортировка', value: getSortLabel(props.state.sort) }]
-        : []
-    )
-);
+      value: key === 'sourcePath' ? resolveNichePath(props.state) : props.state[key]
+    }));
+
+  if (!props.state.sourcePath && (props.state.sourceCategory || props.state.sourceSubcategory)) {
+    items.push({
+      key: 'sourcePath',
+      label: 'Ниша',
+      value: resolveNichePath(props.state)
+    });
+  }
+
+  return items.concat(
+    props.state.sort
+      ? [{ key: 'sort' as ParserProductQueryFilterKey, label: 'Сортировка', value: getSortLabel(props.state.sort) }]
+      : []
+  );
+});
 
 function apply() {
+  const selectedNiche = props.coveredNiches.find((niche) => niche.sourcePath === form.sourcePath);
+
   emit('apply', {
     page: 1,
-    ...Object.fromEntries(Object.entries(form).map(([key, value]) => [key, value.trim()]))
+    search: form.search.trim(),
+    sourcePath: selectedNiche ? selectedNiche.sourcePath : '',
+    wbCategoryId: selectedNiche?.wbCategoryId ? String(selectedNiche.wbCategoryId) : '',
+    sourceCategory: selectedNiche?.sourceCategory?.trim() ?? '',
+    sourceSubcategory: selectedNiche?.sourceSubcategory?.trim() ?? '',
+    brandName: form.brandName.trim(),
+    sellerName: form.sellerName.trim(),
+    priceDiscountedFrom: form.priceDiscountedFrom.trim(),
+    priceDiscountedTo: form.priceDiscountedTo.trim(),
+    reviewRatingFrom: form.reviewRatingFrom.trim(),
+    reviewRatingTo: form.reviewRatingTo.trim(),
+    feedbackCountFrom: form.feedbackCountFrom.trim(),
+    feedbackCountTo: form.feedbackCountTo.trim()
   });
 }
 
@@ -100,8 +127,7 @@ function hasActiveRanges(): boolean {
 function getLabel(key: string): string {
   const labels: Record<string, string> = {
     search: 'Поиск',
-    sourceCategory: 'Категория',
-    sourceSubcategory: 'Подкатегория',
+    sourcePath: 'Ниша',
     brandName: 'Бренд',
     sellerName: 'Продавец',
     priceDiscountedFrom: 'Цена от',
@@ -137,6 +163,26 @@ function getSortLabel(value: string): string {
 
   return labels[value] ?? value;
 }
+
+function resolveNichePath(state: ParserProductQueryState): string {
+  if (state.sourcePath) {
+    return state.sourcePath;
+  }
+
+  if (!state.sourceCategory && !state.sourceSubcategory) {
+    return '';
+  }
+
+  const exactMatch = props.coveredNiches.find((niche) =>
+    niche.sourceCategory === state.sourceCategory && niche.sourceSubcategory === state.sourceSubcategory
+  );
+
+  if (exactMatch) {
+    return exactMatch.sourcePath;
+  }
+
+  return [state.sourceCategory, state.sourceSubcategory].filter(Boolean).join(' / ');
+}
 </script>
 
 <template>
@@ -157,22 +203,13 @@ function getSortLabel(value: string): string {
 
     <div class="filters__selects">
       <MarketFilterSelect
-        v-model="form.sourceCategory"
-        class="filter-control"
-        :class="{ 'filter-control--active': isActive(form.sourceCategory) }"
-        label="Категория"
-        placeholder="Все категории"
-        search-placeholder="Найти категорию"
-        :options="categoryOptions"
-      />
-      <MarketFilterSelect
-        v-model="form.sourceSubcategory"
-        class="filter-control"
-        :class="{ 'filter-control--active': isActive(form.sourceSubcategory) }"
-        label="Подкатегория"
-        placeholder="Все подкатегории"
-        search-placeholder="Найти подкатегорию"
-        :options="subcategoryOptions"
+        v-model="form.sourcePath"
+        class="filter-control filters__niche"
+        :class="{ 'filter-control--active': isActive(form.sourcePath) }"
+        label="Ниша"
+        placeholder="Все покрытые ниши"
+        search-placeholder="Найти нишу"
+        :options="nicheOptions"
       />
       <MarketFilterSelect
         v-model="form.brandName"
@@ -194,8 +231,10 @@ function getSortLabel(value: string): string {
       />
     </div>
 
+    <p v-if="coveredNichesError" class="filters__notice">{{ coveredNichesError }}</p>
+    <p v-else-if="coveredNichesLoading" class="filters__notice">Загружаем покрытые ниши...</p>
     <p v-if="filterOptionsError" class="filters__notice">{{ filterOptionsError }}</p>
-    <p v-else-if="filterOptionsLoading" class="filters__notice">Загружаем варианты фильтров…</p>
+    <p v-else-if="filterOptionsLoading" class="filters__notice">Загружаем варианты фильтров...</p>
 
     <details class="filters__ranges" :class="{ 'filters__ranges--active': hasActiveRanges() }">
       <summary>
@@ -356,7 +395,7 @@ function getSortLabel(value: string): string {
 }
 
 .filters__chip strong {
-  max-width: 16rem;
+  max-width: 24rem;
   overflow: hidden;
   color: var(--color-text);
   font-family: var(--font-mono);
@@ -371,7 +410,7 @@ function getSortLabel(value: string): string {
   }
 
   .filters__selects {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: minmax(18rem, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .filters__range-grid {

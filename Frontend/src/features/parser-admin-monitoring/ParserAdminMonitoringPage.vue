@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ChevronDown, ChevronUp, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-vue-next';
 
@@ -66,6 +66,7 @@ const categorySearchError = ref('');
 const instances = ref<ParserAdminInstance[]>([]);
 const instanceConfigurations = ref<ParserInstanceConfiguration[]>([]);
 const journal = ref<ParserAdminProxyRunJournal[]>([]);
+const hoveredJournalProxyKey = ref<string | null>(null);
 const proxies = ref<ParserProxy[]>([]);
 const categoryOptions = ref<WbCategoryLeaf[]>([]);
 const categoryDropdownOpen = ref(false);
@@ -304,6 +305,14 @@ function launchableProxiesFor(instance: ParserAdminInstance | null): ParserAdmin
   }
 
   return instance.proxies.filter((proxy) => proxy.sourceSubcategory && proxy.status !== 'disabled');
+}
+
+function selectedLaunchProxy(): ParserAdminProxyRun | null {
+  if (!launchInstance.value || !launchProxyKey.value) {
+    return null;
+  }
+
+  return launchInstance.value.proxies.find((proxy) => proxy.proxyKey === launchProxyKey.value) ?? null;
 }
 
 function isProxyLaunchActive(proxy: ParserAdminProxyRun): boolean {
@@ -837,11 +846,38 @@ function formatJournalEffectCount(item: ParserAdminProxyRunJournal, value: numbe
   return item.hasProductEffectsLedger ? formatNumber(value) : parserAdminTexts.values.dash;
 }
 
-function statusLabel(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'>): string {
+function hoverJournalProxy(proxyKey: string | null | undefined): void {
+  const normalized = proxyKey?.trim();
+  hoveredJournalProxyKey.value = normalized ? normalized : null;
+}
+
+function clearJournalProxyHover(): void {
+  hoveredJournalProxyKey.value = null;
+}
+
+function isJournalProxyHighlighted(item: ParserAdminProxyRunJournal): boolean {
+  return Boolean(item.proxyKey && hoveredJournalProxyKey.value && item.proxyKey === hoveredJournalProxyKey.value);
+}
+
+function statusLabel(
+  item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'> &
+    Partial<Pick<ParserAdminProxyRunJournal, 'hasCompletedRollback'>>
+): string {
+  if (item.hasCompletedRollback) {
+    return 'Был откат';
+  }
+
   return parserStatusLabel(item);
 }
 
-function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'>): string {
+function statusClass(
+  item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal, 'status' | 'phase'> &
+    Partial<Pick<ParserAdminProxyRunJournal, 'hasCompletedRollback'>>
+): string {
+  if (item.hasCompletedRollback) {
+    return 'parser-admin__status--rolled-back';
+  }
+
   if (item.phase === 'launch_failed') {
     return 'parser-admin__status--failed';
   }
@@ -994,7 +1030,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
                     {{ formatProxyKey(proxy.proxyKey) }}
                     <HelpTooltip :text="formatProxyIpTooltip(proxy)" />
                   </strong>
-                  <span>{{ proxy.sourceSubcategory }}</span>
+                  <span>{{ proxy.sourcePath || proxy.sourceSubcategory }}</span>
                 </span>
                 <button
                   class="parser-admin__proxy-check"
@@ -1085,7 +1121,13 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in journal" :key="item.id">
+            <tr
+              v-for="item in journal"
+              :key="item.id"
+              :class="{ 'parser-admin__journal-row--proxy-highlighted': isJournalProxyHighlighted(item) }"
+              @mouseenter="hoverJournalProxy(item.proxyKey)"
+              @mouseleave="clearJournalProxyHover"
+            >
               <td>
                 <strong :title="item.proxyKey">{{ formatProxyKey(item.proxyKey) }}</strong>
                 <span>{{ item.sourceSubcategory }}</span>
@@ -1101,14 +1143,18 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
               <td>{{ formatNumber(item.downloadedProductsCount) }}</td>
               <td>{{ formatNumber(item.plannedProductsCount) }}</td>
               <td>{{ formatDuration(item.runtimeMinutes) }}</td>
-              <td>{{ item.error || parserAdminTexts.values.dash }}</td>
+              <td>
+                <span class="parser-admin__journal-error">
+                  {{ item.error || parserAdminTexts.values.dash }}
+                </span>
+              </td>
               <td>
                 <div class="parser-admin__row-actions">
                   <button class="parser-admin__secondary" type="button" @click="openDetailsModal(item)">
                     {{ parserAdminTexts.actions.details }}
                   </button>
                   <button
-                    v-if="item.cycleKind !== 'launch'"
+                    v-if="item.cycleKind !== 'launch' && !item.hasCompletedRollback"
                     class="parser-admin__secondary"
                     type="button"
                     @click="openRollbackModal(item)"
@@ -1152,7 +1198,8 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
               <td>{{ proxy.hasPassword ? parserAdminTexts.values.passwordSet : parserAdminTexts.values.passwordMissing }}</td>
               <td>
                 <strong>{{ proxy.assignment?.sourceSubcategory || noNicheLabel }}</strong>
-                <span v-if="proxy.assignment">{{ proxy.assignment.sourcePath }}</span>
+                <span v-if="proxy.assignment">WB {{ proxy.assignment.wbCategoryId }} · {{ proxy.assignment.sourcePath }}</span>
+                <span v-if="proxy.assignment">Запрос: {{ proxy.assignment.parserSearchText }}</span>
               </td>
               <td>
                 <strong>{{ proxy.assignedInstance?.displayName || parserAdminTexts.form.unassigned }}</strong>
@@ -1195,18 +1242,16 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
             {{ parserAdminTexts.launch.fullConfirmation }}
           </p>
 
-          <label
+          <div
             v-if="launchMode === 'check_proxy'"
-            class="parser-admin__form-field parser-admin__form-field--wide"
+            class="parser-admin__form-field parser-admin__form-field--wide parser-admin__launch-proxy-summary"
           >
             <span>{{ parserAdminTexts.launch.proxy }}</span>
-            <select v-model="launchProxyKey" class="parser-admin__input">
-              <option value="" disabled>{{ parserAdminTexts.validation.proxy }}</option>
-              <option v-for="proxy in launchableProxiesFor(launchInstance)" :key="proxy.proxyKey" :value="proxy.proxyKey">
-                {{ formatProxyKey(proxy.proxyKey) }} - {{ proxy.sourceSubcategory }}
-              </option>
-            </select>
-          </label>
+            <strong>{{ formatProxyKey(launchProxyKey) }}</strong>
+            <small v-if="selectedLaunchProxy()">
+              {{ selectedLaunchProxy()?.sourcePath || selectedLaunchProxy()?.sourceSubcategory }}
+            </small>
+          </div>
 
           <label
             v-if="launchMode !== 'full_all'"
@@ -1229,7 +1274,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
     </div>
 
     <div v-if="detailsModalOpen && detailsJournalRow" class="parser-admin__modal-backdrop">
-      <section class="parser-admin__modal" role="dialog" aria-modal="true">
+      <section class="parser-admin__modal parser-admin__modal--details" role="dialog" aria-modal="true">
         <header class="parser-admin__modal-header">
           <h2>{{ parserAdminTexts.details.title }}</h2>
           <button class="parser-admin__icon-button" type="button" @click="closeDetailsModal">
@@ -1237,7 +1282,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
           </button>
         </header>
 
-        <div class="parser-admin__rollback-preview">
+        <div class="parser-admin__details-body">
           <div class="parser-admin__rollback-grid parser-admin__rollback-grid--details">
             <span class="parser-admin__metric">
               <span>{{ parserAdminTexts.details.ip }}</span>
@@ -1251,14 +1296,13 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
               <span>{{ parserAdminTexts.details.updated }}</span>
               <strong>{{ formatJournalEffectCount(detailsJournalRow, detailsJournalRow.updatedProductsCount) }}</strong>
             </span>
-            <span class="parser-admin__metric parser-admin__details-error">
-              <span>{{ parserAdminTexts.table.error }}</span>
-              <strong>{{ detailsJournalRow.error || parserAdminTexts.values.dash }}</strong>
-            </span>
           </div>
-          <p v-if="!detailsJournalRow.hasProductEffectsLedger" class="parser-admin__error">
-            {{ parserAdminTexts.details.missingLedger }}
-          </p>
+
+          <div class="parser-admin__details-error">
+            <span>{{ parserAdminTexts.table.error }}</span>
+            <pre>{{ detailsJournalRow.error || parserAdminTexts.values.dash }}</pre>
+          </div>
+
         </div>
 
         <footer class="parser-admin__modal-footer">
@@ -1400,6 +1444,9 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
                   <strong :title="proxy.key">{{ formatProxyKey(proxy.key) }}</strong>
                   <small>
                     {{ proxy.assignment?.sourceSubcategory || noNicheLabel }}
+                    <template v-if="proxy.assignment">
+                      В· WB {{ proxy.assignment.wbCategoryId }}
+                    </template>
                     <template v-if="proxy.assignedInstance && isProxyUnavailableForInstance(proxy)">
                       · {{ parserAdminTexts.form.alreadyAssigned }}: {{ proxy.assignedInstance.displayName }}
                     </template>
@@ -1637,7 +1684,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
 .parser-admin__instance-main,
 .parser-admin__proxy-run {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) repeat(4, minmax(130px, 1fr)) auto;
+  grid-template-columns: minmax(280px, 1.5fr) repeat(4, minmax(130px, 1fr)) auto;
   align-items: center;
   gap: var(--space-4);
   width: 100%;
@@ -1673,12 +1720,28 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   min-height: 5rem;
 }
 
+.parser-admin__proxy-title {
+  grid-template-rows: auto auto;
+  min-height: 0;
+}
+
 .parser-admin__proxy-title-head {
   display: grid;
   align-content: start;
   gap: 0.2rem;
   min-width: 0;
   min-height: var(--proxy-label-row-height);
+}
+
+.parser-admin__proxy-title .parser-admin__proxy-title-head {
+  min-height: 0;
+}
+
+.parser-admin__proxy-title-head > span {
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .parser-admin__metric > span:first-child {
@@ -1832,6 +1895,11 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   color: #475569;
 }
 
+.parser-admin__status--rolled-back {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
 .parser-admin__status--running,
 .parser-admin__status--queued,
 .parser-admin__status--preflight,
@@ -1864,6 +1932,24 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   color: var(--color-text-muted);
   font-size: 0.75rem;
   font-weight: 850;
+}
+
+.parser-admin__journal-row--proxy-highlighted > td {
+  background: rgba(234, 88, 12, 0.06);
+}
+
+.parser-admin__journal-row--proxy-highlighted > td:first-child {
+  box-shadow: inset 0.18rem 0 0 rgba(234, 88, 12, 0.48);
+}
+
+.parser-admin__journal-error {
+  display: block;
+  max-width: 28rem;
+  max-height: 4.35em;
+  overflow: hidden;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .parser-admin__table--proxies {
@@ -1899,18 +1985,32 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   width: min(680px, 100%);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--surface-panel);
+  background: #fff;
   padding: var(--space-5);
   box-shadow: var(--shadow-lg);
 }
 
+.parser-admin__modal--details {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(1120px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  background: #fff;
+}
+
 .parser-admin__modal-header {
   justify-content: space-between;
+  background: #fff;
 }
 
 .parser-admin__modal-header h2 {
   margin: 0;
   font-size: 1.1rem;
+}
+
+.parser-admin__modal--details .parser-admin__modal-header h2 {
+  font-size: 1.35rem;
+  font-weight: 850;
 }
 
 .parser-admin__launch-confirmation {
@@ -1944,11 +2044,73 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.parser-admin__details-body {
+  display: grid;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding-right: var(--space-1);
+}
+
+.parser-admin__modal--details .parser-admin__metric > span:first-child,
+.parser-admin__details-error > span {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.parser-admin__modal--details .parser-admin__metric > strong {
+  font-size: 1rem;
+}
+
+.parser-admin__details-error {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.parser-admin__details-error pre {
+  max-height: min(46vh, 32rem);
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  padding: var(--space-3);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .parser-admin__proxy-form {
   display: grid;
   align-items: start;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
+}
+
+.parser-admin__launch-proxy-summary {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  padding: var(--space-3);
+}
+
+.parser-admin__launch-proxy-summary strong,
+.parser-admin__launch-proxy-summary small {
+  display: block;
+}
+
+.parser-admin__launch-proxy-summary small {
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
 }
 
 .parser-admin__form-column,
@@ -2080,6 +2242,7 @@ function statusClass(item: Pick<ParserAdminProxyRun | ParserAdminProxyRunJournal
 
 .parser-admin__modal-footer {
   justify-content: flex-end;
+  background: #fff;
 }
 
 @media (max-width: 1450px) {

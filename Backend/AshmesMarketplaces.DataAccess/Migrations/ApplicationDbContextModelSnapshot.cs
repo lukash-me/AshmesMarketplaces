@@ -4945,6 +4945,69 @@ namespace AshmesMarketplaces.DataAccess.Migrations
                     b.ToTable("ParserWarehouseAvailabilityRows", (string)null);
                 });
 
+            modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.WbCategoryScopeSubjectMapping", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("MappingSource")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("mapping_source");
+
+                    b.Property<string>("MenuToken")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("menu_token");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("observed_at_utc");
+
+                    b.Property<string>("SourcePath")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("source_path");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("status");
+
+                    b.Property<long>("SubjectId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("subject_id");
+
+                    b.Property<string>("SubjectName")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("subject_name");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<long>("WbMenuId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("wb_menu_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourcePath");
+
+                    b.HasIndex("WbMenuId", "Status");
+
+                    b.HasIndex("WbMenuId", "SubjectId")
+                        .IsUnique();
+
+                    b.ToTable("WbCategoryScopeSubjectMappings", (string)null);
+                });
+
             modelBuilder.Entity("AshmesMarketplaces.Domain.Entities.ParserIngestion.PublicParserObservedLogisticsSnapshot", b =>
                 {
                     b.Property<Guid>("Id")

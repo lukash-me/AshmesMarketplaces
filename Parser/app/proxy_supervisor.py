@@ -30,6 +30,18 @@ def _rank_context_id(assignment: NicheProxyAssignment) -> str:
     return _safe_log_name(f"{assignment.proxy_key}_{assignment.source_subcategory}")
 
 
+def _human_query_from_raw_search_query(raw_search_query: object, fallback: object = "") -> str:
+    query = str(raw_search_query or "").strip()
+    if query:
+        parts = query.split(maxsplit=1)
+        if parts and parts[0].startswith("menu_") and len(parts) > 1:
+            return parts[1].strip()
+        if not parts or not parts[0].startswith("menu_"):
+            return query
+
+    return str(fallback or "").strip()
+
+
 def _append_runner_log(log_path: Path, message: str) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -146,6 +158,8 @@ def _explicit_niches_from_assignments(assignments: list[NicheProxyAssignment]) -
             "sourcePath": assignment.source_path,
             "searchQuery": assignment.search_query,
             "parserSearchText": assignment.parser_search_text or assignment.source_subcategory,
+            "scopeAcceptanceMode": assignment.scope_acceptance_mode or "menu_token_trusted",
+            "allowedSubjectIds": list(assignment.allowed_subject_ids),
         }
     return result
 
@@ -175,6 +189,8 @@ def _write_runtime_files(
                 "sourcePath": item.get("sourcePath"),
                 "searchQuery": item.get("searchQuery"),
                 "parserSearchText": item.get("parserSearchText"),
+                "scopeAcceptanceMode": item.get("scopeAcceptanceMode"),
+                "allowedSubjectIds": item.get("allowedSubjectIds") or [],
                 "proxyKey": assignment.proxy_key,
                 "enabled": assignment.enabled,
             }
@@ -190,14 +206,30 @@ def _write_runtime_files(
         item = explicit_niches.get((assignment.source_category, assignment.source_subcategory), {})
         if not item:
             continue
+        wb_category_id = item.get("wbCategoryId")
+        source_path = item.get("sourcePath")
+        raw_search_query = str(item.get("searchQuery") or "").strip()
+        human_query = _human_query_from_raw_search_query(
+            raw_search_query,
+            item.get("parserSearchText") or item.get("sourceSubcategory") or assignment.source_subcategory,
+        )
+        if wb_category_id is None or not raw_search_query:
+            raise ValueError(
+                "Service rank context requires wbCategoryId and searchQuery for "
+                f"{assignment.source_category!r} / {assignment.source_subcategory!r}."
+            )
         rank_contexts.append(
             {
                 "id": _rank_context_id(assignment),
-                "type": "search_query",
+                "type": "category_result",
                 "source_category": item.get("sourceCategory") or assignment.source_category,
                 "source_subcategory": item.get("sourceSubcategory") or assignment.source_subcategory,
+                "source_path": source_path,
                 "source_region_dest": item.get("sourceRegionDest") or "12354108",
-                "query": item.get("parserSearchText") or item.get("sourceSubcategory") or assignment.source_subcategory,
+                "query": raw_search_query,
+                "raw_search_query": raw_search_query,
+                "human_query": human_query,
+                "wb_category_id": wb_category_id,
                 "sort": "popular",
                 "filters": {},
             }

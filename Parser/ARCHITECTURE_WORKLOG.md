@@ -16,20 +16,21 @@
   by admin API responses. The parser runtime endpoint is the only endpoint that
   returns credentials, and it may be protected by `X-Parser-Api-Key`.
 
-## 2026-07-02 parser search text decision
+## 2026-07-07 strict WB category scope decision
 
-- WB menu `searchQuery` is a service identifier for validating the selected
-  leaf category. Do not use it as the marketplace search phrase.
-- Parser marketplace search text is `parserSearchText`.
-- For proxy assignments created from the service UI, `parserSearchText` is
-  always the selected WB leaf niche name (`sourceSubcategory`).
-- Runtime assignment payloads and generated child-process JSON files must carry
-  both fields:
-  - `searchQuery`: original WB menu query, for validation/diagnostics;
-  - `parserSearchText`: actual text passed to `SearchPhraseParser` and catalog
-    fetch.
-- If old dev configs do not contain `parserSearchText`, parser falls back to
-  `sourceSubcategory`, not to WB `searchQuery`.
+- Service launches must use the selected WB leaf category as the source of
+  truth. `searchQuery` is the raw WB category query, for example
+  `menu_redirect_subject_v2_8194 мужские кеды и кроссовки`.
+- Products and ranks stages must pass raw `searchQuery` to WB. They must not
+  replace it with the short leaf title such as `Кеды и кроссовки`.
+- `parserSearchText` is human-readable diagnostic/display text only. It is
+  stored in service rows as the human part of `searchQuery`.
+- Runtime rank contexts for service launches use `type=category_result` and
+  include `wb_category_id`, `source_path`, `raw_search_query`, and
+  `human_query`.
+- Products stage filters out returned products with an observed `subjectId`
+  different from selected `wbCategoryId`; products with missing `subjectId`
+  are kept and diagnosed instead of being dropped blindly.
 
 Этот файл обязателен к проверке перед любыми задачами, запуском или исправлениями,
 связанными с parser-архитектурой. Цель файла - не решать повторно одни и те же

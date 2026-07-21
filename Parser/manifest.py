@@ -36,6 +36,18 @@ class CategoryResult:
     total_rows: int = 0
     unique_rows: int = 0
     duplicate_rows: int = 0
+    returned_products_count: int = 0
+    accepted_products_count: int = 0
+    rejected_out_of_scope_count: int = 0
+    unbounded_total: int | None = None
+    bounded_total: int | None = None
+    anti_full_range_detected: bool = False
+    effective_min_price_u: int | None = None
+    effective_max_price_u: int | None = None
+    catalog_tasks_count: int = 0
+    catalog_limit_signals: int = 0
+    catalog_cooldowns_count: int = 0
+    catalog_recovered_after_cooldown: bool = False
     warning_count: int = 0
     error_count: int = 0
 
@@ -66,6 +78,26 @@ class RunManifest:
     backoff_summary: dict[str, Any] = field(default_factory=lambda: {"count": 0, "seconds_total": 0.0})
     token_acquisition_status: dict[str, Any] = field(default_factory=lambda: {"status": "not_attempted"})
     network_check_result: dict[str, Any] = field(default_factory=dict)
+    catalog_discovery: dict[str, Any] = field(default_factory=lambda: {
+        "catalogTasksCount": 0,
+        "catalogLimitSignals": 0,
+        "catalogCooldownsCount": 0,
+        "catalogRecoveredAfterCooldown": False,
+        "firstBatchSentAtUtc": None,
+    })
+    scope_filter: dict[str, Any] = field(default_factory=lambda: {
+        "returnedProductsCount": 0,
+        "acceptedProductsCount": 0,
+        "rejectedOutOfScopeCount": 0,
+        "scopeAcceptanceMode": None,
+        "discoveryMenuId": None,
+        "discoveryMenuToken": None,
+        "sourcePath": None,
+        "allowedSubjectIdsCount": 0,
+        "observedSubjects": [],
+        "unmappedObservedSubjects": [],
+        "rejectedExamples": [],
+    })
 
     @property
     def manifest_path(self) -> Path:
@@ -103,6 +135,26 @@ class RunManifest:
 
         key = str(code)
         self.wb_error_codes_observed[key] = self.wb_error_codes_observed.get(key, 0) + 1
+
+    def record_catalog_discovery(
+        self,
+        *,
+        catalog_tasks_count: int = 0,
+        catalog_limit_signals: int = 0,
+        catalog_cooldowns_count: int = 0,
+        catalog_recovered_after_cooldown: bool = False,
+    ) -> None:
+        self.catalog_discovery["catalogTasksCount"] += max(0, int(catalog_tasks_count or 0))
+        self.catalog_discovery["catalogLimitSignals"] += max(0, int(catalog_limit_signals or 0))
+        self.catalog_discovery["catalogCooldownsCount"] += max(0, int(catalog_cooldowns_count or 0))
+        self.catalog_discovery["catalogRecoveredAfterCooldown"] = (
+            bool(self.catalog_discovery["catalogRecoveredAfterCooldown"])
+            or bool(catalog_recovered_after_cooldown)
+        )
+
+    def record_first_batch_sent(self) -> None:
+        if not self.catalog_discovery.get("firstBatchSentAtUtc"):
+            self.catalog_discovery["firstBatchSentAtUtc"] = utc_now_iso()
 
     def record_error(
         self,
@@ -162,6 +214,8 @@ class RunManifest:
             "backoff_summary": self.backoff_summary,
             "token_acquisition_status": self.token_acquisition_status,
             "network_check_result": self.network_check_result,
+            "catalog_discovery": self.catalog_discovery,
+            "scope_filter": self.scope_filter,
             "parser_version": self.parser_version,
             "config_snapshot": self.config_snapshot,
         }

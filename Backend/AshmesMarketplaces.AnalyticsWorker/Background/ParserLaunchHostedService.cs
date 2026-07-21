@@ -114,7 +114,7 @@ public sealed class ParserLaunchHostedService : BackgroundService
         var configPath = ResolveFromWorkingDirectory(
             _configuration["ParserLaunch:ConfigPath"],
             workingDirectory,
-            Path.Combine("Parser", "presets", "production", "market_refresh_selected_niches_batched.prod.json"));
+            Path.Combine("Parser", "presets", "production", "market_refresh_service_runtime.prod.json"));
         var mode = _configuration["ParserLaunch:Mode"] ?? "batched_full_enrichment";
         if (_configuration.GetValue("ParserLaunch:RequireServiceRuntime", false))
             ValidateServiceRuntimeConfig(configPath, mode);
@@ -235,6 +235,19 @@ public sealed class ParserLaunchHostedService : BackgroundService
 
         if (launchable.Count == 0)
             throw new InvalidOperationException("Launch context has no launchable proxy/niche assignments.");
+
+        var incompleteScopes = launchable
+            .Where(x => x.WbCategoryId <= 0
+                        || string.IsNullOrWhiteSpace(x.SourcePath)
+                        || string.IsNullOrWhiteSpace(x.SearchQuery))
+            .Select(x => $"{x.ProxyKey}: {x.SourceCategory} / {x.SourceSubcategory}")
+            .ToList();
+        if (incompleteScopes.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Launch context contains proxy assignments without strict WB category scope: "
+                + string.Join("; ", incompleteScopes));
+        }
 
         return launchable;
     }

@@ -8,7 +8,15 @@ import { getProblemMessage } from '@/shared/api/problemDetails';
 import EmptyState from '@/shared/ui/EmptyState.vue';
 import LoadingState from '@/shared/ui/LoadingState.vue';
 import PageHeader from '@/widgets/PageHeader.vue';
-import { getWildberriesCategoryTree, type WildberriesCategoryCatalog, type WildberriesCategoryNode } from './marketplaceCategories.api';
+import {
+  getWbCategoryScopeSubjectMappings,
+  getWildberriesCategoryTree,
+  updateWbCategoryScopeSubjectMapping,
+  type WbCategoryScopeSubjectMapping,
+  type WbScopeSubjectMappingStatus,
+  type WildberriesCategoryCatalog,
+  type WildberriesCategoryNode
+} from './marketplaceCategories.api';
 
 type ReferenceMode = 'rule-constructor' | 'wb-catalog';
 
@@ -23,6 +31,10 @@ const wbCatalog = ref<WildberriesCategoryCatalog | null>(null);
 const loading = ref(false);
 const error = ref('');
 const wbSearch = ref('');
+const selectedWbNode = ref<WildberriesCategoryNode | null>(null);
+const scopeMappings = ref<WbCategoryScopeSubjectMapping[]>([]);
+const scopeMappingsLoading = ref(false);
+const scopeMappingsError = ref('');
 
 const groupedFilters = computed<FilterGroup[]>(() => {
   const groups = new Map<string, RuleConstructorFilter[]>();
@@ -120,6 +132,32 @@ async function loadWbCatalog() {
   }
 }
 
+async function selectWbNode(node: WildberriesCategoryNode) {
+  selectedWbNode.value = node;
+  scopeMappingsLoading.value = true;
+  scopeMappingsError.value = '';
+
+  try {
+    scopeMappings.value = await getWbCategoryScopeSubjectMappings(node.id);
+  } catch (err) {
+    scopeMappings.value = [];
+    scopeMappingsError.value = getProblemMessage(err, 'Не удалось загрузить subject mappings.');
+  } finally {
+    scopeMappingsLoading.value = false;
+  }
+}
+
+async function setMappingStatus(mapping: WbCategoryScopeSubjectMapping, status: WbScopeSubjectMappingStatus) {
+  scopeMappingsError.value = '';
+
+  try {
+    const updated = await updateWbCategoryScopeSubjectMapping(mapping.id, status);
+    scopeMappings.value = scopeMappings.value.map((item) => (item.id === updated.id ? updated : item));
+  } catch (err) {
+    scopeMappingsError.value = getProblemMessage(err, 'Не удалось обновить subject mapping.');
+  }
+}
+
 function statusLabel(status: RuleConstructorFilter['status']): string {
   switch (status) {
     case 'active':
@@ -160,6 +198,17 @@ function sourcesText(filter: RuleConstructorFilter): string {
 
 function parentText(node: WildberriesCategoryNode): string {
   return node.parentId === null ? '-' : String(node.parentId);
+}
+
+function mappingStatusLabel(status: WbScopeSubjectMappingStatus): string {
+  switch (status) {
+    case 'active':
+      return 'active';
+    case 'rejected':
+      return 'rejected';
+    case 'needs_review':
+      return 'needs review';
+  }
 }
 </script>
 
@@ -306,7 +355,14 @@ function parentText(node: WildberriesCategoryNode): string {
             <span role="columnheader">WB id</span>
             <span role="columnheader">Parent</span>
           </div>
-          <div v-for="node in filteredWbNodes" :key="node.id" class="admin-catalogs__wb-row" role="row">
+          <div
+            v-for="node in filteredWbNodes"
+            :key="node.id"
+            class="admin-catalogs__wb-row"
+            :class="{ 'admin-catalogs__wb-row--selected': selectedWbNode?.id === node.id }"
+            role="row"
+            @click="selectWbNode(node)"
+          >
             <div role="cell">
               <strong>{{ node.sourceSubcategory || node.name }}</strong>
               <small>level {{ node.level }}</small>
@@ -325,6 +381,39 @@ function parentText(node: WildberriesCategoryNode): string {
             </div>
           </div>
         </div>
+
+        <section v-if="selectedWbNode" class="admin-catalogs__scope-panel">
+          <header class="admin-catalogs__scope-header">
+            <div>
+              <h3>Subject mappings</h3>
+              <p>{{ selectedWbNode.path }} · WB {{ selectedWbNode.id }}</p>
+            </div>
+            <span>{{ scopeMappings.length }} mappings</span>
+          </header>
+          <div v-if="scopeMappingsError" class="admin-catalogs__notice admin-catalogs__notice--error">
+            {{ scopeMappingsError }}
+          </div>
+          <LoadingState v-if="scopeMappingsLoading" :rows="2" />
+          <div v-else-if="scopeMappings.length > 0" class="admin-catalogs__mapping-list">
+            <article v-for="mapping in scopeMappings" :key="mapping.id" class="admin-catalogs__mapping">
+              <div>
+                <strong>{{ mapping.subjectName || 'Subject без названия' }}</strong>
+                <small>subjectId {{ mapping.subjectId }} · {{ mapping.mappingSource }}</small>
+              </div>
+              <span class="admin-catalogs__mapping-status" :class="`admin-catalogs__mapping-status--${mapping.status}`">
+                {{ mappingStatusLabel(mapping.status) }}
+              </span>
+              <div class="admin-catalogs__mapping-actions">
+                <button type="button" @click="setMappingStatus(mapping, 'active')">active</button>
+                <button type="button" @click="setMappingStatus(mapping, 'rejected')">reject</button>
+                <button type="button" @click="setMappingStatus(mapping, 'needs_review')">review</button>
+              </div>
+            </article>
+          </div>
+          <p v-else class="admin-catalogs__muted">
+            Для этой ниши пока нет observed subject mappings. Они появятся после parser run с product manifest.
+          </p>
+        </section>
 
         <EmptyState
           v-if="filteredWbNodes.length === 0"
@@ -533,6 +622,102 @@ button.admin-catalogs__tab--active {
 .admin-catalogs__wb-row small {
   color: var(--color-text-muted);
   font-size: 0.75rem;
+}
+
+.admin-catalogs__wb-row {
+  cursor: pointer;
+}
+
+.admin-catalogs__wb-row--selected {
+  background: var(--accent-ember-soft);
+}
+
+.admin-catalogs__scope-panel {
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  padding: var(--space-4);
+}
+
+.admin-catalogs__scope-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.admin-catalogs__scope-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.admin-catalogs__scope-header p,
+.admin-catalogs__muted {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.admin-catalogs__mapping-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.admin-catalogs__mapping {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  padding: var(--space-3);
+}
+
+.admin-catalogs__mapping div:first-child {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.admin-catalogs__mapping small {
+  color: var(--color-text-muted);
+}
+
+.admin-catalogs__mapping-status {
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.admin-catalogs__mapping-status--active {
+  background: var(--color-success-soft);
+  color: var(--state-success-text);
+}
+
+.admin-catalogs__mapping-status--rejected {
+  background: var(--color-danger-soft);
+  color: var(--state-danger-text);
+}
+
+.admin-catalogs__mapping-status--needs_review {
+  background: rgb(229 231 235 / 0.92);
+  color: #374151;
+}
+
+.admin-catalogs__mapping-actions {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.admin-catalogs__mapping-actions button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  padding: 0.35rem 0.55rem;
+  font-weight: 700;
 }
 
 .admin-catalogs__status,

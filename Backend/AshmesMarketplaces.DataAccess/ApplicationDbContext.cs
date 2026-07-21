@@ -99,6 +99,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<PublicMarketIntelligenceSnapshot> PublicMarketIntelligenceSnapshots => Set<PublicMarketIntelligenceSnapshot>();
     public DbSet<PublicMarketConcentrationSnapshot> PublicMarketConcentrationSnapshots => Set<PublicMarketConcentrationSnapshot>();
     public DbSet<WildberriesCategoryLeaf> WildberriesCategoryLeaves => Set<WildberriesCategoryLeaf>();
+    public DbSet<WbCategoryScopeSubjectMapping> WbCategoryScopeSubjectMappings => Set<WbCategoryScopeSubjectMapping>();
 
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();

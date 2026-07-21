@@ -204,6 +204,7 @@ public sealed partial class ParserIngestionService : IParserIngestionService
                 options,
                 summary,
                 cancellationToken);
+            await StageScopeSubjectMappingsAsync(runDirectory, summary, cancellationToken);
             await FinishExecutionAsync(execution, summary, "succeeded", cancellationToken);
         }
         catch
@@ -2249,6 +2250,66 @@ public sealed partial class ParserIngestionService : IParserIngestionService
 
     private static string BatchId(IReadOnlyCollection<ParserProductDetailRow> rows) =>
         rows.FirstOrDefault()?.ParserRunId ?? "unknown";
+
+    private async Task StageScopeSubjectMappingsAsync(
+        string runDirectory,
+        ImportSummary summary,
+        CancellationToken cancellationToken)
+    {
+        var manifestPath = RequiredFile(runDirectory, "manifest.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+        if (!root.TryGetProperty("scope_filter", out var scopeFilter) ||
+            scopeFilter.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var wbMenuId = ReadLong(scopeFilter, "discoveryMenuId");
+        var menuToken = ReadString(scopeFilter, "discoveryMenuToken");
+        var sourcePath = ReadString(scopeFilter, "sourcePath");
+        if (wbMenuId is null ||
+            wbMenuId <= 0 ||
+            string.IsNullOrWhiteSpace(menuToken) ||
+            string.IsNullOrWhiteSpace(sourcePath) ||
+            !scopeFilter.TryGetProperty("observedSubjects", out var observedSubjects) ||
+            observedSubjects.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var subject in observedSubjects.EnumerateArray())
+        {
+            var subjectId = ReadLong(subject, "subjectId");
+            if (subjectId is null or <= 0)
+                continue;
+
+            var subjectName = ReadString(subject, "subjectName");
+            var existing = await _dbContext.WbCategoryScopeSubjectMappings
+                .SingleOrDefaultAsync(
+                    x => x.WbMenuId == wbMenuId.Value && x.SubjectId == subjectId.Value,
+                    cancellationToken);
+            if (existing is null)
+            {
+                _dbContext.WbCategoryScopeSubjectMappings.Add(new WbCategoryScopeSubjectMapping(
+                    wbMenuId.Value,
+                    menuToken!,
+                    sourcePath!,
+                    subjectId.Value,
+                    subjectName,
+                    WbCategoryScopeSubjectMappingStatuses.NeedsReview,
+                    WbCategoryScopeSubjectMappingSources.Observed,
+                    now));
+                summary.Increment("scope_subject_mapping_candidates_created");
+            }
+            else
+            {
+                existing.UpdateObserved(subjectName, now);
+                summary.Increment("scope_subject_mapping_candidates_updated");
+            }
+        }
+    }
 
     private static ManifestInfo LoadManifest(string runDirectory, string kind)
     {

@@ -9,7 +9,7 @@ from config import BASE_DIR
 
 
 KNOWN_RANK_CONTEXT_TYPES = {"search_query", "category_result"}
-SUPPORTED_RANK_CONTEXT_TYPES = {"search_query"}
+SUPPORTED_RANK_CONTEXT_TYPES = {"search_query", "category_result"}
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,10 @@ class RankContextConfig:
     filters: dict[str, Any] = field(default_factory=dict)
     top_n: int | None = None
     source_region_dest: str | None = None
+    source_path: str | None = None
+    wb_category_id: int | None = None
+    raw_search_query: str | None = None
+    human_query: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,10 @@ class RankParserConfig:
                 filters=dict(item.get("filters") or {}),
                 top_n=item.get("top_n"),
                 source_region_dest=item.get("source_region_dest"),
+                source_path=item.get("source_path") or item.get("sourcePath"),
+                wb_category_id=item.get("wb_category_id") or item.get("wbCategoryId"),
+                raw_search_query=item.get("raw_search_query") or item.get("rawSearchQuery"),
+                human_query=item.get("human_query") or item.get("humanQuery"),
             )
             for item in payload.get("contexts") or []
         ]
@@ -123,6 +131,12 @@ class RankParserConfig:
                 raise ValueError(f"Unknown rank context type: {context.type}")
             if not context.query.strip():
                 raise ValueError(f"Rank context query is required: {context.id}")
+            if context.type == "category_result" and (
+                context.wb_category_id is None or not (context.raw_search_query or "").strip()
+            ):
+                raise ValueError(
+                    f"Rank category_result context requires wb_category_id and raw_search_query: {context.id}"
+                )
             if context.top_n is not None and int(context.top_n) < 1:
                 raise ValueError(f"Rank context top_n must be positive: {context.id}")
 

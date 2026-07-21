@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -15,8 +16,11 @@ from pipelines.products import runner  # noqa: E402
 
 
 class _Product:
-    def __init__(self, product_id: int) -> None:
+    def __init__(self, product_id: int, subject_id: int | None = None) -> None:
         self.id = product_id
+        self.subjectId = subject_id
+        self.subjectParentId = None
+        self.name = f"Product {product_id}"
 
 
 class _Items:
@@ -32,7 +36,7 @@ def _patch_common_streaming(monkeypatch, fetcher_cls, *, categories: list[dict] 
     monkeypatch.setattr(
         runner.Items,
         "model_validate",
-        staticmethod(lambda raw: _Items([_Product(item["id"]) for item in raw["products"]])),
+        staticmethod(lambda raw: _Items([_Product(item["id"], item.get("subjectId")) for item in raw["products"]])),
     )
     monkeypatch.setattr(runner, "add_images", lambda products: products)
     monkeypatch.setattr(runner, "add_price_with_wb_wallet", lambda products: products)
@@ -46,6 +50,7 @@ def _patch_common_streaming(monkeypatch, fetcher_cls, *, categories: list[dict] 
             "wb_root_id": str(product.id + 1000),
             "source_category": kwargs["source_category"],
             "source_subcategory": kwargs["source_subcategory"],
+            "source_query": kwargs["source_query"],
         }
 
     monkeypatch.setattr(runner, "product_to_canonical_row", canonical_row)
@@ -126,7 +131,7 @@ def test_explicit_niche_resolution_preserves_configured_subcategory(monkeypatch)
     assert resolved[0]["sourcePath"] == "Root category - Parent - WB leaf"
 
 
-def test_price_split_uses_parser_search_text_instead_of_wb_menu_query(tmp_path, monkeypatch) -> None:
+def test_price_split_uses_raw_wb_category_query_but_stores_human_source_query(tmp_path, monkeypatch) -> None:
     class _SearchPhraseParser:
         search_phrases: list[str] = []
 
@@ -149,13 +154,15 @@ def test_price_split_uses_parser_search_text_instead_of_wb_menu_query(tmp_path, 
     _patch_common_streaming(monkeypatch, _Fetcher, categories=categories)
     monkeypatch.setattr(runner, "SearchPhraseParser", _SearchPhraseParser)
 
+    rows: list[dict[str, str]] = []
     run_dir = runner.run_parser_streaming(
         _streaming_config(tmp_path, product_fetch_mode="price_split"),
         streaming_batch_size=100,
-        batch_handler=lambda batch: runner.ProductDiscoveryBatchResult(status="staged"),
+        batch_handler=lambda batch: rows.extend(batch.rows) or runner.ProductDiscoveryBatchResult(status="staged"),
     )
 
-    assert _SearchPhraseParser.search_phrases == ["Платья и сарафаны"]
+    assert _SearchPhraseParser.search_phrases == ["menu_v3_8137 платье женские"]
+    assert {row["source_query"] for row in rows} == {"Платья и сарафаны"}
     assert (run_dir / "products.csv").exists()
 
 
@@ -317,6 +324,143 @@ def test_run_parser_streaming_flushes_batches_before_full_discovery_finishes(tmp
     assert product_lines_during_batches == [100, 200, 250]
     assert _Fetcher.events.index("handler:100") < _Fetcher.events.index("after:first")
     assert (run_dir / "products.csv").exists()
+
+
+class _ScopedFetcher:
+    def __init__(self, **_: object) -> None:
+        pass
+
+    async def fetch_all(self) -> list[dict[str, object]]:
+        raise AssertionError("streaming parser must consume iter_result_batches(), not fetch_all()")
+
+    async def iter_result_batches(self):
+        yield [
+            {
+                "products": [
+                    {"id": 1, "subjectId": 8194},
+                    {"id": 2, "subjectId": 631},
+                    {"id": 3, "subjectId": 8194},
+                ]
+            }
+        ]
+
+
+def test_run_parser_streaming_rejects_products_outside_selected_wb_subject(tmp_path, monkeypatch) -> None:
+    categories = [
+        {
+            "id": 8194,
+            "name": "Men sneakers",
+            "sourceCategory": "Shoes",
+            "sourceSubcategory": "Sneakers",
+            "sourcePath": "Shoes / Men / Sneakers",
+            "searchQuery": "menu_redirect_subject_v2_8194 men sneakers",
+            "parserSearchText": "men sneakers",
+            "scopeAcceptanceMode": "exact_subject",
+        }
+    ]
+    _patch_common_streaming(monkeypatch, _ScopedFetcher, categories=categories)
+
+    rows: list[dict[str, str]] = []
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: rows.extend(batch.rows) or runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+    manifest = __import__("json").loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert [row["wb_product_id"] for row in rows] == ["1", "3"]
+    assert manifest["scope_filter"]["returnedProductsCount"] == 3
+    assert manifest["scope_filter"]["acceptedProductsCount"] == 2
+    assert manifest["scope_filter"]["rejectedOutOfScopeCount"] == 1
+    assert manifest["scope_filter"]["rejectedExamples"][0]["wbProductId"] == 2
+
+
+def test_run_parser_streaming_accepts_menu_token_scope_without_subject_mapping(tmp_path, monkeypatch) -> None:
+    categories = [
+        {
+            "id": 10012,
+            "name": "Organic cosmetics",
+            "sourceCategory": "Beauty",
+            "sourceSubcategory": "Organic cosmetics",
+            "sourcePath": "Beauty / Organic cosmetics",
+            "searchQuery": "menu_redirect_subject_v2_10012 organic cosmetics",
+            "parserSearchText": "organic cosmetics",
+            "scopeAcceptanceMode": "menu_token_trusted",
+        }
+    ]
+    _patch_common_streaming(monkeypatch, _ScopedFetcher, categories=categories)
+
+    rows: list[dict[str, str]] = []
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: rows.extend(batch.rows) or runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+    manifest = __import__("json").loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert [row["wb_product_id"] for row in rows] == ["1", "2", "3"]
+    assert manifest["scope_filter"]["scopeAcceptanceMode"] == "menu_token_trusted"
+    assert manifest["scope_filter"]["acceptedProductsCount"] == 3
+    assert manifest["scope_filter"]["rejectedOutOfScopeCount"] == 0
+    assert [item["subjectId"] for item in manifest["scope_filter"]["observedSubjects"]] == [8194, 631]
+
+
+def test_run_parser_streaming_allows_only_configured_subject_set(tmp_path, monkeypatch) -> None:
+    categories = [
+        {
+            "id": 10012,
+            "name": "Organic cosmetics",
+            "sourceCategory": "Beauty",
+            "sourceSubcategory": "Organic cosmetics",
+            "sourcePath": "Beauty / Organic cosmetics",
+            "searchQuery": "menu_redirect_subject_v2_10012 organic cosmetics",
+            "parserSearchText": "organic cosmetics",
+            "scopeAcceptanceMode": "allowed_subject_set",
+            "allowedSubjectIds": [631],
+        }
+    ]
+    _patch_common_streaming(monkeypatch, _ScopedFetcher, categories=categories)
+
+    rows: list[dict[str, str]] = []
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: rows.extend(batch.rows) or runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+    manifest = __import__("json").loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert [row["wb_product_id"] for row in rows] == ["2"]
+    assert manifest["scope_filter"]["scopeAcceptanceMode"] == "allowed_subject_set"
+    assert manifest["scope_filter"]["acceptedProductsCount"] == 1
+    assert manifest["scope_filter"]["rejectedOutOfScopeCount"] == 2
+    assert [item["subjectId"] for item in manifest["scope_filter"]["unmappedObservedSubjects"]] == [8194]
+
+
+def test_run_parser_streaming_fails_fast_for_empty_allowed_subject_set(tmp_path, monkeypatch) -> None:
+    categories = [
+        {
+            "id": 10012,
+            "name": "Organic cosmetics",
+            "sourceCategory": "Beauty",
+            "sourceSubcategory": "Organic cosmetics",
+            "sourcePath": "Beauty / Organic cosmetics",
+            "searchQuery": "menu_redirect_subject_v2_10012 organic cosmetics",
+            "parserSearchText": "organic cosmetics",
+            "scopeAcceptanceMode": "allowed_subject_set",
+            "allowedSubjectIds": [],
+        }
+    ]
+    _patch_common_streaming(monkeypatch, _ScopedFetcher, categories=categories)
+
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+    manifest = __import__("json").loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["status"] == "failed"
+    assert "requires allowedSubjectIds" in (run_dir / "errors.jsonl").read_text(encoding="utf-8")
 
 
 class _SmallFetcher:
@@ -508,6 +652,147 @@ def test_run_parser_streaming_waits_between_full_split_and_catalog_fetch(tmp_pat
 
     assert events.index("full_split") < events.index("sleep:7")
     assert events.index("sleep:7") < events.index("catalog_fetcher_created")
+
+
+def test_run_parser_streaming_uses_longer_split_to_catalog_pause_for_large_rate_limited_scope(tmp_path, monkeypatch) -> None:
+    events: list[str] = []
+
+    class _Parser(_FullSplitParser):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            self.retryable_statuses_count = 3
+            self.final_ranges_count = 158
+
+        def parse(self):
+            events.append("full_split")
+            return [DataPage(index * 100, index * 100 + 99, 100) for index in range(158)]
+
+    class _Fetcher(_RangeCarryFetcher):
+        def __init__(self, **kwargs: object) -> None:
+            events.append("catalog_fetcher_created")
+            super().__init__(**kwargs)
+
+        async def iter_result_batches(self):
+            yield [{"products": [{"id": 1}]}]
+
+    _patch_common_streaming(monkeypatch, _Fetcher)
+    monkeypatch.setattr(runner, "SearchPhraseParser", _Parser)
+    monkeypatch.setenv("PARSER_PRICE_SPLIT_TO_CATALOG_DELAY_SECONDS", "10")
+    monkeypatch.setenv("PARSER_PRICE_SPLIT_TO_CATALOG_JITTER_SECONDS", "0")
+    monkeypatch.setattr(runner, "time", type("_Time", (), {"sleep": staticmethod(lambda seconds: events.append(f"sleep:{seconds:g}"))}))
+
+    runner.run_parser_streaming(
+        _streaming_config(tmp_path, product_fetch_mode="price_split"),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+
+    assert events.index("full_split") < events.index("sleep:120")
+    assert events.index("sleep:120") < events.index("catalog_fetcher_created")
+
+
+def test_run_parser_streaming_writes_price_and_catalog_diagnostics_to_manifest(tmp_path, monkeypatch) -> None:
+    class _Parser(_FullSplitParser):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            self.unbounded_total = 220_000
+            self.bounded_total = 655_730
+            self.anti_full_range_detected = True
+            self.effective_min_price_u = 100
+            self.effective_max_price_u = 999
+
+        def parse(self):
+            return [DataPage(100, 999, 100)]
+
+    class _Fetcher(_RangeCarryFetcher):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            self.catalog_tasks_count = 7642
+            self.catalog_limit_signals = 4
+            self.catalog_cooldowns_count = 2
+            self.catalog_recovered_after_cooldown = True
+
+        async def iter_result_batches(self):
+            yield [{"products": [{"id": 1}]}]
+
+    _patch_common_streaming(monkeypatch, _Fetcher)
+    monkeypatch.setattr(runner, "SearchPhraseParser", _Parser)
+
+    run_dir = runner.run_parser_streaming(
+        _streaming_config(tmp_path, product_fetch_mode="price_split"),
+        streaming_batch_size=100,
+        batch_handler=lambda batch: runner.ProductDiscoveryBatchResult(status="staged"),
+    )
+
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    category = manifest["category_results"][0]
+    assert category["unbounded_total"] == 220_000
+    assert category["bounded_total"] == 655_730
+    assert category["anti_full_range_detected"] is True
+    assert category["effective_min_price_u"] == 100
+    assert category["effective_max_price_u"] == 999
+    assert category["catalog_tasks_count"] == 7642
+    assert category["catalog_limit_signals"] == 4
+    assert category["catalog_cooldowns_count"] == 2
+    assert category["catalog_recovered_after_cooldown"] is True
+    assert manifest["catalog_discovery"]["catalogTasksCount"] == 7642
+    assert manifest["catalog_discovery"]["catalogLimitSignals"] == 4
+    assert manifest["catalog_discovery"]["catalogCooldownsCount"] == 2
+    assert manifest["catalog_discovery"]["catalogRecoveredAfterCooldown"] is True
+    assert manifest["catalog_discovery"]["firstBatchSentAtUtc"]
+
+
+def test_catalog_cursor_helpers_resume_next_page_offset(tmp_path) -> None:
+    pages = [DataPage(100, 200, 250), DataPage(201, 300, 50)]
+
+    runner._assign_catalog_range_ids(pages)
+    runner._update_catalog_cursor(
+        {},
+        range_id=getattr(pages[0], "range_id"),
+        page_number=1,
+        page_count=3,
+        absolute_offset=99,
+        raw_page_size=100,
+    )
+    cursor_state: dict[str, dict[str, int]] = {}
+    runner._update_catalog_cursor(
+        cursor_state,
+        range_id=getattr(pages[0], "range_id"),
+        page_number=1,
+        page_count=3,
+        absolute_offset=99,
+        raw_page_size=100,
+    )
+
+    assert cursor_state[getattr(pages[0], "range_id")] == {"next_page": 2, "next_item_offset": 0}
+
+    runner._apply_catalog_cursor(pages, cursor_state)
+
+    assert getattr(pages[0], "next_page") == 2
+    assert getattr(pages[0], "next_item_offset") == 0
+    assert getattr(pages[1], "next_page", 1) == 1
+
+
+def test_catalog_cursor_path_is_scoped_by_proxy_and_niche(tmp_path) -> None:
+    config = _streaming_config(tmp_path, product_fetch_mode="price_split")
+
+    first = runner._catalog_cursor_path(
+        config,
+        proxy_key="proxy-a",
+        source_category="Root",
+        source_subcategory="Niche",
+        source_query="query",
+    )
+    second = runner._catalog_cursor_path(
+        config,
+        proxy_key="proxy-b",
+        source_category="Root",
+        source_subcategory="Niche",
+        source_query="query",
+    )
+
+    assert first != second
+    assert first.parent == tmp_path / "_runtime" / "catalog_cursors"
 
 
 def test_run_parser_streaming_ignores_removed_price_split_queue_flag(tmp_path, monkeypatch) -> None:

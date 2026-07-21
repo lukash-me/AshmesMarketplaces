@@ -272,6 +272,76 @@ public sealed class ParserAdminMonitoringServiceTests
     }
 
     [Fact]
+    public async Task GetJournalAsync_marks_rows_with_completed_rollback()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var startedAt = new DateTime(2026, 7, 5, 10, 0, 0, DateTimeKind.Utc);
+        var run = new ParserProxyRun(
+            "parser-1",
+            "cycle-1:proxy-1:category:niche",
+            "cycle-1",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-1",
+            "category",
+            "niche",
+            300,
+            300,
+            null,
+            null,
+            null,
+            startedAt);
+        run.Complete(300, 300, startedAt.AddMinutes(5));
+        var rollback = new ParserRunRollback(run.Id, adminRole.Id, startedAt.AddMinutes(6));
+        rollback.Complete(2, 1, 2, 1, 0, "Откат выполнен.", startedAt.AddMinutes(7));
+        context.ParserProxyRuns.Add(run);
+        context.ParserRunRollbacks.Add(rollback);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetJournalAsync(1, 50, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var item = Assert.Single(result.Value!);
+        Assert.True(item.HasCompletedRollback);
+    }
+
+    [Fact]
+    public async Task GetJournalAsync_does_not_mark_rows_with_failed_rollback()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var startedAt = new DateTime(2026, 7, 5, 10, 0, 0, DateTimeKind.Utc);
+        var run = new ParserProxyRun(
+            "parser-1",
+            "cycle-1:proxy-1:category:niche",
+            "cycle-1",
+            ParserProxyRunCycleKinds.Production,
+            "proxy-1",
+            "category",
+            "niche",
+            300,
+            300,
+            null,
+            null,
+            null,
+            startedAt);
+        run.Complete(300, 300, startedAt.AddMinutes(5));
+        var rollback = new ParserRunRollback(run.Id, adminRole.Id, startedAt.AddMinutes(6));
+        rollback.Fail("Conflict", 1, startedAt.AddMinutes(7));
+        context.ParserProxyRuns.Add(run);
+        context.ParserRunRollbacks.Add(rollback);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetJournalAsync(1, 50, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var item = Assert.Single(result.Value!);
+        Assert.False(item.HasCompletedRollback);
+    }
+
+    [Fact]
     public async Task GetJournalAsync_returns_failed_launch_without_proxy_run()
     {
         await using var context = CreateContext();
@@ -410,6 +480,85 @@ public sealed class ParserAdminMonitoringServiceTests
         Assert.Null(proxy.Error);
         Assert.Equal(0, proxy.PlannedProductsCount);
         Assert.Equal(0, proxy.DownloadedProductsCount);
+    }
+
+    [Fact]
+    public async Task GetInstancesAsync_does_not_show_historical_failed_launch_when_another_proxy_is_running()
+    {
+        await using var context = CreateContext();
+        var adminRole = await SeedRoleAsync(context, "Admin");
+        var now = new DateTime(2026, 7, 7, 12, 5, 0, DateTimeKind.Utc);
+        var oldProxy = new ParserProxy("aef8f7a4-f1d2-4144-823d-9889b35b00df", "203.0.113.10", 3128, 1080, "login", "encrypted", now.AddDays(-1));
+        var newProxy = new ParserProxy("85b540e2-5c7a-438c-b698-30ae5765d30f", "203.0.113.11", 3128, 1080, "login", "encrypted", now.AddMinutes(-5));
+        context.ParserProxies.AddRange(oldProxy, newProxy);
+        await context.SaveChangesAsync();
+        AddNiche(context, oldProxy.Id, "Органическая косметика", "органическая косметика", now.AddDays(-1));
+        AddNiche(context, newProxy.Id, "Кеды и кроссовки", "кеды кроссовки", now.AddMinutes(-5));
+        var config = new ParserInstanceConfiguration("parser-local-01", "local", ParserInstanceHostKinds.Local, now.AddDays(-1));
+        context.ParserInstanceConfigurations.Add(config);
+        await context.SaveChangesAsync();
+        context.ParserInstanceProxyAssignments.Add(new ParserInstanceProxyAssignment(config.Id, oldProxy.Id, now.AddDays(-1)));
+        context.ParserInstanceProxyAssignments.Add(new ParserInstanceProxyAssignment(config.Id, newProxy.Id, now.AddMinutes(-5)));
+
+        var oldFailedLaunch = new ParserLaunchRequest(
+            config.Id,
+            config.ParserInstanceId,
+            ParserLaunchModes.CheckProxy,
+            oldProxy.Key,
+            3,
+            Guid.NewGuid(),
+            now.AddHours(-4));
+        oldFailedLaunch.MarkRunning(now.AddHours(-4).AddSeconds(1));
+        oldFailedLaunch.MarkFailed("old launch failed", now.AddHours(-4).AddSeconds(2));
+        context.ParserLaunchRequests.Add(oldFailedLaunch);
+
+        var oldCompletedRun = new ParserProxyRun(
+            config.ParserInstanceId,
+            "old-run",
+            "old-cycle",
+            ParserProxyRunCycleKinds.Production,
+            oldProxy.Key,
+            "Красота",
+            "Органическая косметика",
+            300,
+            100,
+            "203.0.113.10",
+            "token",
+            "valid",
+            now.AddHours(-2));
+        oldCompletedRun.Complete(300, 300, now.AddHours(-1));
+        context.ParserProxyRuns.Add(oldCompletedRun);
+
+        var newRunningRun = new ParserProxyRun(
+            config.ParserInstanceId,
+            "new-run",
+            "new-cycle",
+            ParserProxyRunCycleKinds.Production,
+            newProxy.Key,
+            "Обувь",
+            "Кеды и кроссовки",
+            300,
+            100,
+            "203.0.113.11",
+            "token",
+            "valid",
+            now.AddMinutes(-1));
+        context.ParserProxyRuns.Add(newRunningRun);
+        await context.SaveChangesAsync();
+        var service = new ParserAdminMonitoringService(context, new TestCurrentUser(adminRole.Id));
+
+        var result = await service.GetInstancesAsync(CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var instance = Assert.Single(result.Value!);
+        Assert.Equal(2, instance.Proxies.Count);
+        var oldProxyRow = Assert.Single(instance.Proxies, x => x.ProxyKey == oldProxy.Key);
+        Assert.Equal(ParserProxyRunStatuses.Completed, oldProxyRow.Status);
+        Assert.Equal("old-cycle", oldProxyRow.ParserCycleId);
+        Assert.Null(oldProxyRow.Error);
+        var newProxyRow = Assert.Single(instance.Proxies, x => x.ProxyKey == newProxy.Key);
+        Assert.Equal(ParserProxyRunStatuses.Running, newProxyRow.Status);
+        Assert.Equal("new-cycle", newProxyRow.ParserCycleId);
     }
 
     [Fact]
@@ -747,6 +896,25 @@ public sealed class ParserAdminMonitoringServiceTests
         return config;
     }
 
+    private static void AddNiche(
+        ApplicationDbContext context,
+        Guid proxyId,
+        string sourceSubcategory,
+        string searchQuery,
+        DateTime now)
+    {
+        context.ParserProxyNicheAssignments.Add(new ParserProxyNicheAssignment(
+            proxyId,
+            8137,
+            "Женщинам",
+            sourceSubcategory,
+            $"Женщинам / {sourceSubcategory}",
+            searchQuery,
+            sourceSubcategory,
+            true,
+            now));
+    }
+
     private static async Task SubmitAsync(ApplicationDbContext context, string externalBatchId)
     {
         var queue = new ParserBatchQueueService(context);
@@ -840,7 +1008,8 @@ public sealed class ParserAdminMonitoringServiceTests
                 typeof(ParserBatchSubmission),
                 typeof(ParserBatchArtifact),
                 typeof(ParserBatchSubmissionEvent),
-                typeof(ParserRunProductEffect)
+                typeof(ParserRunProductEffect),
+                typeof(ParserRunRollback)
             };
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes().Select(x => x.ClrType).ToList())
@@ -929,6 +1098,11 @@ public sealed class ParserAdminMonitoringServiceTests
                 builder.Property(x => x.Id).ValueGeneratedNever();
             });
             modelBuilder.Entity<ParserRunProductEffect>(builder =>
+            {
+                builder.HasKey(x => x.Id);
+                builder.Property(x => x.Id).ValueGeneratedNever();
+            });
+            modelBuilder.Entity<ParserRunRollback>(builder =>
             {
                 builder.HasKey(x => x.Id);
                 builder.Property(x => x.Id).ValueGeneratedNever();

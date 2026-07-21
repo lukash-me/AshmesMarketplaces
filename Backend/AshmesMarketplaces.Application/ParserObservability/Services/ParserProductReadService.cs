@@ -2,6 +2,7 @@
 using System.Text.Json;
 using AshmesMarketplaces.Application.Common.Pagination;
 using AshmesMarketplaces.Application.Common.Results;
+using AshmesMarketplaces.Application.MarketplaceCategories.Services;
 using AshmesMarketplaces.Application.ParserObservability.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.ParserIngestion;
@@ -169,6 +170,102 @@ public sealed partial class ParserProductReadService : IParserProductReadService
 
         return ServiceResult<ParserProductFilterOptionsDto>.Success(
             new ParserProductFilterOptionsDto(categories, subcategories, brands, sellers));
+    }
+
+    public async Task<ServiceResult<IReadOnlyList<ParserProductCoveredNicheDto>>> GetCoveredNichesAsync(
+        CancellationToken cancellationToken)
+    {
+        var productGroups = await _dbContext.ParserCurrentProductRows
+            .AsNoTracking()
+            .Where(x => x.SourceCategory != null || x.SourceSubcategory != null)
+            .GroupBy(x => new
+            {
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.SourceQuery
+            })
+            .Select(group => new CoveredProductNicheGroup(
+                group.Key.SourceCategory,
+                group.Key.SourceSubcategory,
+                group.Key.SourceQuery,
+                group.Count()))
+            .ToListAsync(cancellationToken);
+
+        if (productGroups.Count == 0)
+            return ServiceResult<IReadOnlyList<ParserProductCoveredNicheDto>>.Success([]);
+
+        var catalogLeaves = (await _dbContext.WildberriesCategoryLeaves
+                .AsNoTracking()
+                .Where(x => x.IsLeaf)
+                .Select(x => new
+                {
+                    x.WbCategoryId,
+                    x.SourceCategory,
+                    x.SourceSubcategory,
+                    x.SourcePath,
+                    x.SearchQuery
+                })
+                .ToListAsync(cancellationToken))
+            .Select(x => new CoveredNicheLeaf(
+                x.WbCategoryId,
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.SourcePath,
+                WildberriesCategoryTreeParser.BuildHumanSearchQuery(x.SearchQuery, x.SourceSubcategory),
+                IsProxyAssignment: false))
+            .ToList();
+
+        var assignmentLeaves = (await _dbContext.ParserProxyNicheAssignments
+                .AsNoTracking()
+                .Where(x => x.Enabled)
+                .Select(x => new
+                {
+                    x.WbCategoryId,
+                    x.SourceCategory,
+                    x.SourceSubcategory,
+                    x.SourcePath,
+                    x.SearchQuery
+                })
+                .ToListAsync(cancellationToken))
+            .Select(x => new CoveredNicheLeaf(
+                x.WbCategoryId,
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.SourcePath,
+                WildberriesCategoryTreeParser.BuildHumanSearchQuery(x.SearchQuery, x.SourceSubcategory),
+                IsProxyAssignment: true))
+            .ToList();
+
+        var leaves = assignmentLeaves
+            .Concat(catalogLeaves)
+            .GroupBy(x => new { x.WbCategoryId, x.SourcePath })
+            .Select(x => x.First())
+            .ToList();
+
+        var resolvedItems = productGroups
+            .Select(group => MapCoveredNiche(group, leaves))
+            .ToList();
+
+        var items = resolvedItems
+            .GroupBy(x => new
+            {
+                x.WbCategoryId,
+                x.SourceCategory,
+                x.SourceSubcategory,
+                x.SourcePath
+            })
+            .Select(group => new ParserProductCoveredNicheDto(
+                group.Key.WbCategoryId,
+                group.Key.SourceCategory,
+                group.Key.SourceSubcategory,
+                group.Key.SourcePath,
+                group.Sum(x => x.ProductsCount)))
+            .OrderBy(x => x.SourcePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.SourceCategory, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.SourceSubcategory, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return ServiceResult<IReadOnlyList<ParserProductCoveredNicheDto>>.Success(items);
     }
 
     public async Task<ServiceResult<ParserDemoCardOptionsDto>> GetDemoCardOptionsAsync(
@@ -2640,6 +2737,71 @@ public sealed partial class ParserProductReadService : IParserProductReadService
         };
     }
 
+    private static ParserProductCoveredNicheDto MapCoveredNiche(
+        CoveredProductNicheGroup group,
+        IReadOnlyList<CoveredNicheLeaf> leaves)
+    {
+        var matchingLeaves = leaves
+            .Where(x => string.Equals(x.SourceCategory, group.SourceCategory, StringComparison.Ordinal)
+                && string.Equals(x.SourceSubcategory, group.SourceSubcategory, StringComparison.Ordinal))
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(group.SourceQuery))
+        {
+            var sourceQuery = group.SourceQuery.Trim();
+            var queryMatchedLeaves = matchingLeaves
+                .Where(x => string.Equals(x.HumanSearchQuery, sourceQuery, StringComparison.Ordinal))
+                .ToList();
+
+            if (queryMatchedLeaves.Count == 1)
+                return BuildCoveredNiche(group, queryMatchedLeaves[0]);
+        }
+
+        var assignmentMatchedLeaves = matchingLeaves
+            .Where(x => x.IsProxyAssignment)
+            .ToList();
+
+        if (assignmentMatchedLeaves.Count == 1)
+            return BuildCoveredNiche(group, assignmentMatchedLeaves[0]);
+
+        return matchingLeaves.Count == 1
+            ? BuildCoveredNiche(group, matchingLeaves[0])
+            : BuildLegacyCoveredNiche(group);
+    }
+
+    private static ParserProductCoveredNicheDto BuildCoveredNiche(
+        CoveredProductNicheGroup group,
+        CoveredNicheLeaf leaf)
+    {
+        return new ParserProductCoveredNicheDto(
+            leaf.WbCategoryId,
+            group.SourceCategory,
+            group.SourceSubcategory,
+            leaf.SourcePath,
+            group.ProductsCount);
+    }
+
+    private static ParserProductCoveredNicheDto BuildLegacyCoveredNiche(CoveredProductNicheGroup group)
+    {
+        return new ParserProductCoveredNicheDto(
+            null,
+            group.SourceCategory,
+            group.SourceSubcategory,
+            BuildLegacySourcePath(group.SourceCategory, group.SourceSubcategory),
+            group.ProductsCount);
+    }
+
+    private static string BuildLegacySourcePath(string? sourceCategory, string? sourceSubcategory)
+    {
+        var parts = new[] { sourceCategory, sourceSubcategory }
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return parts.Count > 0 ? string.Join(" / ", parts) : "Без ниши";
+    }
+
     private static ParserProductListItemDto MapToListItem(
         ParserProductRow row,
         ProductEvidenceLookup evidence,
@@ -2756,4 +2918,18 @@ public sealed partial class ParserProductReadService : IParserProductReadService
             .Where(x => x.Length > 0)
             .ToList();
     }
+
+    private sealed record CoveredProductNicheGroup(
+        string? SourceCategory,
+        string? SourceSubcategory,
+        string? SourceQuery,
+        int ProductsCount);
+
+    private sealed record CoveredNicheLeaf(
+        long WbCategoryId,
+        string SourceCategory,
+        string SourceSubcategory,
+        string SourcePath,
+        string? HumanSearchQuery,
+        bool IsProxyAssignment);
 }

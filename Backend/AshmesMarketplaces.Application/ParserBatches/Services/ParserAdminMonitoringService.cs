@@ -1,5 +1,6 @@
 ﻿using AshmesMarketplaces.Application.Auth.Security;
 using AshmesMarketplaces.Application.Common.Results;
+using AshmesMarketplaces.Application.MarketplaceCategories.Services;
 using AshmesMarketplaces.Application.ParserBatches.Dtos;
 using AshmesMarketplaces.DataAccess;
 using AshmesMarketplaces.Domain.Entities.ParserIngestion;
@@ -165,6 +166,17 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
                     return new ProductEffectCounts(createdProductIds.Count, updatedProductsCount, true);
                 });
 
+        var completedRollbackRunIds = runIds.Count == 0
+            ? []
+            : await _dbContext.ParserRunRollbacks
+                .AsNoTracking()
+                .Where(x => runIds.Contains(x.ParserProxyRunId) &&
+                            x.Status == ParserRunRollbackStatuses.Completed)
+                .Select(x => x.ParserProxyRunId)
+                .Distinct()
+                .ToListAsync(cancellationToken);
+        var completedRollbackRunIdsSet = completedRollbackRunIds.ToHashSet();
+
         var proxyRunJournal = runs
             .Select(x =>
             {
@@ -189,6 +201,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
                     effectCounts.CreatedProductsCount,
                     effectCounts.UpdatedProductsCount,
                     effectCounts.HasProductEffectsLedger,
+                    completedRollbackRunIdsSet.Contains(x.Id),
                     x.PlannedRangesCount,
                     x.CompletedRangesCount,
                     x.RangeProgressPercent,
@@ -483,8 +496,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
         launchRequestsByInstance.TryGetValue(config.Id, out var launchRequests);
         launchRequests ??= [];
         instanceRuns ??= [];
-        var latestRuns = LatestRuns(instanceRuns);
-        var latestByProxy = latestRuns
+        var latestByProxy = LatestRunsByProxy(instanceRuns)
             .GroupBy(x => x.ProxyKey, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.OrderByDescending(run => run.StartedAtUtc).First(), StringComparer.OrdinalIgnoreCase);
 
@@ -496,7 +508,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             var hasLatestRun = latestByProxy.Remove(proxyKey, out var run);
             if (hasLatestRun && run is not null && ShouldShowRunOverLaunch(run, launchRequest))
             {
-                proxies.Add(MapProxyRun(run, now));
+                proxies.Add(MapProxyRun(run, assignment.Proxy!.Assignment, now));
             }
             else if (launchRequest is not null)
             {
@@ -504,7 +516,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             }
             else if (run is not null)
             {
-                proxies.Add(MapProxyRun(run, now));
+                proxies.Add(MapProxyRun(run, assignment.Proxy!.Assignment, now));
             }
             else
             {
@@ -546,7 +558,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
     {
         runsByInstance.TryGetValue(instance.ParserInstanceId, out var instanceRuns);
         instanceRuns ??= [];
-        var proxies = LatestRuns(instanceRuns).Select(x => MapProxyRun(x, now)).ToList();
+        var proxies = LatestRuns(instanceRuns).Select(x => MapProxyRun(x, assignment: null, now)).ToList();
         var planned = proxies.Sum(x => x.PlannedProductsCount);
         var downloaded = proxies.Sum(x => x.DownloadedProductsCount);
         var startedAt = proxies.Count > 0 ? proxies.Min(x => x.StartedAtUtc) : instance.LastSeenAtUtc;
@@ -582,6 +594,12 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             : [];
     }
 
+    private static List<ParserProxyRun> LatestRunsByProxy(IReadOnlyList<ParserProxyRun> instanceRuns) =>
+        instanceRuns
+            .GroupBy(x => x.ProxyKey, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.OrderByDescending(run => run.StartedAtUtc).ThenByDescending(run => run.Id).First())
+            .ToList();
+
     private static ParserAdminProxyRunDto MapConfiguredProxy(
         ParserInstanceProxyAssignment assignment,
         DateTime timestampUtc)
@@ -596,6 +614,9 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             proxy.Key,
             niche?.SourceCategory ?? string.Empty,
             niche?.SourceSubcategory ?? "Без ниши",
+            niche?.SourcePath,
+            niche?.WbCategoryId,
+            BuildParserSearchText(niche),
             proxy.Ip,
             null,
             null,
@@ -649,6 +670,9 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             proxy.Key,
             niche?.SourceCategory ?? string.Empty,
             niche?.SourceSubcategory ?? "Без ниши",
+            niche?.SourcePath,
+            niche?.WbCategoryId,
+            BuildParserSearchText(niche),
             proxy.Ip,
             null,
             null,
@@ -714,6 +738,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             0,
             0,
             false,
+            false,
             0,
             0,
             0,
@@ -732,6 +757,7 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
 
     private static ParserAdminProxyRunDto MapProxyRun(
         ParserProxyRun run,
+        ParserProxyNicheAssignment? assignment,
         DateTime now)
     {
         return new ParserAdminProxyRunDto(
@@ -742,6 +768,9 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             run.ProxyKey,
             run.SourceCategory,
             run.SourceSubcategory,
+            assignment?.SourcePath,
+            assignment?.WbCategoryId,
+            BuildParserSearchText(assignment),
             run.EgressIp,
             run.TokenRef,
             run.SessionStatus,
@@ -765,6 +794,17 @@ public sealed class ParserAdminMonitoringService : IParserAdminMonitoringService
             Rate(run.DownloadedProductsCount, run.StartedAtUtc, run.LastHeartbeatAtUtc),
             Rate(run.RangeChecksCount, run.StartedAtUtc, run.LastHeartbeatAtUtc),
             run.Error);
+    }
+
+    private static string? BuildParserSearchText(ParserProxyNicheAssignment? assignment)
+    {
+        if (assignment is null)
+            return null;
+
+        return WildberriesCategoryTreeParser.BuildHumanSearchQuery(assignment.SearchQuery, assignment.SourceSubcategory)
+            ?? (string.IsNullOrWhiteSpace(assignment.ParserSearchText)
+                ? assignment.SourceSubcategory.Trim()
+                : assignment.ParserSearchText.Trim());
     }
 
     private static double Percent(int downloaded, int planned)

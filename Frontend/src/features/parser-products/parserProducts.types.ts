@@ -306,6 +306,14 @@ export interface ParserProductFilterOptions {
   sellers: string[];
 }
 
+export interface ParserProductCoveredNiche {
+  wbCategoryId: number | null;
+  sourceCategory: string | null;
+  sourceSubcategory: string | null;
+  sourcePath: string;
+  productsCount: number;
+}
+
 export interface ParserDemoCardSubcategories {
   category: string;
   subcategories: string[];
@@ -330,6 +338,8 @@ export interface ParserProductFilterOptionsParams {
   search?: string;
   sourceCategory?: string;
   sourceSubcategory?: string;
+  wbCategoryId?: string;
+  sourcePath?: string;
   brandName?: string;
   sellerName?: string;
 }
@@ -342,6 +352,8 @@ export type ParserProductQueryState = {
   parserRunId: string;
   sourceCategory: string;
   sourceSubcategory: string;
+  wbCategoryId: string;
+  sourcePath: string;
   brandName: string;
   sellerName: string;
   wbRootId: string;

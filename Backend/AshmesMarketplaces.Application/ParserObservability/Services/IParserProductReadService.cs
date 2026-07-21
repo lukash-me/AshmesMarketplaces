@@ -14,6 +14,9 @@ public interface IParserProductReadService
         ParserProductFilterOptionsQuery query,
         CancellationToken cancellationToken);
 
+    Task<ServiceResult<IReadOnlyList<ParserProductCoveredNicheDto>>> GetCoveredNichesAsync(
+        CancellationToken cancellationToken);
+
     Task<ServiceResult<ParserDemoCardOptionsDto>> GetDemoCardOptionsAsync(
         bool includeCharacteristics,
         CancellationToken cancellationToken);

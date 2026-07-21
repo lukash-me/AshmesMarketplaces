@@ -29,6 +29,8 @@ class NicheProxyAssignment:
     source_path: str | None = None
     search_query: str | None = None
     parser_search_text: str | None = None
+    scope_acceptance_mode: str | None = None
+    allowed_subject_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,8 @@ class ProxyMapping:
                 source_path=str(item.get("sourcePath") or "").strip() or None,
                 search_query=str(item.get("searchQuery") or "").strip() or None,
                 parser_search_text=str(item.get("parserSearchText") or "").strip() or None,
+                scope_acceptance_mode=str(item.get("scopeAcceptanceMode") or "").strip() or None,
+                allowed_subject_ids=tuple(_optional_int(value) for value in (item.get("allowedSubjectIds") or []) if _optional_int(value) is not None),
             )
             for item in payload.get("niches") or []
         ]

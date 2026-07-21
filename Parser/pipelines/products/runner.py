@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -70,6 +71,15 @@ class ProductDiscoveryBatchResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class ScopeAcceptancePolicy:
+    mode: str
+    discovery_menu_id: int | None
+    discovery_menu_token: str | None
+    source_path: str | None
+    allowed_subject_ids: frozenset[int] = frozenset()
+
+
 def _load_proxy_mapping() -> ProxyMapping | None:
     path = os.environ.get("PARSER_PROXY_MAPPING_FILE")
     if not path:
@@ -128,6 +138,8 @@ def _load_explicit_niches() -> list[dict[str, Any]]:
         search_query = str(item.get("searchQuery") or "").strip()
         parser_search_text = str(item.get("parserSearchText") or source_subcategory).strip()
         source_path = str(item.get("sourcePath") or "").strip()
+        scope_acceptance_mode = str(item.get("scopeAcceptanceMode") or "").strip()
+        allowed_subject_ids = item.get("allowedSubjectIds") if isinstance(item.get("allowedSubjectIds"), list) else []
 
         if not wb_category_id:
             raise ValueError("Explicit niche wbCategoryId is required.")
@@ -147,6 +159,8 @@ def _load_explicit_niches() -> list[dict[str, Any]]:
                 "parserSearchText": parser_search_text,
                 "sourceCategory": source_category,
                 "sourcePath": source_path,
+                "scopeAcceptanceMode": scope_acceptance_mode or "menu_token_trusted",
+                "allowedSubjectIds": allowed_subject_ids,
             }
         )
 
@@ -181,6 +195,8 @@ def _resolve_explicit_niches_against_wb_menu(selected: list[dict[str, Any]]) -> 
                 "sourceSubcategory": source_subcategory,
                 "sourcePath": source_path,
                 "parserSearchText": str(item.get("parserSearchText") or source_subcategory).strip(),
+                "scopeAcceptanceMode": str(item.get("scopeAcceptanceMode") or "menu_token_trusted").strip() or "menu_token_trusted",
+                "allowedSubjectIds": item.get("allowedSubjectIds") if isinstance(item.get("allowedSubjectIds"), list) else [],
             }
         )
 
@@ -189,6 +205,135 @@ def _resolve_explicit_niches_against_wb_menu(selected: list[dict[str, Any]]) -> 
 
 def _category_source_category(config: ParserConfig, selected_category: dict[str, Any]) -> str:
     return str(selected_category.get("sourceCategory") or config.parent_category).strip()
+
+
+def _category_scope_id(selected_category: dict[str, Any]) -> int | None:
+    try:
+        value = int(selected_category.get("id") or selected_category.get("wbCategoryId") or 0)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _menu_token_from_search_query(search_query: Any) -> str | None:
+    value = str(search_query or "").strip()
+    if not value:
+        return None
+    first = value.split(maxsplit=1)[0]
+    return first if first.startswith("menu_") else None
+
+
+def _int_set(values: Any) -> frozenset[int]:
+    if not isinstance(values, list):
+        return frozenset()
+    result: set[int] = set()
+    for value in values:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            result.add(parsed)
+    return frozenset(result)
+
+
+def _scope_acceptance_policy(selected_category: dict[str, Any]) -> ScopeAcceptancePolicy:
+    mode = str(selected_category.get("scopeAcceptanceMode") or "menu_token_trusted").strip() or "menu_token_trusted"
+    allowed_subject_ids = _int_set(selected_category.get("allowedSubjectIds"))
+    if mode == "allowed_subject_set" and not allowed_subject_ids:
+        raise ValueError("Scope acceptance mode 'allowed_subject_set' requires allowedSubjectIds.")
+    if mode not in {"menu_token_trusted", "allowed_subject_set", "exact_subject"}:
+        raise ValueError(f"Unknown scope acceptance mode: {mode}")
+
+    return ScopeAcceptancePolicy(
+        mode=mode,
+        discovery_menu_id=_category_scope_id(selected_category),
+        discovery_menu_token=_menu_token_from_search_query(selected_category.get("searchQuery")),
+        source_path=str(selected_category.get("sourcePath") or "").strip() or None,
+        allowed_subject_ids=allowed_subject_ids,
+    )
+
+
+def _product_subject_id(product: Any) -> int | None:
+    subject_id = getattr(product, "subjectId", None)
+    if subject_id is None:
+        return None
+    try:
+        parsed = int(subject_id)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _is_product_accepted_by_scope(product: Any, policy: ScopeAcceptancePolicy) -> bool:
+    if policy.mode == "menu_token_trusted":
+        return True
+
+    subject_id = _product_subject_id(product)
+    if subject_id is None:
+        return True
+
+    if policy.mode == "allowed_subject_set":
+        return subject_id in policy.allowed_subject_ids
+
+    if policy.mode == "exact_subject":
+        return policy.discovery_menu_id is None or subject_id == policy.discovery_menu_id
+
+    return True
+
+
+def _record_observed_subject(subjects: dict[int, dict[str, Any]], product: Any) -> None:
+    subject_id = _product_subject_id(product)
+    if subject_id is None:
+        return
+    item = subjects.setdefault(
+        subject_id,
+        {
+            "subjectId": subject_id,
+            "subjectName": getattr(product, "subjectName", None),
+            "count": 0,
+        },
+    )
+    item["count"] += 1
+    if not item.get("subjectName"):
+        item["subjectName"] = getattr(product, "subjectName", None)
+
+
+def _write_scope_diagnostics(
+    manifest: RunManifest,
+    policy: ScopeAcceptancePolicy,
+    observed_subjects: dict[int, dict[str, Any]],
+) -> None:
+    ordered = sorted(observed_subjects.values(), key=lambda item: (-int(item.get("count") or 0), int(item.get("subjectId") or 0)))
+    manifest.scope_filter["scopeAcceptanceMode"] = policy.mode
+    manifest.scope_filter["discoveryMenuId"] = policy.discovery_menu_id
+    manifest.scope_filter["discoveryMenuToken"] = policy.discovery_menu_token
+    manifest.scope_filter["sourcePath"] = policy.source_path
+    manifest.scope_filter["allowedSubjectIdsCount"] = len(policy.allowed_subject_ids)
+    manifest.scope_filter["observedSubjects"] = ordered[:50]
+    if policy.mode == "allowed_subject_set":
+        manifest.scope_filter["unmappedObservedSubjects"] = [
+            item for item in ordered if int(item.get("subjectId") or 0) not in policy.allowed_subject_ids
+        ][:50]
+    else:
+        manifest.scope_filter["unmappedObservedSubjects"] = ordered[:50]
+
+
+def _record_out_of_scope_product(manifest: RunManifest, category_result: CategoryResult, product: Any) -> None:
+    category_result.rejected_out_of_scope_count += 1
+    manifest.scope_filter["rejectedOutOfScopeCount"] += 1
+    examples = manifest.scope_filter["rejectedExamples"]
+    if len(examples) >= 10:
+        return
+
+    examples.append(
+        {
+            "wbProductId": getattr(product, "id", None),
+            "subjectParentId": getattr(product, "subjectParentId", None),
+            "subjectId": getattr(product, "subjectId", None),
+            "name": getattr(product, "name", None),
+        }
+    )
 
 
 def _make_run_id() -> str:
@@ -211,8 +356,115 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _wait_after_price_split_before_catalog_fetch(proxy_key: str) -> float:
-    seconds = _env_float("PARSER_PRICE_SPLIT_TO_CATALOG_DELAY_SECONDS", 0.0)
+def _assign_catalog_range_ids(price_ranges: list[DataPage]) -> None:
+    for index, page in enumerate(price_ranges):
+        if getattr(page, "range_id", None):
+            continue
+        setattr(page, "range_id", f"{index}:{page.min_price}:{page.max_price}")
+
+
+def _catalog_cursor_path(
+        config: ParserConfig,
+        *,
+        proxy_key: str,
+        source_category: str | None,
+        source_subcategory: str | None,
+        source_query: str | None) -> Path:
+    raw_key = json.dumps(
+        {
+            "proxyKey": proxy_key,
+            "sourceCategory": source_category,
+            "sourceSubcategory": source_subcategory,
+            "sourceQuery": source_query,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    digest = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()[:24]
+    return config.output_base_dir / "_runtime" / "catalog_cursors" / f"{digest}.json"
+
+
+def _load_catalog_cursor(path: Path) -> dict[str, dict[str, int]]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+    ranges = payload.get("ranges") if isinstance(payload, dict) else None
+    if not isinstance(ranges, dict):
+        return {}
+    result: dict[str, dict[str, int]] = {}
+    for key, value in ranges.items():
+        if not isinstance(value, dict):
+            continue
+        result[str(key)] = {
+            "next_page": max(1, int(value.get("next_page") or 1)),
+            "next_item_offset": max(0, int(value.get("next_item_offset") or 0)),
+        }
+    return result
+
+
+def _write_catalog_cursor(path: Path, cursor_state: dict[str, dict[str, int]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"ranges": cursor_state}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _clear_catalog_cursor(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return
+
+
+def _apply_catalog_cursor(price_ranges: list[DataPage], cursor_state: dict[str, dict[str, int]]) -> None:
+    for page in price_ranges:
+        range_id = getattr(page, "range_id", None)
+        cursor = cursor_state.get(str(range_id)) if range_id is not None else None
+        if not cursor:
+            continue
+        setattr(page, "next_page", cursor["next_page"])
+        setattr(page, "next_item_offset", cursor["next_item_offset"])
+
+
+def _update_catalog_cursor(
+        cursor_state: dict[str, dict[str, int]],
+        *,
+        range_id: str | None,
+        page_number: int,
+        page_count: int,
+        absolute_offset: int,
+        raw_page_size: int) -> None:
+    if not range_id:
+        return
+    next_offset = max(0, int(absolute_offset)) + 1
+    if raw_page_size > 0 and next_offset >= raw_page_size:
+        next_page = min(max(1, int(page_count)) + 1, max(1, int(page_number)) + 1)
+        next_offset = 0
+    else:
+        next_page = max(1, int(page_number))
+    cursor_state[str(range_id)] = {
+        "next_page": next_page,
+        "next_item_offset": next_offset,
+    }
+
+
+def _wait_after_price_split_before_catalog_fetch(
+        proxy_key: str,
+        *,
+        retryable_statuses_count: int = 0,
+        final_ranges_count: int = 0) -> float:
+    base_seconds = _env_float("PARSER_PRICE_SPLIT_TO_CATALOG_DELAY_SECONDS", 0.0)
+    seconds = base_seconds
+    if retryable_statuses_count > 0:
+        seconds = max(seconds, 60.0)
+    if final_ranges_count > 120:
+        seconds = max(seconds, 90.0)
+    if retryable_statuses_count > 0 and final_ranges_count > 120:
+        seconds = max(seconds, 120.0)
     jitter = _env_float("PARSER_PRICE_SPLIT_TO_CATALOG_JITTER_SECONDS", 0.0)
     delay = max(0.0, seconds) + random.uniform(0.0, max(0.0, jitter))
     if delay > 0:
@@ -517,6 +769,8 @@ def _run_parser_core(
     stop_discovery = False
     interrupted = False
     current_monitored_total = 0
+    current_catalog_cursor_path: Path | None = None
+    current_catalog_cursor_state: dict[str, dict[str, int]] = {}
 
     def monitoring_planned_products(discovered_total: int | None) -> int:
         total = max(0, int(discovered_total or 0))
@@ -586,6 +840,16 @@ def _run_parser_core(
         }
         logger.info("PARSER_EVENT {}", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
+    def persist_catalog_cursor() -> None:
+        if current_catalog_cursor_path is None or not current_catalog_cursor_state:
+            return
+        _write_catalog_cursor(current_catalog_cursor_path, current_catalog_cursor_state)
+
+    def clear_catalog_cursor() -> None:
+        if current_catalog_cursor_path is None:
+            return
+        _clear_catalog_cursor(current_catalog_cursor_path)
+
     def flush_streaming_batch() -> bool:
         nonlocal pending_streaming_rows, streaming_batch_index
         if streaming_batch_size is None or batch_handler is None or not pending_streaming_rows:
@@ -609,9 +873,12 @@ def _run_parser_core(
             downloadedProductsCount=manifest.row_counts["unique_rows"],
             plannedProductsCount=current_monitored_total,
         )
+        manifest.record_first_batch_sent()
         pending_streaming_rows = []
         result = batch_handler(batch)
         status = (result.status if result else "staged").strip().lower()
+        if status not in {"failed", "error"}:
+            persist_catalog_cursor()
         if status in {"stop", "stopped"}:
             manifest.record_warning("streaming_batch_limit_reached")
             return False
@@ -653,17 +920,24 @@ def _run_parser_core(
         for selected_category in selected:
             subcategory_name = selected_category.get("name")
             source_category = _category_source_category(config, selected_category)
+            scope_policy = _scope_acceptance_policy(selected_category)
             wb_search_query = selected_category.get("searchQuery")
-            source_query = (
+            human_query = (
                 selected_category.get("parserSearchText")
                 or subcategory_name
                 or wb_search_query
             )
+            source_query = human_query
+            wb_request_query = wb_search_query or human_query
             category_result = CategoryResult(
                 source_subcategory=subcategory_name,
-                source_query=source_query,
+                source_query=human_query,
                 status="running",
             )
+            _write_scope_diagnostics(manifest, scope_policy, observed_subjects={})
+            current_catalog_cursor_path = None
+            current_catalog_cursor_state = {}
+            observed_subjects: dict[int, dict[str, Any]] = {}
             proxy_key = "direct"
 
             try:
@@ -773,7 +1047,7 @@ def _run_parser_core(
                 price_split_enabled = config.product_fetch_mode == "price_split" and not smoke_direct_discovery
                 if price_split_enabled and resolved_proxy and resolved_proxy.proxy.type != "direct":
                     filters_preflight_parser = SearchPhraseParser(
-                        search_phrase=source_query,
+                        search_phrase=wb_request_query,
                         cookies=cookies,
                         dest=config.source_region_dest,
                         timeout=config.timeout_seconds,
@@ -793,7 +1067,7 @@ def _run_parser_core(
                         filters_preflight_error = _filters_preflight_error(
                             filters_preflight_parser,
                             proxy_key=proxy_key,
-                            source_query=source_query,
+                            source_query=wb_request_query,
                         )
                         category_result.status = "failed"
                         emit_category_lifecycle(
@@ -876,7 +1150,7 @@ def _run_parser_core(
                         )
 
                     price_split_parser = SearchPhraseParser(
-                        search_phrase=source_query,
+                        search_phrase=wb_request_query,
                         cookies=cookies,
                         dest=config.source_region_dest,
                         timeout=config.timeout_seconds,
@@ -893,13 +1167,20 @@ def _run_parser_core(
                         split_progress_recorder=record_split_progress,
                     )
                     price_ranges = price_split_parser.parse()
+                    category_result.unbounded_total = getattr(price_split_parser, "unbounded_total", None)
+                    category_result.bounded_total = getattr(price_split_parser, "bounded_total", None)
+                    category_result.anti_full_range_detected = bool(
+                        getattr(price_split_parser, "anti_full_range_detected", False)
+                    )
+                    category_result.effective_min_price_u = getattr(price_split_parser, "effective_min_price_u", None)
+                    category_result.effective_max_price_u = getattr(price_split_parser, "effective_max_price_u", None)
 
                     if not price_ranges:
                         no_ranges_error = "No price ranges were discovered."
                         if getattr(price_split_parser, "final_error", None):
                             no_ranges_error = str(price_split_parser.final_error)
                         elif price_split_parser.aborted_by_rate_limit:
-                            no_ranges_error = "WB filters rate limit while processing full price split."
+                            no_ranges_error = "WB filters rate limit while splitting price ranges."
                         category_result.status = "failed"
                         emit_category_lifecycle(
                             event="finish",
@@ -964,11 +1245,25 @@ def _run_parser_core(
                     manifest.record_warning("price_discovery_skipped")
 
                 if price_split_enabled and price_ranges:
-                    _wait_after_price_split_before_catalog_fetch(proxy_key)
+                    _assign_catalog_range_ids(price_ranges)
+                    current_catalog_cursor_path = _catalog_cursor_path(
+                        config,
+                        proxy_key=proxy_key,
+                        source_category=source_category,
+                        source_subcategory=subcategory_name,
+                        source_query=wb_request_query,
+                    )
+                    current_catalog_cursor_state = _load_catalog_cursor(current_catalog_cursor_path)
+                    _apply_catalog_cursor(price_ranges, current_catalog_cursor_state)
+                    _wait_after_price_split_before_catalog_fetch(
+                        proxy_key,
+                        retryable_statuses_count=getattr(price_split_parser, "retryable_statuses_count", 0),
+                        final_ranges_count=getattr(price_split_parser, "final_ranges_count", len(price_ranges)),
+                    )
 
                 fetcher = WbCatalogFetcher(
                     pages=price_ranges,
-                    search_phrase=source_query,
+                    search_phrase=wb_request_query,
                     cookies=cookies or {},
                     dest=config.source_region_dest,
                     batch_size=config.catalog_request_group_size,
@@ -1044,6 +1339,9 @@ def _run_parser_core(
                         product_models = add_price_with_wb_wallet(product_models)
 
                     for item_index, product in enumerate(product_models):
+                        category_result.returned_products_count += 1
+                        manifest.scope_filter["returnedProductsCount"] += 1
+                        _record_observed_subject(observed_subjects, product)
                         metadata = product_entries[item_index]
                         range_id = metadata.get("range_id")
                         page_number = int(metadata.get("page_number") or 1)
@@ -1052,7 +1350,21 @@ def _run_parser_core(
                         raw_page_size = int(metadata.get("raw_page_size") or 0)
 
                         def remember_cursor() -> None:
-                            return
+                            _update_catalog_cursor(
+                                current_catalog_cursor_state,
+                                range_id=str(range_id) if range_id is not None else None,
+                                page_number=page_number,
+                                page_count=page_count,
+                                absolute_offset=absolute_offset,
+                                raw_page_size=raw_page_size,
+                            )
+
+                        remember_cursor()
+                        if not _is_product_accepted_by_scope(product, scope_policy):
+                            _record_out_of_scope_product(manifest, category_result, product)
+                            continue
+                        category_result.accepted_products_count += 1
+                        manifest.scope_filter["acceptedProductsCount"] += 1
 
                         if stop_discovery:
                             return False
@@ -1067,12 +1379,10 @@ def _run_parser_core(
                         product_id = str(product.id)
                         key = (config.marketplace, product_id)
                         if key in seen_keys:
-                            remember_cursor()
                             category_result.duplicate_rows += 1
                             manifest.row_counts["duplicate_rows"] += 1
                             continue
                         if product_id in resume_seen:
-                            remember_cursor()
                             seen_keys.add(key)
                             category_result.duplicate_rows += 1
                             manifest.row_counts["duplicate_rows"] += 1
@@ -1093,7 +1403,6 @@ def _run_parser_core(
                         rows.append(row)
                         category_result.unique_rows += 1
                         manifest.row_counts["unique_rows"] += 1
-                        remember_cursor()
                         if streaming_batch_size is not None:
                             pending_streaming_rows.append(row)
                             if len(pending_streaming_rows) >= streaming_batch_size:
@@ -1108,6 +1417,7 @@ def _run_parser_core(
                                 manifest.write()
 
                     if streaming_batch_size is not None:
+                        _write_scope_diagnostics(manifest, scope_policy, observed_subjects)
                         logger.info(
                             "STREAM DISCOVERY products_seen={} pending_batch={}",
                             manifest.row_counts["unique_rows"],
@@ -1127,8 +1437,22 @@ def _run_parser_core(
                     results = asyncio.run(fetcher.fetch_all())
                     process_result_batch(results)
 
+                category_result.catalog_tasks_count = max(0, int(getattr(fetcher, "catalog_tasks_count", 0) or 0))
+                category_result.catalog_limit_signals = max(0, int(getattr(fetcher, "catalog_limit_signals", 0) or 0))
+                category_result.catalog_cooldowns_count = max(0, int(getattr(fetcher, "catalog_cooldowns_count", 0) or 0))
+                category_result.catalog_recovered_after_cooldown = bool(
+                    getattr(fetcher, "catalog_recovered_after_cooldown", False)
+                )
+                manifest.record_catalog_discovery(
+                    catalog_tasks_count=category_result.catalog_tasks_count,
+                    catalog_limit_signals=category_result.catalog_limit_signals,
+                    catalog_cooldowns_count=category_result.catalog_cooldowns_count,
+                    catalog_recovered_after_cooldown=category_result.catalog_recovered_after_cooldown,
+                )
+                _write_scope_diagnostics(manifest, scope_policy, observed_subjects)
+
                 if getattr(fetcher, "stop_requested", False) and not stop_discovery:
-                    raise RuntimeError("WB catalog rate limit while fetching price ranges.")
+                    raise RuntimeError("WB catalog rate limit while fetching catalog pages.")
 
                 if streaming_batch_size is not None and pending_streaming_rows:
                     logger.info(
@@ -1144,6 +1468,8 @@ def _run_parser_core(
                     _write_raw_samples(run_dir, subcategory_name, raw_samples, config.raw_sample_limit)
 
                 category_result.status = "succeeded" if category_result.unique_rows else "partial"
+                if category_result.status == "succeeded" and not stop_discovery:
+                    clear_catalog_cursor()
                 emit_category_lifecycle(
                     event="finish",
                     proxy_key=proxy_key,

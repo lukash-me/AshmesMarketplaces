@@ -54,3 +54,7 @@ def test_production_parser_limits_match_stable_proxy_baseline() -> None:
     assert env["PARSER_BATCH_DELAY_MAX_SECONDS"] == "5"
     assert env["PARSER_PRICE_SPLIT_TO_CATALOG_DELAY_SECONDS"] == "10"
     assert env["PARSER_PRICE_SPLIT_TO_CATALOG_JITTER_SECONDS"] == "0"
+    assert env["PARSER_CATALOG_LIMIT_COOLDOWN_SIGNALS"] == "2"
+    assert env["PARSER_CATALOG_RATE_LIMIT_COOLDOWN_SECONDS"] == "120"
+    assert env["PARSER_CATALOG_MAX_TOTAL_RETRYABLE_ATTEMPTS"] == "80"
+    assert env["PARSER_ANTI_FULL_RANGE_TOTAL_RATIO"] == "1.25"

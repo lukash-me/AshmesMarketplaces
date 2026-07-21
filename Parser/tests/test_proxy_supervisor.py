@@ -145,10 +145,21 @@ def test_supervisor_builds_one_child_process_per_enabled_proxy(tmp_path: Path) -
     rank_config = json.loads(Path(next(iter(rank_config_paths))).read_text(encoding="utf-8"))
     assert rank_config["defaults"]["top_n"] == 1000
     assert rank_config["defaults"]["page_size"] == 100
+    assert [context["type"] for context in rank_config["contexts"]] == [
+        "category_result",
+        "category_result",
+        "category_result",
+    ]
+    assert [context["wb_category_id"] for context in rank_config["contexts"]] == [8137, 8194, 10012]
     assert [context["query"] for context in rank_config["contexts"]] == [
-        "Платья и сарафаны",
-        "Мужские кеды и кроссовки",
-        "Органическая косметика",
+        "menu_v3_8137 платье женское",
+        "menu_redirect_subject_v2_8194 мужские кеды и кроссовки",
+        "menu_redirect_subject_v2_10012 органическая косметика",
+    ]
+    assert [context["human_query"] for context in rank_config["contexts"]] == [
+        "платье женское",
+        "мужские кеды и кроссовки",
+        "органическая косметика",
     ]
 
 
@@ -273,10 +284,13 @@ def test_supervisor_uses_backend_runtime_assignments(monkeypatch, tmp_path: Path
     assert mapping_payload["niches"][0]["parserSearchText"] == "Платья и сарафаны"
     rank_config_path = Path(plans[0].environment["PARSER_RUNTIME_RANK_CONFIG_FILE"])
     rank_config = json.loads(rank_config_path.read_text(encoding="utf-8"))
+    assert [context["type"] for context in rank_config["contexts"]] == ["category_result", "category_result"]
+    assert [context["wb_category_id"] for context in rank_config["contexts"]] == [1, 2]
     assert [context["query"] for context in rank_config["contexts"]] == [
-        "Платья и сарафаны",
-        "Кеды и кроссовки",
+        "menu_v3_1 платья",
+        "menu_v3_2 кеды",
     ]
+    assert [context["human_query"] for context in rank_config["contexts"]] == ["платья", "кеды"]
     assert plans[0].environment["PARSER_RUNTIME_RANK_CONTEXT_ID"] == "proxy-1_Платья_и_сарафаны"
 
 
@@ -333,6 +347,12 @@ def test_supervisor_launch_context_is_source_of_truth_for_service_launch(tmp_pat
     runtime_mapping = json.loads(Path(plans[0].environment["PARSER_PROXY_MAPPING_FILE"]).read_text(encoding="utf-8"))
     assert [item["key"] for item in runtime_mapping["proxies"]] == [proxy_guid]
     assert [item["proxyKey"] for item in runtime_mapping["niches"]] == [proxy_guid]
+    rank_config = json.loads(Path(plans[0].environment["PARSER_RUNTIME_RANK_CONFIG_FILE"]).read_text(encoding="utf-8"))
+    context = rank_config["contexts"][0]
+    assert context["type"] == "category_result"
+    assert context["wb_category_id"] == 10012
+    assert context["query"] == "menu_redirect_subject_v2_10012 органическая косметика"
+    assert context["human_query"] == "органическая косметика"
 
 
 def test_supervisor_load_json_accepts_utf8_bom(tmp_path: Path) -> None:

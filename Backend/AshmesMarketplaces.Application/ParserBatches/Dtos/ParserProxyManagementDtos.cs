@@ -8,6 +8,8 @@ public sealed record ParserProxyAssignmentDto(
     string SourcePath,
     string SearchQuery,
     string ParserSearchText,
+    string ScopeAcceptanceMode,
+    IReadOnlyList<long> AllowedSubjectIds,
     bool Enabled);
 
 public sealed record ParserProxyDto(
@@ -68,8 +70,24 @@ public sealed record ParserRuntimeNicheAssignmentDto(
     string SourcePath,
     string SearchQuery,
     string ParserSearchText,
+    string ScopeAcceptanceMode,
+    IReadOnlyList<long> AllowedSubjectIds,
     string ProxyKey,
     bool Enabled);
+
+public sealed record WbCategoryScopeSubjectMappingDto(
+    Guid Id,
+    long WbMenuId,
+    string MenuToken,
+    string SourcePath,
+    long SubjectId,
+    string? SubjectName,
+    string Status,
+    string MappingSource,
+    DateTime ObservedAtUtc,
+    DateTime UpdatedAtUtc);
+
+public sealed record UpdateWbCategoryScopeSubjectMappingRequest(string? Status);
 
 public sealed record ParserRuntimeReviewSyncStateDto(
     string WbProductId,

@@ -16,6 +16,7 @@ from rank_config import (  # noqa: E402
     KNOWN_RANK_CONTEXT_TYPES,
     RankContextConfig,
     RankParserConfig,
+    SUPPORTED_RANK_CONTEXT_TYPES,
 )
 from rank_contracts import (  # noqa: E402
     build_rank_rows,
@@ -136,29 +137,46 @@ class RankContractTests(unittest.TestCase):
 
         self.assertEqual(first, second)
 
-    def test_category_result_context_is_known_but_not_supported_in_v1_runner(self) -> None:
+    def test_category_result_context_uses_raw_wb_category_query(self) -> None:
         self.assertIn("category_result", KNOWN_RANK_CONTEXT_TYPES)
+        self.assertIn("category_result", SUPPORTED_RANK_CONTEXT_TYPES)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = RankParserConfig(
-                output_base_dir=Path(temp_dir),
-                acquire_token=False,
-                request_delay_min_seconds=0,
-                request_delay_max_seconds=0,
-                contexts=[
-                    RankContextConfig(
-                        id="future_category",
-                        type="category_result",
-                        query="menu_v3_261 коврики в ванную",
-                    )
-                ],
-            )
-            run_dir = rank_runner.run_rank_parser(config)
-            manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        context = RankContextConfig(
+            id="men_sneakers",
+            type="category_result",
+            query="menu_redirect_subject_v2_8194 men sneakers",
+            source_category="Shoes",
+            source_subcategory="Sneakers",
+            source_path="Shoes / Men / Sneakers",
+            wb_category_id=8194,
+            raw_search_query="menu_redirect_subject_v2_8194 men sneakers",
+            human_query="men sneakers",
+        )
 
-        self.assertEqual(manifest["status"], "failed")
-        self.assertEqual(manifest["context_results"][0]["status"], "failed")
-        self.assertFalse((run_dir / "product_rank_snapshots.jsonl").exists())
+        params = build_search_params(context=context, page=1, dest="12354108")
+
+        self.assertEqual(params["query"], "menu_redirect_subject_v2_8194 men sneakers")
+        self.assertEqual(params["resultset"], "catalog")
+        self.assertNotEqual(params["query"], "Sneakers")
+
+    def test_category_result_context_requires_wb_scope(self) -> None:
+        config = RankParserConfig(
+            acquire_token=False,
+            request_delay_min_seconds=0,
+            request_delay_max_seconds=0,
+            contexts=[
+                RankContextConfig(
+                    id="broken_category",
+                    type="category_result",
+                    query="Sneakers",
+                    source_category="Shoes",
+                    source_subcategory="Sneakers",
+                )
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires wb_category_id and raw_search_query"):
+            config.validate()
 
 
 class FakeRankFetcher:

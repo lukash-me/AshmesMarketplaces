@@ -343,6 +343,51 @@ def test_search_phrase_parser_counts_split_price_range(monkeypatch) -> None:
     assert parser.split_ranges_count == 1
 
 
+def test_search_phrase_parser_uses_bounded_total_when_full_range_is_undercounted(monkeypatch) -> None:
+    parser = SearchPhraseParser(search_phrase="test", rate_limiter=NoopRateLimiter())
+    parser.max_count_of_good = 1_000_000
+    calls: list[dict | None] = []
+
+    def fake_fetch_data(add_params=None):
+        calls.append(add_params)
+        if add_params == {"priceU": "100;999"}:
+            return _filters_payload(total=655_730, min_price=100, max_price=1000)
+        return _filters_payload(total=220_000, min_price=100, max_price=1000)
+
+    monkeypatch.setattr(parser, "fetch_data", fake_fetch_data)
+
+    ranges = parser.parse()
+
+    assert calls[:2] == [None, {"priceU": "100;999"}]
+    assert parser.anti_full_range_detected is True
+    assert parser.unbounded_total == 220_000
+    assert parser.bounded_total == 655_730
+    assert parser.effective_min_price_u == 100
+    assert parser.effective_max_price_u == 999
+    assert ranges == [parser_module.DataPage(100, 999, 655_730)]
+
+
+def test_search_phrase_parser_keeps_unbounded_total_when_bounded_is_close(monkeypatch) -> None:
+    parser = SearchPhraseParser(search_phrase="test", rate_limiter=NoopRateLimiter())
+    parser.max_count_of_good = 1_000_000
+
+    def fake_fetch_data(add_params=None):
+        if add_params == {"priceU": "100;999"}:
+            return _filters_payload(total=230_000, min_price=100, max_price=1000)
+        return _filters_payload(total=220_000, min_price=100, max_price=1000)
+
+    monkeypatch.setattr(parser, "fetch_data", fake_fetch_data)
+
+    ranges = parser.parse()
+
+    assert parser.anti_full_range_detected is False
+    assert parser.unbounded_total == 220_000
+    assert parser.bounded_total == 230_000
+    assert parser.effective_min_price_u == 100
+    assert parser.effective_max_price_u == 1000
+    assert ranges == [parser_module.DataPage(100, 1000, 220_000)]
+
+
 def test_search_phrase_parser_writes_structured_range_events(monkeypatch) -> None:
     messages: list[str] = []
     parser = SearchPhraseParser(

@@ -17,6 +17,7 @@ def build_search_params(
     page: int,
     dest: str,
 ) -> dict[str, str]:
+    query = context.raw_search_query if context.type == "category_result" else context.query
     params: dict[str, str] = {
         "ab_testing": "false",
         "appType": "1",
@@ -27,7 +28,7 @@ def build_search_params(
         "lang": "ru",
         "locale": "ru",
         "page": str(page),
-        "query": context.query,
+        "query": (query or context.query).strip(),
         "resultset": "catalog",
         "sort": context.sort,
         "spp": "30",

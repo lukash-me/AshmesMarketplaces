@@ -279,6 +279,13 @@ public sealed record ParserProductFilterOptionsDto(
     IReadOnlyList<string> Brands,
     IReadOnlyList<string> Sellers);
 
+public sealed record ParserProductCoveredNicheDto(
+    long? WbCategoryId,
+    string? SourceCategory,
+    string? SourceSubcategory,
+    string SourcePath,
+    int ProductsCount);
+
 public sealed record ParserDemoCardOptionsDto(
     IReadOnlyList<string> Categories,
     IReadOnlyList<ParserDemoCardSubcategoriesDto> SubcategoriesByCategory,
